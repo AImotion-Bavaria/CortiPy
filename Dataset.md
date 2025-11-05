@@ -45,6 +45,7 @@ This document provides a collection of benchmark datasets and resources for vari
 **Datasets:**
 - [GitHub EEG Datasets by meagmohit](https://github.com/meagmohit/EEG-Datasets)
 - [PLOS ONE VEP Study](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0051077)
+- [OpenNeuro, EEG-BIDS](https://openneuro.org/datasets/ds006547/versions/1.0.0)
 
 ---
 
