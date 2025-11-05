@@ -30,7 +30,8 @@ This document provides a collection of benchmark datasets and resources for vari
 **Datasets:**
 - [OpenBCI Public EEG Datasets](https://openbci.com/community/publicly-available-eeg-datasets/?utm_source=chatgpt.com)
 - [Zenodo P300 Dataset](https://zenodo.org/records/2649069)
-
+- [OpenNeuro BIDS dataset](https://openneuro.org/datasets/ds005028/versions/1.0.0)
+- [OpenNeuro BIDS Paper](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0303390)
 ---
 
 ## Alpha Rhythm
