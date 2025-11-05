@@ -13,7 +13,8 @@ This document provides a collection of benchmark datasets and resources for vari
 **Python Packages & Datasets:**
 - [MNE-Python](https://mne.tools/stable/index.html)
 - [Brainstorm Auditory Dataset](https://neuroimage.usc.edu/brainstorm/DatasetAuditory)
-
+- [OpenNeuro BIDS paper](https://pmc.ncbi.nlm.nih.gov/articles/PMC11558516/pdf/JELAAE-000004-114401_1.pdf)
+- [OpenNeuro BIDS dataset](https://openneuro.org/datasets/ds005340/versions/1.0.4)
 ---
 
 ## SSVEP (Steady-State Visual Evoked Potential)
@@ -37,7 +38,8 @@ This document provides a collection of benchmark datasets and resources for vari
 **Datasets & Publications:**
 - [OpenBCI Public EEG Datasets](https://openbci.com/community/publicly-available-eeg-datasets/?utm_source=chatgpt.com)
 - [Frontiers in Neuroscience 2017](https://www.frontiersin.org/journals/neuroscience/articles/10.3389/fnins.2017.00425/full)
-
+- [OpenNeuro BIDS dataset](https://openneuro.org/datasets/ds005420/versions/1.0.0)
+- [OpenNeuro BIDS paper](https://link.springer.com/article/10.1007/s11062-018-9706-6)
 ---
 
 ## VEP (Visual Evoked Potential)
