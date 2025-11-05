@@ -52,6 +52,9 @@ This document provides a collection of benchmark datasets and resources for vari
 
 ---
 
-## GitHub Collections
+## Dataset Collections
 
-- [EEG Datasets Repository](https://github.com/meagmohit/EEG-Datasets)
+- [GitHub](https://github.com/meagmohit/EEG-Datasets)
+- [PhysioNet](https://physionet.org/about/database/)
+- [OpenBCI](https://openbci.com/community/free-resources-eeg-and-physiological-datasets-and-more/)
+- [OpenNeuro](https://openneuro.org/)
