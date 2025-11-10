@@ -1,7 +1,7 @@
 # EEG Benchmark Datasets and Resources
 
 This document provides a collection of benchmark datasets and resources for various EEG paradigms, including ABR/BERA, SSVEP, P300, Alpha, and VEP.
-
+In this paper Comparison of tools with three datasts [EEG is better left alone](https://www.nature.com/articles/s41598-023-27528-0)
 ---
 
 ## ABR / BERA (Auditory Brainstem Response)
@@ -29,8 +29,8 @@ This document provides a collection of benchmark datasets and resources for vari
 
 **Datasets:**
 - [OpenBCI Public EEG Datasets](https://openbci.com/community/publicly-available-eeg-datasets/?utm_source=chatgpt.com)
-- [Zenodo P300 Dataset(currenty no acccessn)](https://zenodo.org/records/2649069)
-- [OpenNeuro BIDS dataset ](https://openneuro.org/datasets/ds005028/versions/1.0.0)
+- [Zenodo P300 Dataset (currenty no acccess)](https://zenodo.org/records/2649069)
+- [OpenNeuro BIDS dataset (no trigger maybe generate artifical trigger) ](https://openneuro.org/datasets/ds005028/versions/1.0.0)
 - [OpenNeuro BIDS Paper](https://journals.plos.org/plosone/article?id=10.1371/journal.pone.0303390)
 ---
 
@@ -39,7 +39,7 @@ This document provides a collection of benchmark datasets and resources for vari
 **Datasets & Publications:**
 - [OpenBCI Public EEG Datasets](https://openbci.com/community/publicly-available-eeg-datasets/?utm_source=chatgpt.com)
 - [Frontiers in Neuroscience 2017](https://www.frontiersin.org/journals/neuroscience/articles/10.3389/fnins.2017.00425/full)
-- [OpenNeuro BIDS dataset](https://openneuro.org/datasets/ds005420/versions/1.0.0)
+- [OpenNeuro BIDS dataset (no trigger could not see ny Alpha activity)](https://openneuro.org/datasets/ds005420/versions/1.0.0)
 - [OpenNeuro BIDS paper](https://link.springer.com/article/10.1007/s11062-018-9706-6)
 ---
 
