@@ -3,7 +3,7 @@
 This document provides a collection of benchmark datasets and resources for various EEG paradigms, including ABR/BERA, SSVEP, P300, Alpha, and VEP.
 
 - Comparison of tools with three datasts [EEG is better left alone](https://www.nature.com/articles/s41598-023-27528-0) with [GitHub repro](https://github.com/sccn/eeg_pipelines)
-- [VEPCON](https://www.nature.com/articles/s41598-023-27528-0) [OpenNeuro Link](https://openneuro.org/datasets/ds003505/versions/1.0.3)
+- [VEPCON paper](https://www.nature.com/articles/s41597-021-01116-1) and [OpenNeuro Link](https://openneuro.org/datasets/ds003505/versions/1.0.3)
 
 ---
 
