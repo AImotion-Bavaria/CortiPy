@@ -1,5 +1,3 @@
-GitHub Copilot Chat Assistant
-
 # CortiPy Test Coverage Map
 
 | Component | Description |
