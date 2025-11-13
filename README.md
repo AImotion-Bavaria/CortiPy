@@ -65,6 +65,18 @@ MeasurementPipeline(hooks=hooks).run()
   configuration dialog (method/device params, proband metadata, electrode naming) and
   gives you start/stop controls plus saved-session browsing.
 
+### UNICORN hardware specifics
+
+- Provide the UNICORN virtual COM port (for example `"COM7"` on Windows or
+  `"/dev/tty.Unicorn-DevB"` on macOS) via `Params["Parameters"]["UNICORNPort"]`
+  (aliases `UNICORNAddress` / `UnicornPort` are accepted for compatibility).
+- Optional extras: `UNICORNDeviceName` (for logging) and `UnicornTimeout`
+  (seconds). The adapter mirrors the MATLAB helpers, returning 16-column packets
+  `[EEG(8), accel(3), gyro(3), battery, counter]`; modules continue to slice the
+  EEG subset just like `data(:, 1:8)` in the original code.
+- The serial protocol relies on `pyserial`, which ships with the package
+  dependencies—no additional install steps required.
+
 ## Testing and validation
 
 The `tests/regression` fixtures mirror deterministic MATLAB exports. Run `pytest` for
