@@ -20,6 +20,7 @@ import logging
 import os
 import subprocess
 import time
+from ctypes import wintypes
 from pathlib import Path
 from typing import Optional, TextIO
 
@@ -78,6 +79,18 @@ class SharedBuffer(ctypes.Structure):
         ("impedances", ctypes.c_float * (MAX_CHANNELS + 2)),
         ("impSize", ctypes.c_int32),
         ("acquisitionReady", ctypes.c_bool),
+    ]
+
+
+class _MemoryBasicInformation(ctypes.Structure):
+    _fields_ = [
+        ("BaseAddress", wintypes.LPVOID),
+        ("AllocationBase", wintypes.LPVOID),
+        ("AllocationProtect", wintypes.DWORD),
+        ("RegionSize", ctypes.c_size_t),
+        ("State", wintypes.DWORD),
+        ("Protect", wintypes.DWORD),
+        ("Type", wintypes.DWORD),
     ]
 
 
@@ -290,6 +303,20 @@ class ActiChampDevice(DeviceInterface):
             logger.error("Unable to map ActiChamp shared memory block '%s' before timeout", SHM_NAME)
             raise RuntimeError("Unable to map ActiChamp shared memory. Is the producer running?")
 
+        # Validate that the mapped region is large enough for our expected layout
+        expected_size = ctypes.sizeof(SharedBuffer)
+        mbi = _MemoryBasicInformation()
+        if kernel32.VirtualQuery(ctypes.c_void_p(ptr), ctypes.byref(mbi), ctypes.sizeof(mbi)):
+            if mbi.RegionSize < expected_size:
+                ctypes.windll.kernel32.UnmapViewOfFile(ctypes.c_void_p(ptr))
+                logger.error(
+                    "ActiChamp shared memory layout mismatch (got %s bytes, expected >= %s). "
+                    "Rebuild the producer with the current SharedBuffer.h.",
+                    mbi.RegionSize,
+                    expected_size,
+                )
+                raise RuntimeError("ActiChamp shared memory layout mismatch.")
+
         self._buffer_ptr = ptr
         self._buffer = ctypes.cast(ptr, ctypes.POINTER(SharedBuffer))
 
@@ -354,9 +381,23 @@ class ActiChampDevice(DeviceInterface):
 
     @property
     def _buf(self) -> SharedBuffer:
+        """Safely dereference the shared buffer pointer.
+
+        If the pointer is null or invalid, raise a clear RuntimeError instead
+        of letting ctypes trigger a crash when dereferencing.
+        """
+
         if self._buffer is None:
             raise RuntimeError("ActiChamp shared memory is not mapped.")
-        return self._buffer.contents
+
+        ptr_val = ctypes.cast(self._buffer, ctypes.c_void_p).value
+        if not ptr_val:
+            raise RuntimeError("ActiChamp shared memory pointer is null.")
+
+        try:
+            return self._buffer.contents
+        except (ValueError, OSError) as exc:  # pragma: no cover - defensive
+            raise RuntimeError("ActiChamp shared memory pointer is invalid or unmapped.") from exc
 
     def _signal_stop_event(self) -> None:
         kernel32 = ctypes.windll.kernel32
