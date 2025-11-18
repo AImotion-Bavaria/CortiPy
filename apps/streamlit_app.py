@@ -1546,8 +1546,8 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    if getattr(st, "_is_running_with_streamlit", False):
-        main()
+    if hasattr(st, "runtime") and st.runtime.exists():
+        main()  # Already inside a Streamlit runtime (e.g., `streamlit run ...`)
     else:  # Allow launching via `python apps/streamlit_app.py` (common on Windows)
         from streamlit.web import cli as stcli
 
