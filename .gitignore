@@ -210,3 +210,4 @@ __marimo__/
 /.idea
 tests/.DS_Store
 results.json
+AGENTS.md

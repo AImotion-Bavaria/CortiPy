@@ -214,13 +214,22 @@ def calc_psd_power_time(
     overlap_sec: float,
     fs: float,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    data_arr = np.asarray(data, dtype=float)
+    if data_arr.size == 0:
+        raise ValueError("Input signal is empty for PSD calculation.")
+
     nperseg = len(window)
     if nperseg <= 0:
         raise ValueError("Window length must be positive for PSD calculation.")
+
+    if data_arr.shape[-1] < nperseg:
+        nperseg = data_arr.shape[-1]
+        window = hann_window(nperseg, periodic=True)
+
     noverlap = max(0, min(nperseg - 1, int(round(overlap_sec * fs))))
 
     freq, time_axis, power = spectrogram(
-        data,
+        data_arr,
         fs=fs,
         window=window,
         nperseg=nperseg,

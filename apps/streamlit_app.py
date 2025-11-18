@@ -15,6 +15,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import streamlit as st
 try:
+    from serial.tools import list_ports
+except Exception:  # pragma: no cover
+    list_ports = None
+try:
     import tomllib  # Python 3.11+
 except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # type: ignore
@@ -228,6 +232,10 @@ def default_values(fields: Iterable[FieldSchema]) -> Dict[str, Any]:
 def resolve_choice(options: List[str], current: Optional[str]) -> str:
     if current in options:
         return current
+    if current is not None:
+        current_str = str(current)
+        if current_str in options:
+            return current_str
     return options[0] if options else ""
 
 
@@ -264,6 +272,65 @@ def render_numeric_input(target, field: FieldSchema, current: Any, key: str):
         help=field.tooltip or None,
         key=key,
     )
+
+
+MANUAL_UNICORN_PORT_OPTION = "__manual_unicorn_port__"
+
+
+def serial_port_options() -> List[tuple[str, str]]:
+    if list_ports is None:
+        return []
+    seen = set()
+    options: List[tuple[str, str]] = []
+    for info in list_ports.comports():
+        device = getattr(info, "device", None) or getattr(info, "name", None)
+        if not device or device in seen:
+            continue
+        description = getattr(info, "description", "")
+        manufacturer = getattr(info, "manufacturer", "")
+        details_parts = []
+        if description and description != device:
+            details_parts.append(description)
+        if manufacturer:
+            details_parts.append(manufacturer)
+        details = ", ".join(details_parts)
+        label = f"{device} – {details}" if details else device
+        options.append((device, label))
+        seen.add(device)
+    return options
+
+
+def render_unicorn_port_input(target, field: Dict[str, Any], current: Any, key: str) -> str:
+    port_entries = serial_port_options()
+    labels = {port: label for port, label in port_entries}
+    options: List[str] = [port for port, _ in port_entries]
+
+    current_str = str(current) if current not in (None, "") else ""
+    if current_str and current_str not in options:
+        options.append(current_str)
+        labels[current_str] = f"{current_str} (saved)"
+
+    options.append(MANUAL_UNICORN_PORT_OPTION)
+    default_choice = current_str if current_str in options else options[0]
+
+    selection = target.selectbox(
+        field["label"],
+        options=options,
+        index=options.index(default_choice) if options else 0,
+        format_func=lambda value: "Manual entry" if value == MANUAL_UNICORN_PORT_OPTION else labels.get(value, value),
+        help=field.get("help"),
+        key=key,
+    )
+
+    if selection == MANUAL_UNICORN_PORT_OPTION:
+        manual_value = target.text_input(
+            "Custom UNICORN port",
+            value=current_str if current_str and current_str not in labels else "",
+            help="Enter the UNICORN serial/Bluetooth port manually.",
+            key=f"{key}_manual",
+        )
+        return manual_value.strip()
+    return selection
 
 
 def _load_npz_array(source: Union[Path, Any]) -> Optional[np.ndarray]:
@@ -684,6 +751,65 @@ def ensure_state() -> None:
         st.session_state["imported_params_raw"] = None
     if "use_imported_data" not in st.session_state:
         st.session_state["use_imported_data"] = False
+    if "_last_device_selection" not in st.session_state:
+        st.session_state["_last_device_selection"] = None
+    if "_actichamp_impedance_loaded" not in st.session_state:
+        st.session_state["_actichamp_impedance_loaded"] = False
+
+
+def _actichamp_channel_count(rows: List[Dict[str, Any]]) -> int:
+    extras = set(DEVICE_EXTRA_LABELS.get("ActiCHamp", []))
+    return sum(1 for row in rows if row.get("Channel") not in extras)
+
+
+def _map_impedances_to_channels(rows: List[Dict[str, Any]], values: List[float]) -> List[Dict[str, Any]]:
+    if len(values) < 3:
+        return rows
+
+    labels = ["GND", "REF"] + [f"Ch {idx}" for idx in range(1, len(values) - 1)]
+    mapping = {label: values[idx] for idx, label in enumerate(labels) if idx < len(values)}
+
+    for row in rows:
+        value = mapping.get(row.get("Channel"))
+        if value is None or value < 0:
+            continue
+        row["Impedance"] = round(float(value) / 1000.0, 1)
+
+    return rows
+
+
+def _fetch_actichamp_impedances(fs_value: Any) -> None:
+    if st.session_state.get("_actichamp_impedance_loaded"):
+        return
+
+    fs = coerce_number(fs_value)
+    if fs is None or fs <= 0:
+        return
+
+    channel_tables = st.session_state.setdefault("channel_tables", {})
+    rows = ensure_channel_rows("ActiCHamp", channel_tables.get("ActiCHamp"))
+    channel_tables["ActiCHamp"] = rows
+    channel_count = _actichamp_channel_count(rows)
+
+    params = {
+        "Device": "ActiCHamp",
+        "Parameters": {"fs": float(fs), "NumberEEGChannels": channel_count},
+    }
+
+    try:
+        with st.spinner("Checking ActiCHamp impedances..."):
+            with DeviceFactory.create(params) as device:
+                reader = getattr(device, "read_impedances", None)
+                values = reader() if callable(reader) else []
+    except Exception as exc:  # pragma: no cover
+        st.warning(f"ActiCHamp impedance read failed: {exc}")
+        return
+
+    if not values:
+        return
+
+    channel_tables["ActiCHamp"] = _map_impedances_to_channels(rows, values)
+    st.session_state["_actichamp_impedance_loaded"] = True
 
 
 def coerce_number(value: Any) -> Optional[float | int]:
@@ -763,12 +889,24 @@ def render_general_form() -> Dict[str, Any]:
         general["Device"] = device
 
     other_fields = [field for field in GENERAL_SCHEMA if field.name not in {"Method", "Device"}]
+    device_is_unicorn = device.lower() == "unicorn"
     cols = st.columns(2)
     for idx, field in enumerate(other_fields):
         target = cols[idx % 2]
         key = f"general_{field.name}"
         current = general.get(field.name)
-        if field.kind == "dropdown":
+        if field.name == "fs" and device_is_unicorn:
+            locked_value = "250"
+            options = [locked_value] + [opt for opt in (field.options or []) if opt != locked_value]
+            value = target.selectbox(
+                field.name,
+                options=options,
+                index=options.index(locked_value),
+                help="UNICORN sampling rate is fixed to 250 Hz.",
+                key=key,
+                disabled=True,
+            )
+        elif field.kind == "dropdown":
             options = field.options or [""]
             resolved = resolve_choice(options, current)
             value = target.selectbox(
@@ -783,6 +921,14 @@ def render_general_form() -> Dict[str, Any]:
         else:
             value = target.text_input(field.name, value=current or "", help=field.tooltip or None, key=key)
         general[field.name] = value
+
+    if device != st.session_state.get("_last_device_selection"):
+        st.session_state["_last_device_selection"] = device
+        st.session_state["_actichamp_impedance_loaded"] = False
+
+    if device == "ActiCHamp":
+        _fetch_actichamp_impedances(general.get("fs"))
+
     return dict(general)
 
 
@@ -800,7 +946,9 @@ def render_device_config(device: str) -> Dict[str, Any]:
         target = cols[idx % 2]
         key = f"device_{device}_{field['name']}"
         current = form_state.get(field["name"], field.get("default"))
-        if field["kind"] == "number":
+        if device == "UNICORN" and field["name"] == "UNICORNPort":
+            value = render_unicorn_port_input(target, field, current, key)
+        elif field["kind"] == "number":
             fallback = field.get("default", 0.0)
             numeric = coerce_number(current)
             value_default = float(numeric if numeric is not None else fallback or 0.0)
@@ -1039,6 +1187,9 @@ def assemble_params(
             params["Parameters"][key] = value
             for alias in DEVICE_FIELD_ALIASES.get(key, []):
                 params["Parameters"][alias] = value
+
+    if params["Device"].lower() == "unicorn":
+        params["Parameters"]["fs"] = 250
 
     channels = build_channels(params["Device"])
     if channels:

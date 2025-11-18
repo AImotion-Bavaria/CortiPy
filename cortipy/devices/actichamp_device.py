@@ -180,6 +180,24 @@ class ActiChampDevice(DeviceInterface):
     def prime(self, duration_seconds: float, aux_channels: int = 0) -> np.ndarray:
         return self.acquire(duration_seconds, aux_channels)
 
+    def read_impedances(self) -> list[float]:
+        """Return impedance values from the shared control block.
+
+        The producer populates ``impedances`` before regular acquisition
+        starts, exposing GND/REF followed by channel impedances. Values are
+        reported in Ohms; unavailable entries remain negative.
+        """
+
+        if self._buffer is None:
+            raise RuntimeError("ActiChamp shared memory is not mapped.")
+
+        size = int(self._buffer.impSize)
+        if size <= 0:
+            return []
+
+        limit = min(size, MAX_CHANNELS + 2)
+        return [float(self._buffer.impedances[i]) for i in range(limit)]
+
     # ------------------------------------------------------------------
     def _channel_limit(self, aux_channels: int) -> int:
         total = self.channel_count + int(aux_channels or self.default_aux)
