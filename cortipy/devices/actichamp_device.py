@@ -102,7 +102,7 @@ class ActiChampDevice(DeviceInterface):
 
         self._process: Optional[subprocess.Popen[bytes]] = None
         self._producer_log: Optional[TextIO] = None
-        self._buffer: SharedBuffer | None = None
+        self._buffer: ctypes.POINTER(SharedBuffer) | None = None
         self._buffer_ptr: int | None = None
         self._data_view: np.ndarray | None = None
         self._spawned_producer = False
@@ -139,14 +139,16 @@ class ActiChampDevice(DeviceInterface):
         channel_limit = self._channel_limit(aux_channels)
         out = np.zeros((samples_needed, channel_limit), dtype=float)
 
+        buf = self._buf
+
         copied = 0
         while copied < samples_needed:
-            write_idx = int(self._buffer.writeIndex)
-            read_idx = int(self._buffer.readIndex)
+            write_idx = int(buf.writeIndex)
+            read_idx = int(buf.readIndex)
             available = write_idx - read_idx
 
             if available <= 0:
-                if self._buffer.control.stopRequested:
+                if buf.control.stopRequested:
                     break
                 time.sleep(0.001)
                 continue
@@ -168,14 +170,14 @@ class ActiChampDevice(DeviceInterface):
                 copied += remaining
                 read_idx += remaining
 
-            self._buffer.readIndex = read_idx
+            buf.readIndex = read_idx
 
         return out[:copied]
 
     def disconnect(self) -> None:
         logger.info("Disconnecting ActiChamp device.")
         if self._buffer is not None:
-            self._buffer.control.stopRequested = True
+            self._buf.control.stopRequested = True
             self._signal_stop_event()
 
         if self._process is not None:
@@ -214,12 +216,13 @@ class ActiChampDevice(DeviceInterface):
         if self._buffer is None:
             raise RuntimeError("ActiChamp shared memory is not mapped.")
 
-        size = int(self._buffer.impSize)
+        buf = self._buf
+        size = int(buf.impSize)
         if size <= 0:
             return []
 
         limit = min(size, MAX_CHANNELS + 2)
-        return [float(self._buffer.impedances[i]) for i in range(limit)]
+        return [float(buf.impedances[i]) for i in range(limit)]
 
     # ------------------------------------------------------------------
     def _channel_limit(self, aux_channels: int) -> int:
@@ -288,9 +291,18 @@ class ActiChampDevice(DeviceInterface):
             raise RuntimeError("Unable to map ActiChamp shared memory. Is the producer running?")
 
         self._buffer_ptr = ptr
-        self._buffer = SharedBuffer.from_address(ptr)
-        data = np.ctypeslib.as_array(self._buffer.data)
-        self._data_view = data.reshape(BUFFER_SIZE, MAX_CHANNELS)
+        self._buffer = ctypes.cast(ptr, ctypes.POINTER(SharedBuffer))
+
+        try:
+            data = np.ctypeslib.as_array(self._buf.data)
+            self._data_view = data.reshape(BUFFER_SIZE, MAX_CHANNELS)
+        except Exception as exc:  # pragma: no cover - defensive for unexpected mapping issues
+            ctypes.windll.kernel32.UnmapViewOfFile(ctypes.c_void_p(ptr))
+            self._buffer_ptr = None
+            self._buffer = None
+            logger.error("Failed to initialize ActiChamp buffer view: %s", exc)
+            raise RuntimeError("Failed to initialize ActiChamp shared buffer view.") from exc
+
         logger.info("Mapped ActiChamp shared memory and initialized buffer view.")
 
     def _initialize_buffer_state(self) -> None:
@@ -299,22 +311,23 @@ class ActiChampDevice(DeviceInterface):
 
         logger.debug("Initializing ActiChamp buffer state (spawned=%s)", self._spawned_producer)
 
+        buf = self._buf
         if self._spawned_producer:
-            self._buffer.writeIndex = 0
-            self._buffer.readIndex = 0
-            self._buffer.lostSamples = 0
-            self._buffer.control.stopRequested = False
+            buf.writeIndex = 0
+            buf.readIndex = 0
+            buf.lostSamples = 0
+            buf.control.stopRequested = False
             self._data_view.fill(0.0)
-            self._buffer.acquisitionReady = False
+            buf.acquisitionReady = False
         else:
             # When reusing an existing producer instance, align readIndex to the
             # current writeIndex and clear any prior stop request so we do not
             # attempt to spawn a second producer (which causes the -6 error).
-            self._buffer.control.stopRequested = False
-            self._buffer.readIndex = self._buffer.writeIndex
+            buf.control.stopRequested = False
+            buf.readIndex = buf.writeIndex
 
-        self._buffer.control.targetSamplingRate = self.sampling_rate
-        self._buffer.control.useActiveElectrodes = bool(self.use_active_electrodes)
+        buf.control.targetSamplingRate = self.sampling_rate
+        buf.control.useActiveElectrodes = bool(self.use_active_electrodes)
         logger.debug(
             "ActiChamp control block updated (fs=%s, activeElectrodes=%s)",
             self.sampling_rate,
@@ -327,12 +340,18 @@ class ActiChampDevice(DeviceInterface):
 
         deadline = time.time() + self.timeout
         while time.time() < deadline:
-            if bool(self._buffer.acquisitionReady):
+            if bool(self._buf.acquisitionReady):
                 logger.info("ActiChamp acquisition flag reported ready.")
                 return
             time.sleep(0.01)
         logger.error("Timed out waiting for ActiChamp acquisition to become ready.")
         raise TimeoutError("Timed out waiting for ActiChamp acquisition to become ready.")
+
+    @property
+    def _buf(self) -> SharedBuffer:
+        if self._buffer is None:
+            raise RuntimeError("ActiChamp shared memory is not mapped.")
+        return self._buffer.contents
 
     def _signal_stop_event(self) -> None:
         kernel32 = ctypes.windll.kernel32
