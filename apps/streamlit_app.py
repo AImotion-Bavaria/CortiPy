@@ -1546,4 +1546,10 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    if getattr(st, "_is_running_with_streamlit", False):
+        main()
+    else:  # Allow launching via `python apps/streamlit_app.py` (common on Windows)
+        from streamlit.web import cli as stcli
+
+        sys.argv = ["streamlit", "run", __file__]
+        sys.exit(stcli.main())
