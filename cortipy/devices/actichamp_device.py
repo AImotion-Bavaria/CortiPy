@@ -123,7 +123,7 @@ class ActiChampDevice(DeviceInterface):
         try:
             self._map_shared_buffer()
         except RuntimeError as exc:
-            logger.warning("Shared memory not available, attempting to start producer: %s", exc)
+            logger.info("Shared memory not available yet; attempting to start producer: %s", exc)
             self._start_producer()
             self._map_shared_buffer()
 
@@ -234,6 +234,14 @@ class ActiChampDevice(DeviceInterface):
             logger.error("ActiChamp producer executable not found at %s", exe_path)
             raise FileNotFoundError(f"ActiChamp producer executable not found at {exe_path}")
 
+        if self._process is not None:
+            if self._process.poll() is None:
+                logger.info("ActiChamp producer already running (pid=%s); reusing it", self._process.pid)
+                return
+            logger.info("Previous ActiChamp producer exited (code=%s); restarting", self._process.poll())
+            self._process = None
+            self._spawned_producer = False
+
         log_path = self.install_dir / "EEG_SharedMemoryProducer.log"
         log_file: Optional[TextIO] = None
 
@@ -298,6 +306,12 @@ class ActiChampDevice(DeviceInterface):
             self._buffer.control.stopRequested = False
             self._data_view.fill(0.0)
             self._buffer.acquisitionReady = False
+        else:
+            # When reusing an existing producer instance, align readIndex to the
+            # current writeIndex and clear any prior stop request so we do not
+            # attempt to spawn a second producer (which causes the -6 error).
+            self._buffer.control.stopRequested = False
+            self._buffer.readIndex = self._buffer.writeIndex
 
         self._buffer.control.targetSamplingRate = self.sampling_rate
         self._buffer.control.useActiveElectrodes = bool(self.use_active_electrodes)
