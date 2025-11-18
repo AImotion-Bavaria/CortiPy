@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, MutableMapping
 
+from .actichamp_device import ActiChampDevice
 from .base import DeviceInterface
 from .dummy import DummyDevice
 from .lsl import LSLDevice
@@ -45,7 +46,37 @@ class DeviceFactory:
                 timeout=timeout,
             )
 
-        if device_name in {"actichamp", "lsl"}:
+        if device_name == "actichamp":
+            fs = float(device_params.get("fs", params.get("fs", 0) or 0))
+            if fs <= 0:
+                raise ValueError("ActiChamp device requires 'fs' sampling rate in Params.Parameters.")
+
+            channel_count = int(device_params.get("NumberEEGChannels", 32))
+            aux_channels = int(device_params.get("NumberAUXChannels", 0))
+            install_dir = (
+                params.get("ActiChampPath")
+                or device_params.get("ActiChampPath")
+                or device_params.get("actichampPath")
+            )
+            include_triggers = bool(device_params.get("IncludeTriggers", True))
+            use_active = bool(
+                params.get("UseActiveElectrodes")
+                or device_params.get("UseActiveElectrodes")
+                or False
+            )
+            timeout = float(device_params.get("ActiChampTimeout") or params.get("ActiChampTimeout") or 10.0)
+
+            return ActiChampDevice(
+                sampling_rate=fs,
+                channel_count=channel_count,
+                aux_channels=aux_channels,
+                install_dir=install_dir,
+                timeout=timeout,
+                include_triggers=include_triggers,
+                use_active_electrodes=use_active,
+            )
+
+        if device_name == "lsl":
             stream_name = params.get("StreamName") or device_params.get("StreamName")
             if stream_name is None:
                 stream_name = "EEG"

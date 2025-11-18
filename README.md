@@ -77,6 +77,17 @@ MeasurementPipeline(hooks=hooks).run()
 - The serial protocol relies on `pyserial`, which ships with the package
   dependencies—no additional install steps required.
 
+### ActiCHamp hardware specifics
+
+- Requires Windows because the vendor SDK uses Win32 shared memory and DLLs.
+- The shared-memory producer and DLLs are bundled in `cortipy/devices/actichamp`;
+  set `Params["ActiChampPath"]` to override the location if needed.
+- Provide `Params["Parameters"]["fs"]` (sampling rate), `NumberEEGChannels`, and
+  optional `NumberAUXChannels`; triggers are appended after the EEG/AUX channels.
+- The adapter launches `EEG_SharedMemoryProducer.exe`, writes the target sampling
+  rate, waits for the `acquisitionReady` flag, and reads from the ring buffer
+  without altering the vendor math or DLLs.
+
 ## Testing and validation
 
 The `tests/regression` fixtures mirror deterministic MATLAB exports. Run `pytest` for
