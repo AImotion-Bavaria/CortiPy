@@ -294,8 +294,13 @@ class ActiChampDevice(DeviceInterface):
         self._buffer = ctypes.cast(ptr, ctypes.POINTER(SharedBuffer))
 
         try:
-            data = np.ctypeslib.as_array(self._buf.data)
-            self._data_view = data.reshape(BUFFER_SIZE, MAX_CHANNELS)
+            buf = self._buf
+            data_addr = ctypes.addressof(buf.data)
+            flat_type = ctypes.c_float * (BUFFER_SIZE * MAX_CHANNELS)
+            flat = flat_type.from_address(data_addr)
+            self._data_view = np.ndarray(
+                (BUFFER_SIZE, MAX_CHANNELS), dtype=np.float32, buffer=flat
+            )
         except Exception as exc:  # pragma: no cover - defensive for unexpected mapping issues
             ctypes.windll.kernel32.UnmapViewOfFile(ctypes.c_void_p(ptr))
             self._buffer_ptr = None
