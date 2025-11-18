@@ -1,0 +1,747 @@
+{
+  "Method": "SSVEP",
+  "Device": "ActiCHamp",
+  "Parameters": {
+    "AddInfos": "No",
+    "RepeatMeas": "Yes",
+    "fs": 250,
+    "TestSubjectNo": 0,
+    "RecordingTime": 10,
+    "Environment": "J001",
+    "NumberEEGChannels": 8,
+    "NumberAUXChannels": 0,
+    "ReferenceChannel": 0,
+    "LowestFrequency": 3,
+    "HighestFrequency": 45,
+    "Stimulus": "Checkerboard",
+    "StimFreq": 10
+  },
+  "Channels": [
+    {
+      "Channel": "GND",
+      "Position": "GND",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "Ch 1",
+      "Position": "Fp1",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 2",
+      "Position": "Fpz",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 3",
+      "Position": "Fp2",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 4",
+      "Position": "AF3",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 5",
+      "Position": "AFz",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 6",
+      "Position": "AF4",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 7",
+      "Position": "F7",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 8",
+      "Position": "F3",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 9",
+      "Position": "Fz",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 10",
+      "Position": "F4",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 11",
+      "Position": "F8",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 12",
+      "Position": "FC5",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 13",
+      "Position": "FC1",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 14",
+      "Position": "FC2",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 15",
+      "Position": "FC6",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 16",
+      "Position": "T7",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 17",
+      "Position": "C3",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 18",
+      "Position": "Cz",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 19",
+      "Position": "C4",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 20",
+      "Position": "T8",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 21",
+      "Position": "CP5",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 22",
+      "Position": "CP1",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 23",
+      "Position": "CP2",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 24",
+      "Position": "CP6",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 25",
+      "Position": "P7",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 26",
+      "Position": "P3",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 27",
+      "Position": "Pz",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 28",
+      "Position": "P4",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 29",
+      "Position": "P8",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 30",
+      "Position": "PO3",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 31",
+      "Position": "PO4",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    },
+    {
+      "Channel": "Ch 32",
+      "Position": "Oz",
+      "Rubrik": "Dry Electrodes",
+      "Model": "Datwyler SoftPulse Brush Medium",
+      "Impedance": 0,
+      "Active": false
+    }
+  ],
+  "Metadata": {
+    "Participant": {
+      "Code": "1",
+      "Gender": "Unspecified",
+      "DominantHand": "Right"
+    }
+  },
+  "Evaluation": {
+    "fft": {
+      "xdft": [
+        [
+          61778.282552083336,
+          62194.51247829861,
+          33279.421875,
+          26954.358506944445,
+          51239.6484375,
+          33304.67621527778,
+          25868.141493055555,
+          32379.480034722223
+        ],
+        [
+          12012.92721008141,
+          12610.192979598294,
+          1027.1855050837776,
+          2454.434304112352,
+          3920.740897780358,
+          2698.8040387257006,
+          2914.7697528977114,
+          2901.3816160173196
+        ],
+        [
+          19191.81918048549,
+          19470.812489960048,
+          1256.484701703441,
+          3223.2018178434414,
+          4098.9258796496515,
+          3242.9083838498136,
+          4154.862468546623,
+          3686.8916394876537
+        ],
+        [
+          34310.6546201463,
+          34284.780185962576,
+          2247.3552400903577,
+          5216.101868860402,
+          4610.0383784352025,
+          4744.797600758526,
+          7078.129742693274,
+          5727.11177252596
+        ],
+        [
+          102666.31585851754,
+          102074.64292816413,
+          8841.536059646447,
+          14902.156040521899,
+          7641.019950004737,
+          12519.825123423714,
+          21049.48571210705,
+          15876.81052716933
+        ],
+        [
+          96912.2673230517,
+          96530.35194431437,
+          11587.711411040575,
+          13923.82226583001,
+          1685.3525344495686,
+          11079.444958765544,
+          20182.133510199867,
+          14502.513685720063
+        ],
+        [
+          28515.53700892229,
+          28660.224471621845,
+          4899.304124345539,
+          4028.4093559152398,
+          1229.0921371213287,
+          3161.1521660598555,
+          5968.871294330072,
+          4149.603468560626
+        ],
+        [
+          14500.743501596597,
+          14872.4683231698,
+          3637.3359506361794,
+          1851.6408951030592,
+          1731.5338021638083,
+          1525.3943317469618,
+          2871.802625946022,
+          1900.3005939397242
+        ],
+        [
+          8909.265362508593,
+          9478.24107876598,
+          3200.991558047081,
+          742.3125515900408,
+          1895.4134744850037,
+          824.3139962271991,
+          1363.7294828147478,
+          754.3820454624134
+        ],
+        [
+          8086.837673611111,
+          8760.131401909723,
+          1139.4461805555557,
+          7005.055555555556,
+          2539.1414930555557,
+          6327.581597222223,
+          9851.442708333334,
+          8231.513020833334
+        ]
+      ],
+      "xdftUnit": "Amplitude (uV)",
+      "freq": [
+        0.0,
+        13.88888888888889,
+        27.77777777777778,
+        41.66666666666667,
+        55.55555555555556,
+        69.44444444444444,
+        83.33333333333334,
+        97.22222222222223,
+        111.11111111111111,
+        125.0
+      ],
+      "freqUnit": "Frequency (Hz)"
+    },
+    "PSD": {
+      "freq": [
+        0.0,
+        13.88888888888889,
+        27.77777777777778,
+        41.66666666666667,
+        55.55555555555556,
+        69.44444444444444,
+        83.33333333333334,
+        97.22222222222223,
+        111.11111111111111,
+        125.0
+      ],
+      "freqUnit": "Frequency (Hz)",
+      "psdx": [
+        [
+          274792046.04612315,
+          278507331.53375345,
+          79741434.26406446,
+          52310695.861503966,
+          189036113.18389893,
+          79862504.96192324,
+          48179573.589941464,
+          75487012.3669662
+        ],
+        [
+          20780700.502278868,
+          22898443.245510258,
+          151935.84890700696,
+          867491.6764613019,
+          2213598.123003964,
+          1048830.2264796698,
+          1223407.1105866637,
+          1212194.2005739112
+        ],
+        [
+          53038932.97772892,
+          54592205.61876253,
+          227340.54800852906,
+          1496020.3140310943,
+          2419371.8448280804,
+          1514369.4891902509,
+          2485855.0270853764,
+          1957416.4744306502
+        ],
+        [
+          169519826.94666722,
+          169264245.94556716,
+          727287.2028232688,
+          3917911.4937113724,
+          3060353.354492948,
+          3241887.015191596,
+          7214388.574233479,
+          4723172.532720785
+        ],
+        [
+          1517813627.3223684,
+          1500369512.963358,
+          11256877.424740093,
+          31978692.670473117,
+          8407466.766197339,
+          22571427.04144007,
+          63803642.219164625,
+          36298528.20225142
+        ],
+        [
+          1352446208.3080273,
+          1341807673.8950205,
+          19335608.027360637,
+          27917687.01462099,
+          409019.49581408413,
+          17676590.48558139,
+          58653865.87538867,
+          30286498.061447676
+        ],
+        [
+          117091562.5306392,
+          118282819.21398026,
+          3456458.050007406,
+          2336843.799190863,
+          217536.1173408204,
+          1438975.154445828,
+          5130349.132071966,
+          2479566.0882658153
+        ],
+        [
+          30279104.942269817,
+          31851405.219411235,
+          1905150.6457618175,
+          493714.6566362004,
+          431742.14035716315,
+          335063.2128949095,
+          1187604.0464242273,
+          520004.4980151843
+        ],
+        [
+          11430001.339141734,
+          12936535.76839779,
+          1475473.9614751698,
+          79348.02109172886,
+          517333.2824533412,
+          97847.0732701519,
+          267805.16673093784,
+          81949.2869543119
+        ],
+        [
+          4708579.93627219,
+          5525272.956868186,
+          93480.30708355035,
+          3533097.8402222223,
+          464201.24556646054,
+          2882756.7986043836,
+          6987666.487361329,
+          4878562.076074707
+        ]
+      ],
+      "psdxUnit": "Power Spectral Density (uV^2/Hz)",
+      "dBpsdx": [
+        [
+          84.39004157760615,
+          84.44836632194644,
+          79.0168404280577,
+          77.18590497255524,
+          82.76544779084857,
+          79.02342928123272,
+          76.82862951985385,
+          78.77872237158255
+        ],
+        [
+          73.1766018321859,
+          73.59805957760582,
+          51.81660256717418,
+          59.382653164493455,
+          63.45098777877851,
+          60.207051948950024,
+          60.87571000339957,
+          60.83572201910607
+        ],
+        [
+          77.24594778470893,
+          77.37130640902541,
+          53.566769025346524,
+          61.749374907287844,
+          63.83702622287562,
+          61.80231851081337,
+          63.954757973656726,
+          62.91683239201092
+        ],
+        [
+          82.29220500355959,
+          82.28565230829463,
+          58.61705945893813,
+          65.93054620983138,
+          64.85771573882465,
+          65.10797874937579,
+          68.58199530150442,
+          66.74233810205116
+        ],
+        [
+          91.81218447715834,
+          91.76198230841054,
+          70.51417937116055,
+          75.04860705263721,
+          69.24665159271166,
+          73.53559017501817,
+          78.04845471049312,
+          75.59889016038889
+        ],
+        [
+          91.31120000655076,
+          91.27690271308468,
+          72.86357833444288,
+          74.45879434065813,
+          56.11744009040806,
+          72.47398500717046,
+          77.6829664173746,
+          74.81249060044217
+        ],
+        [
+          80.68525601490762,
+          80.72921667177073,
+          65.38631290348829,
+          63.68629683972615,
+          53.375313728291246,
+          61.58053295409691,
+          67.1014692085703,
+          63.94375688100677
+        ],
+        [
+          74.81143033166924,
+          75.03128597285932,
+          62.7992932228794,
+          56.9347602007297,
+          56.35224440204561,
+          55.25126748593992,
+          60.74671668661898,
+          57.16007100278502
+        ],
+        [
+          70.58046281277332,
+          71.11817993636163,
+          61.68931549662862,
+          48.99536100093272,
+          57.137704194894255,
+          49.90547839890469,
+          54.27818951544886,
+          49.13545179100478
+        ],
+        [
+          66.72889947716801,
+          67.42353737693526,
+          49.707201303833514,
+          65.48155664290285,
+          56.66706301440698,
+          64.5980800503847,
+          68.44332168469573,
+          66.88291835435467
+        ]
+      ],
+      "dBpsdxUnit": "Power Spectral Density (dB/Hz)"
+    },
+    "SNR_2_45Hz": [
+      5.677169830927005,
+      5.6702969436706425,
+      22.703811428288446,
+      13.183194054479571,
+      16.558545242185726,
+      14.88759616890249,
+      10.790961404283685,
+      13.596976279546869
+    ],
+    "SNR_max": [
+      -1.4447313282000072,
+      -1.336631424606307,
+      10.542679055452213,
+      7.404059334791491,
+      18.52046930730646,
+      10.621278888089222,
+      4.122997905279358,
+      8.464871010731576
+    ],
+    "T2circ": [
+      NaN,
+      NaN,
+      NaN,
+      NaN,
+      NaN,
+      NaN,
+      NaN,
+      NaN
+    ],
+    "p_values": [
+      NaN,
+      NaN,
+      NaN,
+      NaN,
+      NaN,
+      NaN,
+      NaN,
+      NaN
+    ],
+    "rho": [
+      0.9671055159557925,
+      0.9616279107129557,
+      0.9180176466958911
+    ],
+    "f_CCA": [
+      10.0,
+      11.0,
+      50.0
+    ],
+    "F_Test": {
+      "channel": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ],
+      "P_peak": [
+        20780700.502278868,
+        22898443.245510258,
+        151935.84890700696,
+        867491.6764613019,
+        2213598.123003964,
+        1048830.2264796698,
+        1223407.1105866637,
+        1212194.2005739112
+      ],
+      "P_noise": [
+        20780700.502278868,
+        22898443.245510258,
+        151935.84890700696,
+        867491.6764613019,
+        2213598.123003964,
+        1048830.2264796698,
+        1223407.1105866637,
+        1212194.2005739112
+      ],
+      "F_value": [
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "F_crit": [
+        161.44763879758827,
+        161.44763879758827,
+        161.44763879758827,
+        161.44763879758827,
+        161.44763879758827,
+        161.44763879758827,
+        161.44763879758827,
+        161.44763879758827
+      ],
+      "significant": [
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false,
+        false
+      ]
+    }
+  },
+  "Timestamp": "2025-11-18 16:35:20",
+  "DataFile": "data.npz"
+}
