@@ -16,11 +16,12 @@ Win32 shared-memory primitives and vendor DLLs.
 from __future__ import annotations
 
 import ctypes
+import logging
 import os
 import subprocess
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Optional, TextIO
 
 import numpy as np
 
@@ -36,6 +37,8 @@ FILE_MAP_ALL_ACCESS = 0xF001F
 EVENT_MODIFY_STATE = 0x0002
 SYNCHRONIZE = 0x00100000
 CREATE_NO_WINDOW = 0x08000000
+
+logger = logging.getLogger(__name__)
 
 
 class ControlBlock(ctypes.Structure):
@@ -98,6 +101,7 @@ class ActiChampDevice(DeviceInterface):
         self.use_active_electrodes = use_active_electrodes
 
         self._process: Optional[subprocess.Popen[bytes]] = None
+        self._producer_log: Optional[TextIO] = None
         self._buffer: SharedBuffer | None = None
         self._buffer_ptr: int | None = None
         self._data_view: np.ndarray | None = None
@@ -105,17 +109,27 @@ class ActiChampDevice(DeviceInterface):
 
     # ------------------------------------------------------------------
     def connect(self) -> None:
+        logger.info(
+            "Connecting to ActiChamp (fs=%s, channels=%s, aux=%s, install_dir=%s)",
+            self.sampling_rate,
+            self.channel_count,
+            self.default_aux,
+            self.install_dir,
+        )
         if os.name != "nt":
+            logger.error("ActiChamp device requires Windows (detected os.name=%s)", os.name)
             raise RuntimeError("ActiChamp device requires Windows and the vendor SDK DLLs.")
 
         try:
             self._map_shared_buffer()
-        except RuntimeError:
+        except RuntimeError as exc:
+            logger.warning("Shared memory not available, attempting to start producer: %s", exc)
             self._start_producer()
             self._map_shared_buffer()
 
         self._initialize_buffer_state()
         self._wait_for_acquisition_ready()
+        logger.info("ActiChamp acquisition ready for sampling.")
 
     def acquire(self, duration_seconds: float, aux_channels: int = 0) -> np.ndarray:
         if self._buffer is None or self._data_view is None:
@@ -159,6 +173,7 @@ class ActiChampDevice(DeviceInterface):
         return out[:copied]
 
     def disconnect(self) -> None:
+        logger.info("Disconnecting ActiChamp device.")
         if self._buffer is not None:
             self._buffer.control.stopRequested = True
             self._signal_stop_event()
@@ -170,6 +185,14 @@ class ActiChampDevice(DeviceInterface):
                 self._process.kill()
         self._process = None
         self._spawned_producer = False
+
+        if self._producer_log is not None:
+            try:
+                self._producer_log.flush()
+                self._producer_log.close()
+            except Exception:  # pragma: no cover - best-effort close
+                logger.exception("Failed to close ActiChamp producer log file")
+            self._producer_log = None
 
         if self._buffer_ptr is not None:
             ctypes.windll.kernel32.UnmapViewOfFile(ctypes.c_void_p(self._buffer_ptr))
@@ -208,13 +231,30 @@ class ActiChampDevice(DeviceInterface):
     def _start_producer(self) -> None:
         exe_path = self.install_dir / "EEG_SharedMemoryProducer.exe"
         if not exe_path.exists():
+            logger.error("ActiChamp producer executable not found at %s", exe_path)
             raise FileNotFoundError(f"ActiChamp producer executable not found at {exe_path}")
 
-        self._process = subprocess.Popen(
-            [str(exe_path)],
-            cwd=str(self.install_dir),
-            creationflags=CREATE_NO_WINDOW,
-        )
+        log_path = self.install_dir / "EEG_SharedMemoryProducer.log"
+        log_file: Optional[TextIO] = None
+
+        try:
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            log_file = log_path.open("a", encoding="utf-8")
+            self._process = subprocess.Popen(
+                [str(exe_path)],
+                cwd=str(self.install_dir),
+                stdout=log_file,
+                stderr=subprocess.STDOUT,
+                creationflags=CREATE_NO_WINDOW,
+            )
+            self._producer_log = log_file
+            logger.info("Started ActiChamp producer at %s (log: %s)", exe_path, log_path)
+        except Exception:
+            if log_file is not None:
+                log_file.close()
+            logger.exception("Failed to launch ActiChamp producer executable")
+            raise
+
         self._spawned_producer = True
 
     def _map_shared_buffer(self) -> None:
@@ -223,6 +263,8 @@ class ActiChampDevice(DeviceInterface):
         deadline = time.time() + self.timeout
         handle = None
         ptr = None
+
+        logger.debug("Mapping ActiChamp shared memory block '%s'", SHM_NAME)
 
         while time.time() < deadline:
             handle = kernel32.OpenFileMappingW(FILE_MAP_ALL_ACCESS, False, SHM_NAME)
@@ -234,16 +276,20 @@ class ActiChampDevice(DeviceInterface):
             time.sleep(0.05)
 
         if not ptr:
+            logger.error("Unable to map ActiChamp shared memory block '%s' before timeout", SHM_NAME)
             raise RuntimeError("Unable to map ActiChamp shared memory. Is the producer running?")
 
         self._buffer_ptr = ptr
         self._buffer = SharedBuffer.from_address(ptr)
         data = np.ctypeslib.as_array(self._buffer.data)
         self._data_view = data.reshape(BUFFER_SIZE, MAX_CHANNELS)
+        logger.info("Mapped ActiChamp shared memory and initialized buffer view.")
 
     def _initialize_buffer_state(self) -> None:
         if self._buffer is None or self._data_view is None:
             raise RuntimeError("ActiChamp shared memory is not mapped.")
+
+        logger.debug("Initializing ActiChamp buffer state (spawned=%s)", self._spawned_producer)
 
         if self._spawned_producer:
             self._buffer.writeIndex = 0
@@ -255,6 +301,11 @@ class ActiChampDevice(DeviceInterface):
 
         self._buffer.control.targetSamplingRate = self.sampling_rate
         self._buffer.control.useActiveElectrodes = bool(self.use_active_electrodes)
+        logger.debug(
+            "ActiChamp control block updated (fs=%s, activeElectrodes=%s)",
+            self.sampling_rate,
+            self.use_active_electrodes,
+        )
 
     def _wait_for_acquisition_ready(self) -> None:
         if self._buffer is None:
@@ -263,8 +314,10 @@ class ActiChampDevice(DeviceInterface):
         deadline = time.time() + self.timeout
         while time.time() < deadline:
             if bool(self._buffer.acquisitionReady):
+                logger.info("ActiChamp acquisition flag reported ready.")
                 return
             time.sleep(0.01)
+        logger.error("Timed out waiting for ActiChamp acquisition to become ready.")
         raise TimeoutError("Timed out waiting for ActiChamp acquisition to become ready.")
 
     def _signal_stop_event(self) -> None:

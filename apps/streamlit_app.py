@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import sys
 import time
@@ -26,6 +27,43 @@ except ModuleNotFoundError:  # pragma: no cover
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+LOG_PATH = ROOT / "streamlit_app.log"
+
+
+def _configure_logging() -> logging.Logger:
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    file_attached = any(
+        isinstance(handler, logging.FileHandler)
+        and Path(getattr(handler, "baseFilename", "")).resolve() == LOG_PATH
+        for handler in root_logger.handlers
+    )
+    if not file_attached:
+        file_handler = logging.FileHandler(LOG_PATH, encoding="utf-8")
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+
+    stream_attached = any(isinstance(handler, logging.StreamHandler) for handler in root_logger.handlers)
+    if not stream_attached:
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(formatter)
+        root_logger.addHandler(stream_handler)
+
+    logger = logging.getLogger(__name__)
+
+    def _hook(exc_type, exc, tb):
+        logger.error("Unhandled exception in Streamlit app", exc_info=(exc_type, exc, tb))
+        return sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = _hook
+    return logger
+
+
+LOGGER = _configure_logging()
 
 from cortipy import MeasurementPipeline
 from cortipy.core.pipeline import PipelineHooks
@@ -796,18 +834,24 @@ def _fetch_actichamp_impedances(fs_value: Any) -> None:
         "Parameters": {"fs": float(fs), "NumberEEGChannels": channel_count},
     }
 
+    LOGGER.info("Attempting ActiCHamp impedance read (fs=%s, channels=%s)", fs, channel_count)
+    values: List[float] = []
+
     try:
         with st.spinner("Checking ActiCHamp impedances..."):
             with DeviceFactory.create(params) as device:
                 reader = getattr(device, "read_impedances", None)
                 values = reader() if callable(reader) else []
     except Exception as exc:  # pragma: no cover
+        LOGGER.exception("ActiCHamp impedance read failed")
         st.warning(f"ActiCHamp impedance read failed: {exc}")
         return
 
     if not values:
+        LOGGER.warning("ActiCHamp impedance read returned no values.")
         return
 
+    LOGGER.info("Loaded %d ActiCHamp impedance values", len(values))
     channel_tables["ActiCHamp"] = _map_impedances_to_channels(rows, values)
     st.session_state["_actichamp_impedance_loaded"] = True
 
@@ -1497,6 +1541,7 @@ def main() -> None:
                 }
                 st.success("Measurement finished and saved. Charts available in the Charts tab.")
             except Exception as exc:  # pragma: no cover
+                LOGGER.exception("Measurement failed")
                 st.error(f"Measurement failed: {exc}")
 
 
