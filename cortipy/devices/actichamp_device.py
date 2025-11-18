@@ -19,6 +19,7 @@ import ctypes
 import logging
 import os
 import subprocess
+import threading
 import time
 from ctypes import wintypes
 from pathlib import Path
@@ -41,44 +42,82 @@ CREATE_NO_WINDOW = 0x08000000
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# ctypes equivalents for std::atomic<T> in SharedBuffer.h
+#
+# Assumptions (typical MSVC x64):
+#   sizeof(std::atomic<int>)   == 4
+#   sizeof(std::atomic<float>) == 4
+#   sizeof(std::atomic<bool>)  == 1
+#
+# If in your build sizeof(std::atomic<bool>) == 4, change AtomicBool below
+# to ctypes.c_uint32 and keep everything else the same.
+# ---------------------------------------------------------------------------
+
+AtomicInt = ctypes.c_int32
+AtomicFloat = ctypes.c_float
+AtomicBool = ctypes.c_bool
+
 
 class ControlBlock(ctypes.Structure):
     _fields_ = [
-        ("targetSamplingRate", ctypes.c_float),
-        ("stopRequested", ctypes.c_bool),
-        ("useActiveElectrodes", ctypes.c_bool),
-        ("streamData", ctypes.c_bool),
-        ("saveToFile", ctypes.c_bool),
-        ("recalibrateAmp", ctypes.c_bool),
-        ("measureImpedance", ctypes.c_bool),
-        ("autoRangeImpedance", ctypes.c_bool),
-        ("useDCMode", ctypes.c_bool),
-        ("enableHPFilter", ctypes.c_bool),
-        ("enableLPFilter", ctypes.c_bool),
-        ("enableNotchFilter", ctypes.c_bool),
-        ("enableActiveShield", ctypes.c_bool),
-        ("enableBiasDrive", ctypes.c_bool),
-        ("useCommonReference", ctypes.c_bool),
-        ("useDrivenRightLeg", ctypes.c_bool),
-        ("enableLEDs", ctypes.c_bool),
-        ("blinkLEDs", ctypes.c_bool),
-        ("showImpedanceLEDs", ctypes.c_bool),
-        ("requestStatusUpdate", ctypes.c_bool),
-        ("requestBatteryStatus", ctypes.c_bool),
-        ("requestTemperature", ctypes.c_bool),
+        # std::atomic<float> targetSamplingRate;
+        ("targetSamplingRate", AtomicFloat),
+
+        # std::atomic<bool> stopRequested;
+        ("stopRequested", AtomicBool),
+
+        # std::atomic<bool> useActiveElectrodes;
+        ("useActiveElectrodes", AtomicBool),
+
+        # following: std::atomic<bool> ... all flags
+        ("streamData", AtomicBool),
+        ("saveToFile", AtomicBool),
+        ("recalibrateAmp", AtomicBool),
+        ("measureImpedance", AtomicBool),
+        ("autoRangeImpedance", AtomicBool),
+        ("useDCMode", AtomicBool),
+        ("enableHPFilter", AtomicBool),
+        ("enableLPFilter", AtomicBool),
+        ("enableNotchFilter", AtomicBool),
+        ("enableActiveShield", AtomicBool),
+        ("enableBiasDrive", AtomicBool),
+        ("useCommonReference", AtomicBool),
+        ("useDrivenRightLeg", AtomicBool),
+        ("enableLEDs", AtomicBool),
+        ("blinkLEDs", AtomicBool),
+        ("showImpedanceLEDs", AtomicBool),
+        ("requestStatusUpdate", AtomicBool),
+        ("requestBatteryStatus", AtomicBool),
+        ("requestTemperature", AtomicBool),
     ]
 
 
 class SharedBuffer(ctypes.Structure):
     _fields_ = [
-        ("writeIndex", ctypes.c_int32),
-        ("readIndex", ctypes.c_int32),
-        ("data", ctypes.c_float * (BUFFER_SIZE * MAX_CHANNELS)),
-        ("lostSamples", ctypes.c_int32),
+        # std::atomic<int> writeIndex;
+        ("writeIndex", AtomicInt),
+
+        # std::atomic<int> readIndex;
+        ("readIndex", AtomicInt),
+
+        # float data[BUFFER_SIZE][MAX_CHANNELS];
+        ("data", (ctypes.c_float * MAX_CHANNELS) * BUFFER_SIZE),
+
+        # std::atomic<int> lostSamples;
+        ("lostSamples", AtomicInt),
+
+        # nested control block
         ("control", ControlBlock),
+
+        # float impedances[MAX_CHANNELS + 2];
         ("impedances", ctypes.c_float * (MAX_CHANNELS + 2)),
-        ("impSize", ctypes.c_int32),
-        ("acquisitionReady", ctypes.c_bool),
+
+        # std::atomic<int> impSize;
+        ("impSize", AtomicInt),
+
+        # std::atomic<bool> acquisitionReady;
+        ("acquisitionReady", AtomicBool),
     ]
 
 
@@ -120,122 +159,128 @@ class ActiChampDevice(DeviceInterface):
         self._data_view: np.ndarray | None = None
         self._spawned_producer = False
 
+        # Protect shared-memory access – important with Streamlit reruns / threads.
+        self._lock = threading.RLock()
+
     # ------------------------------------------------------------------
     def connect(self) -> None:
-        logger.info(
-            "Connecting to ActiChamp (fs=%s, channels=%s, aux=%s, install_dir=%s)",
-            self.sampling_rate,
-            self.channel_count,
-            self.default_aux,
-            self.install_dir,
-        )
-        if os.name != "nt":
-            logger.error("ActiChamp device requires Windows (detected os.name=%s)", os.name)
-            raise RuntimeError("ActiChamp device requires Windows and the vendor SDK DLLs.")
+        with self._lock:
+            logger.info(
+                "Connecting to ActiChamp (fs=%s, channels=%s, aux=%s, install_dir=%s)",
+                self.sampling_rate,
+                self.channel_count,
+                self.default_aux,
+                self.install_dir,
+            )
+            if os.name != "nt":
+                logger.error("ActiChamp device requires Windows (detected os.name=%s)", os.name)
+                raise RuntimeError("ActiChamp device requires Windows and the vendor SDK DLLs.")
 
-        try:
-            self._map_shared_buffer()
-        except RuntimeError as exc:
-            logger.info("Shared memory not available yet; attempting to start producer: %s", exc)
-            self._start_producer()
-            self._map_shared_buffer()
+            try:
+                self._map_shared_buffer()
+            except RuntimeError as exc:
+                logger.info("Shared memory not available yet; attempting to start producer: %s", exc)
+                self._start_producer()
+                self._map_shared_buffer()
 
-        self._initialize_buffer_state()
-        self._wait_for_acquisition_ready()
-        logger.info("ActiChamp acquisition ready for sampling.")
+            self._initialize_buffer_state()
+            self._wait_for_acquisition_ready()
+            logger.info("ActiChamp acquisition ready for sampling.")
 
     def acquire(self, duration_seconds: float, aux_channels: int = 0) -> np.ndarray:
-        if self._buffer is None or self._data_view is None:
-            raise RuntimeError("ActiChamp device is not connected.")
+        with self._lock:
+            if self._buffer is None or self._data_view is None:
+                raise RuntimeError("ActiChamp device is not connected.")
 
-        samples_needed = max(1, int(round(duration_seconds * self.sampling_rate)))
-        channel_limit = self._channel_limit(aux_channels)
-        out = np.zeros((samples_needed, channel_limit), dtype=float)
+            samples_needed = max(1, int(round(duration_seconds * self.sampling_rate)))
+            channel_limit = self._channel_limit(aux_channels)
+            out = np.zeros((samples_needed, channel_limit), dtype=float)
 
-        buf = self._buf
+            buf = self._buf
 
-        copied = 0
-        while copied < samples_needed:
-            write_idx = int(buf.writeIndex)
-            read_idx = int(buf.readIndex)
-            available = write_idx - read_idx
+            copied = 0
+            while copied < samples_needed:
+                write_idx = int(buf.writeIndex)
+                read_idx = int(buf.readIndex)
+                available = write_idx - read_idx
 
-            if available <= 0:
-                if buf.control.stopRequested:
-                    break
-                time.sleep(0.001)
-                continue
+                if available <= 0:
+                    if bool(buf.control.stopRequested):
+                        logger.info("ActiChamp producer requested stop; breaking acquisition loop.")
+                        break
+                    time.sleep(0.001)
+                    continue
 
-            to_copy = min(available, samples_needed - copied)
-            start = read_idx % BUFFER_SIZE
-            first_block = min(to_copy, BUFFER_SIZE - start)
+                to_copy = min(available, samples_needed - copied)
+                start = read_idx % BUFFER_SIZE
+                first_block = min(to_copy, BUFFER_SIZE - start)
 
-            if first_block > 0:
-                block = self._data_view[start : start + first_block, :channel_limit]
-                out[copied : copied + first_block, :] = block
-                copied += first_block
-                read_idx += first_block
+                if first_block > 0:
+                    block = self._data_view[start : start + first_block, :channel_limit]
+                    out[copied : copied + first_block, :] = block
+                    copied += first_block
+                    read_idx += first_block
 
-            remaining = to_copy - first_block
-            if remaining > 0:
-                block = self._data_view[:remaining, :channel_limit]
-                out[copied : copied + remaining, :] = block
-                copied += remaining
-                read_idx += remaining
+                remaining = to_copy - first_block
+                if remaining > 0:
+                    block = self._data_view[:remaining, :channel_limit]
+                    out[copied : copied + remaining, :] = block
+                    copied += remaining
+                    read_idx += remaining
 
-            buf.readIndex = read_idx
+                buf.readIndex = read_idx
 
-        return out[:copied]
+            return out[:copied]
 
     def disconnect(self) -> None:
-        logger.info("Disconnecting ActiChamp device.")
-        if self._buffer is not None:
-            self._buf.control.stopRequested = True
-            self._signal_stop_event()
+        with self._lock:
+            logger.info("Disconnecting ActiChamp device.")
+            if self._buffer is not None:
+                try:
+                    self._buf.control.stopRequested = True
+                except RuntimeError:
+                    logger.warning("Shared memory invalid while setting stopRequested during disconnect.")
+                self._signal_stop_event()
 
-        if self._process is not None:
-            try:
-                self._process.wait(timeout=self.timeout)
-            except subprocess.TimeoutExpired:
-                self._process.kill()
-        self._process = None
-        self._spawned_producer = False
+            if self._process is not None:
+                try:
+                    self._process.wait(timeout=self.timeout)
+                except subprocess.TimeoutExpired:
+                    logger.warning("ActiChamp producer did not exit in time; killing.")
+                    self._process.kill()
+            self._process = None
+            self._spawned_producer = False
 
-        if self._producer_log is not None:
-            try:
-                self._producer_log.flush()
-                self._producer_log.close()
-            except Exception:  # pragma: no cover - best-effort close
-                logger.exception("Failed to close ActiChamp producer log file")
-            self._producer_log = None
+            if self._producer_log is not None:
+                try:
+                    self._producer_log.flush()
+                    self._producer_log.close()
+                except Exception:
+                    logger.exception("Failed to close ActiChamp producer log file")
+                self._producer_log = None
 
-        if self._buffer_ptr is not None:
-            ctypes.windll.kernel32.UnmapViewOfFile(ctypes.c_void_p(self._buffer_ptr))
-        self._buffer_ptr = None
-        self._buffer = None
-        self._data_view = None
+            if self._buffer_ptr is not None:
+                ctypes.windll.kernel32.UnmapViewOfFile(ctypes.c_void_p(self._buffer_ptr))
+            self._buffer_ptr = None
+            self._buffer = None
+            self._data_view = None
 
     def prime(self, duration_seconds: float, aux_channels: int = 0) -> np.ndarray:
         return self.acquire(duration_seconds, aux_channels)
 
     def read_impedances(self) -> list[float]:
-        """Return impedance values from the shared control block.
+        """Return impedance values from the shared control block."""
+        with self._lock:
+            if self._buffer is None:
+                raise RuntimeError("ActiChamp shared memory is not mapped.")
 
-        The producer populates ``impedances`` before regular acquisition
-        starts, exposing GND/REF followed by channel impedances. Values are
-        reported in Ohms; unavailable entries remain negative.
-        """
+            buf = self._buf
+            size = int(buf.impSize)
+            if size <= 0:
+                return []
 
-        if self._buffer is None:
-            raise RuntimeError("ActiChamp shared memory is not mapped.")
-
-        buf = self._buf
-        size = int(buf.impSize)
-        if size <= 0:
-            return []
-
-        limit = min(size, MAX_CHANNELS + 2)
-        return [float(buf.impedances[i]) for i in range(limit)]
+            limit = min(size, MAX_CHANNELS + 2)
+            return [float(buf.impedances[i]) for i in range(limit)]
 
     # ------------------------------------------------------------------
     def _channel_limit(self, aux_channels: int) -> int:
@@ -303,7 +348,6 @@ class ActiChampDevice(DeviceInterface):
             logger.error("Unable to map ActiChamp shared memory block '%s' before timeout", SHM_NAME)
             raise RuntimeError("Unable to map ActiChamp shared memory. Is the producer running?")
 
-        # Validate that the mapped region is large enough for our expected layout
         expected_size = ctypes.sizeof(SharedBuffer)
         mbi = _MemoryBasicInformation()
         if kernel32.VirtualQuery(ctypes.c_void_p(ptr), ctypes.byref(mbi), ctypes.sizeof(mbi)):
@@ -322,13 +366,15 @@ class ActiChampDevice(DeviceInterface):
 
         try:
             buf = self._buf
-            data_addr = ctypes.addressof(buf.data)
+            # buf.data is a (BUFFER_SIZE x MAX_CHANNELS) ctypes 2D array.
+            first_row = buf.data[0]
+            data_addr = ctypes.addressof(first_row)
             flat_type = ctypes.c_float * (BUFFER_SIZE * MAX_CHANNELS)
             flat = flat_type.from_address(data_addr)
             self._data_view = np.ndarray(
                 (BUFFER_SIZE, MAX_CHANNELS), dtype=np.float32, buffer=flat
             )
-        except Exception as exc:  # pragma: no cover - defensive for unexpected mapping issues
+        except Exception as exc:
             ctypes.windll.kernel32.UnmapViewOfFile(ctypes.c_void_p(ptr))
             self._buffer_ptr = None
             self._buffer = None
@@ -352,9 +398,6 @@ class ActiChampDevice(DeviceInterface):
             self._data_view.fill(0.0)
             buf.acquisitionReady = False
         else:
-            # When reusing an existing producer instance, align readIndex to the
-            # current writeIndex and clear any prior stop request so we do not
-            # attempt to spawn a second producer (which causes the -6 error).
             buf.control.stopRequested = False
             buf.readIndex = buf.writeIndex
 
@@ -381,23 +424,46 @@ class ActiChampDevice(DeviceInterface):
 
     @property
     def _buf(self) -> SharedBuffer:
-        """Safely dereference the shared buffer pointer.
-
-        If the pointer is null or invalid, raise a clear RuntimeError instead
-        of letting ctypes trigger a crash when dereferencing.
-        """
-
+        """Safely dereference the shared buffer pointer."""
         if self._buffer is None:
+            logger.error("ActiChamp shared memory is not mapped in _buf()")
             raise RuntimeError("ActiChamp shared memory is not mapped.")
 
         ptr_val = ctypes.cast(self._buffer, ctypes.c_void_p).value
         if not ptr_val:
+            logger.error("ActiChamp shared memory pointer is null in _buf()")
             raise RuntimeError("ActiChamp shared memory pointer is null.")
+
+        kernel32 = ctypes.windll.kernel32
+        mbi = _MemoryBasicInformation()
+        res = kernel32.VirtualQuery(
+            ctypes.c_void_p(ptr_val),
+            ctypes.byref(mbi),
+            ctypes.sizeof(mbi),
+        )
+        expected_size = ctypes.sizeof(SharedBuffer)
+
+        if not res:
+            logger.error("VirtualQuery failed for shared memory pointer 0x%X", ptr_val)
+            raise RuntimeError("ActiChamp shared memory pointer is invalid (VirtualQuery failed).")
+
+        if mbi.RegionSize < expected_size:
+            logger.error(
+                "ActiChamp shared memory region too small before dereference "
+                "(RegionSize=%s, expected>=%s).",
+                mbi.RegionSize,
+                expected_size,
+            )
+            raise RuntimeError("ActiChamp shared memory region too small before dereference.")
 
         try:
             return self._buffer.contents
-        except (ValueError, OSError) as exc:  # pragma: no cover - defensive
+        except (ValueError, OSError) as exc:
+            logger.exception("ActiChamp shared memory pointer is invalid or unmapped.")
             raise RuntimeError("ActiChamp shared memory pointer is invalid or unmapped.") from exc
+        except Exception as exc:
+            logger.exception("Unexpected error while dereferencing ActiChamp shared memory pointer.")
+            raise RuntimeError("Unexpected error while dereferencing ActiChamp shared memory pointer.") from exc
 
     def _signal_stop_event(self) -> None:
         kernel32 = ctypes.windll.kernel32
