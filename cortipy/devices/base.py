@@ -12,14 +12,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from types import TracebackType
-from typing import Any, Protocol, TypeVar, runtime_checkable
+from typing import Any, Optional, Protocol, Type, TypeVar, runtime_checkable
 
 
 DeviceChunk = Any
 DeviceT = TypeVar("DeviceT", bound="DeviceInterface")
-ExcType = type[BaseException] | None
-ExcValue = BaseException | None
-Traceback = TracebackType | None
+ExcType = Optional[Type[BaseException]]
+ExcValue = Optional[BaseException]
+Traceback = Optional[TracebackType]
 
 
 @runtime_checkable

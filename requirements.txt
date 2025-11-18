@@ -5,6 +5,7 @@ matplotlib==3.9.2
 mne>=1.6.1
 pandas>=2.1
 pyserial==3.5
+tomli==2.3.0
 
 # Optional UI extras
 streamlit>=1.26
