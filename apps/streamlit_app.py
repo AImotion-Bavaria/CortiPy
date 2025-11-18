@@ -6,10 +6,12 @@ import json
 import re
 import sys
 from dataclasses import dataclass
+import math
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Union
 
 import numpy as np
+import matplotlib.pyplot as plt
 import streamlit as st
 try:
     import tomllib  # Python 3.11+
@@ -72,6 +74,23 @@ class FieldSchema:
     kind: str
     options: List[str]
     tooltip: str
+
+
+@dataclass(frozen=True)
+class ChartSeries:
+    name: str
+    x: np.ndarray
+    y: np.ndarray
+
+
+@dataclass
+class ChartData:
+    key: str
+    title: str
+    x_label: str
+    y_label: str
+    series: List[ChartSeries]
+    description: Optional[str] = None
 
 
 def device_default_values(device: str) -> Dict[str, Any]:
@@ -265,6 +284,245 @@ def _load_npz_array(source: Union[Path, Any]) -> Optional[np.ndarray]:
     finally:
         if hasattr(npz, "close"):
             npz.close()
+
+
+def _downsample_series(x: np.ndarray, y: np.ndarray, max_points: int = 2000) -> tuple[np.ndarray, np.ndarray]:
+    if len(x) <= max_points:
+        return x, y
+    step = max(1, math.ceil(len(x) / max_points))
+    return x[::step], y[::step]
+
+
+def _chart_from_raw_data(label: str, params: Dict[str, Any], data: np.ndarray, aggregate: bool = False) -> Optional[ChartData]:
+    if data is None:
+        return None
+    arr = np.asarray(data)
+    if arr.ndim < 2 or arr.shape[0] == 0:
+        return None
+
+    param_block = params.get("Parameters", {}) if params else {}
+    fs_value = coerce_number(param_block.get("fs"))
+    fs = float(fs_value) if fs_value else 0.0
+    n_samples, n_channels = arr.shape[0], arr.shape[1]
+    max_seconds = 10
+    limit = min(n_samples, int(fs * max_seconds) if fs > 0 else n_samples)
+    time_axis = np.arange(n_samples) / fs if fs > 0 else np.arange(n_samples)
+    x_vals = time_axis[:limit]
+    series: List[ChartSeries] = []
+
+    if aggregate or n_channels == 1:
+        y_vals = np.mean(arr[:limit], axis=1)
+        x_ds, y_ds = _downsample_series(x_vals, y_vals)
+        series.append(ChartSeries(name=label, x=x_ds, y=y_ds))
+    else:
+        max_channels = min(4, n_channels)
+        for ch in range(max_channels):
+            y_vals = arr[:limit, ch]
+            x_ds, y_ds = _downsample_series(x_vals, y_vals)
+            series.append(ChartSeries(name=f"{label} – Ch {ch + 1}", x=x_ds, y=y_ds))
+
+    return ChartData(
+        key="raw",
+        title="Raw EEG preview",
+        x_label="Time (s)" if fs > 0 else "Sample",
+        y_label="Amplitude (uV)",
+        series=series,
+        description="First 10 seconds" if fs > 0 else "Full buffer preview",
+    )
+
+
+def _chart_from_psd(label: str, params: Dict[str, Any], data: np.ndarray, aggregate: bool = False) -> Optional[ChartData]:
+    if data is None:
+        return None
+    arr = np.asarray(data)
+    if arr.ndim < 2 or arr.shape[0] == 0:
+        return None
+
+    param_block = params.get("Parameters", {}) if params else {}
+    fs_value = coerce_number(param_block.get("fs"))
+    fs = float(fs_value) if fs_value else 0.0
+    if fs <= 0:
+        return None
+
+    max_seconds = 10
+    limit = min(arr.shape[0], int(fs * max_seconds)) or arr.shape[0]
+    segment = arr[:limit]
+
+    spectrum = np.fft.rfft(segment, axis=0)
+    psd = (1.0 / (limit * fs)) * np.abs(spectrum) ** 2
+    if psd.shape[0] > 2:
+        psd[1:-1] *= 2
+    freq = np.fft.rfftfreq(limit, d=1.0 / fs)
+
+    series: List[ChartSeries] = []
+    if aggregate or psd.shape[1] == 1:
+        y_vals = 10.0 * np.log10(np.maximum(psd.mean(axis=1), np.finfo(float).tiny))
+        series.append(ChartSeries(name=label, x=freq, y=y_vals))
+    else:
+        max_channels = min(4, psd.shape[1])
+        for ch in range(max_channels):
+            y_vals = 10.0 * np.log10(np.maximum(psd[:, ch], np.finfo(float).tiny))
+            series.append(ChartSeries(name=f"{label} – Ch {ch + 1}", x=freq, y=y_vals))
+
+    return ChartData(
+        key="psd",
+        title="Power Spectral Density",
+        x_label="Frequency (Hz)",
+        y_label="Power (dB/Hz)",
+        series=series,
+        description="Welch-style PSD from first 10 seconds",
+    )
+
+
+def _chart_from_alpha_power(label: str, alpha_eval: Dict[str, Any], aggregate: bool = False) -> Optional[ChartData]:
+    if not alpha_eval:
+        return None
+    try:
+        time_axis = np.asarray(alpha_eval.get("time"))
+        power = np.asarray(alpha_eval.get("dBpsdx"))
+    except Exception:
+        return None
+    if time_axis.ndim != 1 or power.ndim != 2 or power.shape[1] != time_axis.shape[0]:
+        return None
+
+    series: List[ChartSeries] = []
+    if aggregate or power.shape[0] == 1:
+        series.append(ChartSeries(name=label, x=time_axis, y=power.mean(axis=0)))
+    else:
+        max_channels = min(4, power.shape[0])
+        for idx in range(max_channels):
+            series.append(ChartSeries(name=f"{label} – Ch {idx + 1}", x=time_axis, y=power[idx]))
+
+    return ChartData(
+        key="alpha_power",
+        title="Alpha band power",
+        x_label=alpha_eval.get("timeUnit", "Time"),
+        y_label=alpha_eval.get("dBpsdxUnit", "Power"),
+        series=series,
+    )
+
+
+def _chart_from_eval_psd(label: str, psd_eval: Dict[str, Any], aggregate: bool = False) -> Optional[ChartData]:
+    if not psd_eval:
+        return None
+    try:
+        freq = np.asarray(psd_eval.get("freq"))
+        psd_values = psd_eval.get("dBpsdx") or psd_eval.get("psdx")
+        if psd_values is None:
+            return None
+        psd_array = np.asarray(psd_values)
+    except Exception:
+        return None
+
+    if freq.ndim != 1 or psd_array.size == 0:
+        return None
+
+    if psd_array.ndim == 3:
+        psd_array = psd_array.mean(axis=2)
+    if psd_array.ndim == 2 and psd_array.shape[0] == freq.shape[0] and psd_array.shape[1] != freq.shape[0]:
+        psd_array = psd_array.T
+    elif psd_array.ndim == 1:
+        psd_array = psd_array[None, :]
+
+    if psd_array.ndim != 2 or psd_array.shape[1] != freq.shape[0]:
+        return None
+
+    series: List[ChartSeries] = []
+    if aggregate or psd_array.shape[0] == 1:
+        series.append(ChartSeries(name=label, x=freq, y=psd_array.mean(axis=0)))
+    else:
+        max_channels = min(4, psd_array.shape[0])
+        for idx in range(max_channels):
+            series.append(ChartSeries(name=f"{label} – Ch {idx + 1}", x=freq, y=psd_array[idx]))
+
+    return ChartData(
+        key="eval_psd",
+        title="PSD (evaluation)",
+        x_label=psd_eval.get("freqUnit", "Frequency (Hz)"),
+        y_label=psd_eval.get("dBpsdxUnit") or psd_eval.get("psdxUnit") or "Power",
+        series=series,
+    )
+
+
+def collect_chart_data(label: str, params: Dict[str, Any], data: Optional[np.ndarray], aggregate: bool = False) -> Dict[str, ChartData]:
+    charts: Dict[str, ChartData] = {}
+    if data is not None:
+        raw_chart = _chart_from_raw_data(label, params, data, aggregate=aggregate)
+        if raw_chart:
+            charts[raw_chart.key] = raw_chart
+        psd_chart = _chart_from_psd(label, params, data, aggregate=aggregate)
+        if psd_chart:
+            charts[psd_chart.key] = psd_chart
+
+    evaluation = params.get("Evaluation") if params else None
+    if isinstance(evaluation, dict):
+        alpha_chart = _chart_from_alpha_power(label, evaluation.get("alphaPower", {}), aggregate=aggregate)
+        if alpha_chart:
+            charts[alpha_chart.key] = alpha_chart
+        eval_psd_chart = _chart_from_eval_psd(label, evaluation.get("PSD", {}), aggregate=aggregate)
+        if eval_psd_chart:
+            charts[eval_psd_chart.key] = eval_psd_chart
+
+    return charts
+
+
+def render_chart(chart: ChartData) -> None:
+    fig, ax = plt.subplots(figsize=(8, 3))
+    for series in chart.series:
+        ax.plot(series.x, series.y, label=series.name)
+    ax.set_title(chart.title)
+    ax.set_xlabel(chart.x_label)
+    ax.set_ylabel(chart.y_label)
+    if len(chart.series) > 1:
+        ax.legend(loc="best")
+    if chart.description:
+        ax.text(
+            0.01,
+            0.02,
+            chart.description,
+            transform=ax.transAxes,
+            fontsize=8,
+            color="gray",
+            ha="left",
+        )
+    st.pyplot(fig, clear_figure=True)
+    plt.close(fig)
+
+
+def render_chart_section(label: str, params: Dict[str, Any], data: Optional[np.ndarray], aggregate: bool = False) -> None:
+    charts = collect_chart_data(label, params or {}, data, aggregate=aggregate)
+    if not charts:
+        st.info("No charts available for this session yet.")
+        return
+    st.subheader(f"Charts – {label}")
+    for key in sorted(charts.keys()):
+        render_chart(charts[key])
+
+
+def render_comparison_charts(payloads: List[tuple[str, Dict[str, Any], Optional[np.ndarray]]]) -> None:
+    merged: Dict[str, ChartData] = {}
+    for label, params, data in payloads:
+        charts = collect_chart_data(label, params or {}, data, aggregate=True)
+        for key, chart in charts.items():
+            if key not in merged:
+                merged[key] = ChartData(
+                    key=key,
+                    title=f"{chart.title} (comparison)",
+                    x_label=chart.x_label,
+                    y_label=chart.y_label,
+                    series=list(chart.series),
+                    description=chart.description,
+                )
+            else:
+                merged[key].series.extend(chart.series)
+
+    if not merged:
+        st.info("No comparable charts for the selected sessions.")
+        return
+
+    st.subheader("Comparison")
+    for key in sorted(merged.keys()):
+        render_chart(merged[key])
 
 
 def load_params_into_state(params: Dict[str, Any], data_override: Optional[np.ndarray] = None) -> None:
@@ -734,9 +992,10 @@ def list_saved_sessions(base_dir: Path) -> List[Path]:
     return sorted([path for path in base_dir.iterdir() if path.is_dir()], reverse=True)
 
 
-def run_pipeline_once(params: Dict[str, Any], save_dir: Path) -> None:
+def run_pipeline_once(params: Dict[str, Any], save_dir: Path) -> tuple[Dict[str, Any], Optional[Path]]:
     saver = SaveManager(save_dir)
     provider_called = {"done": False}
+    captured: Dict[str, Any] = {}
 
     def provider(_: Optional[Dict[str, Any]]):
         if provider_called["done"]:
@@ -744,11 +1003,34 @@ def run_pipeline_once(params: Dict[str, Any], save_dir: Path) -> None:
         provider_called["done"] = True
         return params
 
-    hooks = PipelineHooks(params_provider=provider, save_callback=saver, should_continue=lambda _: False)
+    def save_and_capture(run_params: Dict[str, Any]) -> None:
+        captured["params"] = run_params
+        saver(run_params)
+        captured["path"] = getattr(saver, "last_target_dir", None)
+
+    hooks = PipelineHooks(params_provider=provider, save_callback=save_and_capture, should_continue=lambda _: False)
     MeasurementPipeline(hooks=hooks).run()
+    return captured.get("params", params), captured.get("path")
 
 
-def render_saved_sessions(base_dir: Path) -> None:
+def _load_session_contents(session_dir: Path) -> tuple[Optional[Dict[str, Any]], Optional[np.ndarray]]:
+    params_path = session_dir / "params.json"
+    data_path = session_dir / "data.npz"
+    params_content: Optional[Dict[str, Any]] = None
+    data_array: Optional[np.ndarray] = None
+    if params_path.exists():
+        try:
+            params_content = json.loads(params_path.read_text(encoding="utf-8"))
+        except Exception as exc:  # pragma: no cover
+            st.error(f"Failed to load params.json from {session_dir.name}: {exc}")
+    else:
+        st.warning(f"{params_path.name} missing in {session_dir.name}.")
+    if data_path.exists():
+        data_array = _load_npz_array(data_path)
+    return params_content, data_array
+
+
+def render_saved_sessions(base_dir: Path) -> tuple[Optional[tuple[str, Dict[str, Any], Optional[np.ndarray]]], List[tuple[str, Dict[str, Any], Optional[np.ndarray]]]]:
     st.subheader("Saved sessions")
     refresh = st.button("Refresh list")
     if refresh:
@@ -756,33 +1038,56 @@ def render_saved_sessions(base_dir: Path) -> None:
     sessions = list_saved_sessions(base_dir)
     if not sessions:
         st.info("No sessions saved yet.")
-        return
-    selected = st.selectbox("Session directory", options=sessions, format_func=lambda p: p.name)
-    if not selected:
-        return
-    params_path = selected / "params.json"
-    data_path = selected / "data.npz"
-    cols = st.columns(2)
+        return None, []
+
+    primary = st.selectbox("Session directory", options=sessions, format_func=lambda p: p.name)
+    compare_selection = st.multiselect(
+        "Sessions to compare / overlay",
+        options=sessions,
+        default=[primary] if primary else [],
+        format_func=lambda p: p.name,
+    )
+
     params_content: Optional[Dict[str, Any]] = None
-    if params_path.exists():
-        params_content = json.loads(params_path.read_text(encoding="utf-8"))
+    data_array: Optional[np.ndarray] = None
+    if primary:
+        params_content, data_array = _load_session_contents(primary)
+
+    cols = st.columns(2)
     with cols[0]:
         if params_content:
             st.caption("params.json")
             st.json(params_content)
-            if st.button("Load session into editor", key=f"load_session_{selected.name}"):
-                data_array = _load_npz_array(data_path) if data_path.exists() else None
+            if st.button("Load session into editor", key=f"load_session_{primary.name}"):
                 load_params_into_state(normalize_params(params_content), data_array)
+                st.session_state["last_results"] = {
+                    "label": primary.name,
+                    "params": normalize_params(params_content),
+                    "data": data_array,
+                }
                 st.success("Session loaded. Review settings before running.")
         else:
             st.warning("params.json missing.")
     with cols[1]:
-        if data_path.exists():
+        if data_array is not None:
             st.caption("data.npz (arrays and shapes)")
-            with np.load(data_path) as npz:
-                st.write({name: arr.shape for name, arr in npz.items()})
+            st.write({"data": data_array.shape})
         else:
             st.info("data.npz missing.")
+
+    primary_payload: Optional[tuple[str, Dict[str, Any], Optional[np.ndarray]]] = None
+    chart_button = st.button("Show charts for selected session", key="show_primary_charts")
+    if chart_button and params_content:
+        primary_payload = (primary.name, normalize_params(params_content), data_array)
+
+    compare_payloads: List[tuple[str, Dict[str, Any], Optional[np.ndarray]]] = []
+    compare_button = st.button("Compare selected sessions", key="compare_sessions")
+    if compare_button:
+        for path in compare_selection:
+            params_loaded, data_loaded = _load_session_contents(path)
+            if params_loaded:
+                compare_payloads.append((path.name, normalize_params(params_loaded), data_loaded))
+    return primary_payload, compare_payloads
 
 
 def handle_upload() -> None:
@@ -841,8 +1146,8 @@ def main() -> None:
     st.session_state["use_imported_data"] = use_imported_data and imported_data is not None
     start_button = sidebar.button("Start measurement")
 
-    session_tab, electrodes_tab, preview_tab, saved_tab = st.tabs(
-        ["Session configuration", "Electrodes", "Preview", "Saved sessions"]
+    session_tab, electrodes_tab, preview_tab, charts_tab, saved_tab = st.tabs(
+        ["Session configuration", "Electrodes", "Preview", "Charts", "Saved sessions"]
     )
 
     with session_tab:
@@ -868,8 +1173,35 @@ def main() -> None:
             mime="application/json",
         )
 
+    with charts_tab:
+        current_results = st.session_state.get("last_results")
+        chart_label: Optional[str] = None
+        chart_params: Optional[Dict[str, Any]] = None
+        chart_data: Optional[np.ndarray] = None
+
+        if current_results:
+            chart_label = current_results.get("label", "Last run")
+            chart_params = current_results.get("params") or assembled_params
+            chart_data = current_results.get("data")
+            st.caption("Showing charts from the last run or loaded session.")
+        elif imported_data is not None:
+            chart_label = "Imported data"
+            chart_params = assembled_params
+            chart_data = imported_data
+            st.caption("Using imported data with current parameters.")
+
+        if chart_label and chart_params is not None:
+            render_chart_section(chart_label, chart_params, chart_data)
+        else:
+            st.info("Run a measurement or load a saved session to see charts.")
+
     with saved_tab:
-        render_saved_sessions(Path(default_save).expanduser())
+        primary_payload, compare_payloads = render_saved_sessions(Path(default_save).expanduser())
+        if primary_payload:
+            label, params_loaded, data_loaded = primary_payload
+            render_chart_section(label, params_loaded, data_loaded)
+        if compare_payloads:
+            render_comparison_charts(compare_payloads)
 
     if start_button:
         if validation_issues:
@@ -884,8 +1216,13 @@ def main() -> None:
             fs = int(assembled_params["Parameters"].get("fs", 250))
             n_channels = int(assembled_params["Parameters"].get("NumberEEGChannels", len(assembled_params.get("Channels", [])) or 8))
             params_to_run["data"] = np.zeros((fs, n_channels))
-            SaveManager(save_dir)(params_to_run)
-            st.success("Simulated data saved.")
+            saved_path = SaveManager(save_dir)(params_to_run)
+            st.session_state["last_results"] = {
+                "label": getattr(saved_path, "name", "Simulated run"),
+                "params": params_to_run,
+                "data": params_to_run.get("data"),
+            }
+            st.success("Simulated data saved. Charts available in the Charts tab.")
         else:
             imported_data = st.session_state.get("imported_data")
             use_imported = st.session_state.get("use_imported_data", False)
@@ -896,8 +1233,13 @@ def main() -> None:
                 st.error("No imported data attached. Upload a data file or select a saved session first.")
                 return
             try:
-                run_pipeline_once(params_to_run, save_dir)
-                st.success("Measurement finished and saved.")
+                run_params, saved_path = run_pipeline_once(params_to_run, save_dir)
+                st.session_state["last_results"] = {
+                    "label": getattr(saved_path, "name", "Last run"),
+                    "params": run_params,
+                    "data": run_params.get("data"),
+                }
+                st.success("Measurement finished and saved. Charts available in the Charts tab.")
             except Exception as exc:  # pragma: no cover
                 st.error(f"Measurement failed: {exc}")
 

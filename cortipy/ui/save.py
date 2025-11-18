@@ -21,12 +21,14 @@ class SaveManager:
         self.base_dir = Path(base_dir or Path.cwd() / "cortipy_runs")
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.database_callback = database_callback
+        self.last_target_dir: Optional[Path] = None
 
     def __call__(self, params: Dict[str, Any]) -> None:
         method = params.get("Method", "Unknown")
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         target_dir = self.base_dir / f"{timestamp}_{method}"
         target_dir.mkdir(parents=True, exist_ok=True)
+        self.last_target_dir = target_dir
 
         safe_params = dict(params)
         data = safe_params.pop("data", None)
@@ -45,6 +47,8 @@ class SaveManager:
 
         if self.database_callback is not None:
             self.database_callback(params)
+
+        return target_dir
 
 
 def _json_fallback(obj):
