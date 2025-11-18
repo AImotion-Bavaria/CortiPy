@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import sys
+import time
 from dataclasses import dataclass
 import math
 from pathlib import Path
@@ -24,6 +25,7 @@ if str(ROOT) not in sys.path:
 
 from cortipy import MeasurementPipeline
 from cortipy.core.pipeline import PipelineHooks
+from cortipy.devices import DeviceFactory
 from cortipy.ui import SaveManager, normalize_params
 
 DEFAULT_SAVE_DIR = Path.cwd() / "cortipy_runs"
@@ -466,6 +468,76 @@ def collect_chart_data(label: str, params: Dict[str, Any], data: Optional[np.nda
     return charts
 
 
+def _resolve_aux_channels(params: Dict[str, Any]) -> int:
+    if params.get("Device") == "ActiCHamp":
+        return int(params.get("Parameters", {}).get("NumberAUXChannels", 0) or 0)
+    return 0
+
+
+def _plot_live_buffer(buffer: np.ndarray, fs: float, placeholder: "st.delta_generator.DeltaGenerator") -> None:
+    if buffer.size == 0:
+        return
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    time_axis = np.arange(buffer.shape[0]) / fs if fs > 0 else np.arange(buffer.shape[0])
+    channels = min(4, buffer.shape[1])
+    for ch in range(channels):
+        ax.plot(time_axis, buffer[:, ch], label=f"Ch {ch + 1}")
+    ax.set_xlabel("Time (s)" if fs > 0 else "Samples")
+    ax.set_ylabel("Amplitude (uV)")
+    ax.set_title("Live preview (last window)")
+    ax.legend(loc="upper right", fontsize=8)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    placeholder.pyplot(fig)
+    plt.close(fig)
+
+
+def run_live_preview(
+    params: Dict[str, Any],
+    placeholder: "st.delta_generator.DeltaGenerator",
+    duration: float,
+    window: float,
+    update_interval: float,
+) -> np.ndarray:
+    params = dict(params)
+    params.pop("data", None)
+
+    fs_value = coerce_number(params.get("Parameters", {}).get("fs"))
+    fs = float(fs_value) if fs_value else 0.0
+    if fs <= 0:
+        raise ValueError("Live preview requires a valid sampling rate (fs) in Parameters.")
+
+    aux_channels = _resolve_aux_channels(params)
+    device = DeviceFactory.create(params)
+    device.connect()
+
+    try:
+        buffer = np.asarray(device.prime(min(update_interval, duration), aux_channels), dtype=float)
+        if buffer.ndim == 1:
+            buffer = buffer[:, np.newaxis]
+        start = time.time()
+        while (time.time() - start) < duration:
+            remaining = duration - (time.time() - start)
+            chunk = np.asarray(device.acquire(min(update_interval, remaining), aux_channels), dtype=float)
+            if chunk.ndim == 1:
+                chunk = chunk[:, np.newaxis]
+            if chunk.size > 0:
+                if buffer.size == 0:
+                    buffer = chunk
+                else:
+                    buffer = np.vstack([buffer, chunk])
+                max_window = int(fs * window) if fs > 0 else buffer.shape[0]
+                if buffer.shape[0] > max_window:
+                    buffer = buffer[-max_window:]
+                _plot_live_buffer(buffer, fs, placeholder)
+            else:
+                time.sleep(update_interval)
+        return buffer
+    finally:
+        device.disconnect()
+
+
 def render_chart(chart: ChartData) -> None:
     fig, ax = plt.subplots(figsize=(8, 3))
     for series in chart.series:
@@ -865,6 +937,36 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
     return edited
 
 
+def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]) -> None:
+    st.subheader("Live preview (beta)")
+    st.caption(
+        "Stream a short window from the configured device. This uses the current session settings and renders up to "
+        "four channels in real time."
+    )
+
+    if validation_issues:
+        st.warning("Fix configuration issues in the Session tab before starting a live preview.")
+        return
+
+    duration = st.slider("Preview duration (s)", min_value=2, max_value=30, value=10, step=1)
+    window = st.slider("Display window (s)", min_value=1, max_value=max(1, duration), value=min(5, duration), step=1)
+    interval = st.slider("Update interval (s)", min_value=0.1, max_value=1.0, value=0.25, step=0.05)
+
+    placeholder = st.empty()
+    if st.button("Start live preview", type="primary"):
+        try:
+            buffer = run_live_preview(
+                params,
+                placeholder,
+                duration=float(duration),
+                window=float(window),
+                update_interval=float(interval),
+            )
+            st.success(f"Captured {buffer.shape[0]} samples over {duration} seconds.")
+        except Exception as exc:  # pragma: no cover
+            st.error(f"Live preview failed: {exc}")
+
+
 def render_participant_form() -> Dict[str, Any]:
     st.subheader("Participant / proband information")
     participant = st.session_state["participant"]
@@ -1146,8 +1248,8 @@ def main() -> None:
     st.session_state["use_imported_data"] = use_imported_data and imported_data is not None
     start_button = sidebar.button("Start measurement")
 
-    session_tab, electrodes_tab, preview_tab, charts_tab, saved_tab = st.tabs(
-        ["Session configuration", "Electrodes", "Preview", "Charts", "Saved sessions"]
+    session_tab, electrodes_tab, live_tab, preview_tab, charts_tab, saved_tab = st.tabs(
+        ["Session configuration", "Electrodes", "Live preview", "Preview", "Charts", "Saved sessions"]
     )
 
     with session_tab:
@@ -1161,6 +1263,9 @@ def main() -> None:
 
     assembled_params = assemble_params(general_values, method_values, participant_values, device_values)
     validation_issues = validate_params(assembled_params)
+
+    with live_tab:
+        render_live_preview_tab(assembled_params, validation_issues)
 
     with preview_tab:
         if validation_issues:

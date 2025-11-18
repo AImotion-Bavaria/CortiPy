@@ -63,7 +63,8 @@ MeasurementPipeline(hooks=hooks).run()
   behaviour, including timestamped run folders containing `params.json` + `data.npz`.
 - `apps/streamlit_app.py` provides the Streamlit UI that recreates the MATLAB
   configuration dialog (method/device params, proband metadata, electrode naming) and
-  gives you start/stop controls plus saved-session browsing.
+  gives you start/stop controls, a live-preview tab for real-time charts, and saved-session
+  browsing.
 
 ### UNICORN hardware specifics
 
