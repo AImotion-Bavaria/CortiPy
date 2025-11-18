@@ -1,8 +1,14 @@
-"""Namespace package exposing modules from the top-level ``core`` directory."""
+"""Core package exports for cortipy."""
 
 from __future__ import annotations
 
-from pathlib import Path
+from .context import ModuleContext
+from .pipeline import MeasurementPipeline, PipelineHooks
+from .params import load_params_from_file
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-__path__ = [str(_REPO_ROOT / "core")]
+__all__ = [
+    "ModuleContext",
+    "MeasurementPipeline",
+    "PipelineHooks",
+    "load_params_from_file",
+]
