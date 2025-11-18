@@ -5,6 +5,11 @@
 #include <thread>
 #include <algorithm>
 #include <mutex>
+
+#include <cstddef> // offsetof
+#include <iostream>
+#include <iomanip>
+
 #include "SDK.h"
 #include "RawDataHandlerExample.h"
 #include "SharedBuffer.h"
@@ -238,6 +243,40 @@ int main() {
     shm->control.targetSamplingRate.store(0);
     shm->control.stopRequested.store(false);
     shm->lostSamples.store(0, std::memory_order_release);
+
+
+
+
+
+if (shm) {
+    std::cout << "C++: mapped SharedBuffer at " << shm << "\n";
+    std::cout << "C++: sizeof(SharedBuffer) = " << sizeof(SharedBuffer) << "\n";
+    std::cout << "C++ Offsets (bytes):\n";
+    std::cout << " writeIndex: " << offsetof(SharedBuffer, writeIndex) << "\n";
+    std::cout << " readIndex: " << offsetof(SharedBuffer, readIndex) << "\n";
+    std::cout << " data: " << offsetof(SharedBuffer, data) << "\n";
+    std::cout << " lostSamples: " << offsetof(SharedBuffer, lostSamples) << "\n";
+    std::cout << " control: " << offsetof(SharedBuffer, control) << "\n";
+    std::cout << "   control.targetSamplingRate: "
+              << (offsetof(SharedBuffer, control) + offsetof(SharedBuffer::ControlBlock, targetSamplingRate)) << "\n";
+    std::cout << "   control.stopRequested: "
+              << (offsetof(SharedBuffer, control) + offsetof(SharedBuffer::ControlBlock, stopRequested)) << "\n";
+    std::cout << "   control.useActiveElectrodes: "
+              << (offsetof(SharedBuffer, control) + offsetof(SharedBuffer::ControlBlock, useActiveElectrodes)) << "\n";
+    std::cout << " impedances: " << offsetof(SharedBuffer, impedances) << "\n";
+    std::cout << " impSize: " << offsetof(SharedBuffer, impSize) << "\n";
+    std::cout << " acquisitionReady: " << offsetof(SharedBuffer, acquisitionReady) << "\n";
+
+    // Print first 16 bytes as hex and first int32
+    unsigned char *bytes = reinterpret_cast<unsigned char*>(shm);
+    std::cout << "C++ first 16 bytes: ";
+    for (int i = 0; i < 16; ++i) std::cout << std::hex << std::setw(2) << std::setfill('0') << (int)bytes[i] << " ";
+    std::cout << std::dec << "\n";
+    int first_int = *reinterpret_cast<int*>(shm);
+    std::cout << "C++ first int32 (little-endian): 0x" << std::hex << (first_int & 0xFFFFFFFF) << std::dec << "\n";
+}
+
+
 
     // --- 2. Open or create stop event ---
     hStopEvent = OpenEventA(EVENT_MODIFY_STATE | SYNCHRONIZE, FALSE, "EEG_StopEvent");

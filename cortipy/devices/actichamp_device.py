@@ -327,61 +327,93 @@ class ActiChampDevice(DeviceInterface):
         self._spawned_producer = True
 
     def _map_shared_buffer(self) -> None:
+        # robust mapping with explicit ctypes signatures and checks
         kernel32 = ctypes.windll.kernel32
-        size = ctypes.sizeof(SharedBuffer)
+
+        # set prototypes for safety (important!)
+        kernel32.OpenFileMappingW.restype = wintypes.HANDLE
+        kernel32.OpenFileMappingW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+
+        kernel32.MapViewOfFile.restype = ctypes.c_void_p
+        kernel32.MapViewOfFile.argtypes = [wintypes.HANDLE, wintypes.DWORD, wintypes.DWORD, wintypes.DWORD,
+                                           ctypes.c_size_t]
+
+        kernel32.VirtualQuery.restype = ctypes.c_size_t
+        kernel32.VirtualQuery.argtypes = [wintypes.LPCVOID, ctypes.POINTER(_MemoryBasicInformation), ctypes.c_size_t]
+
+        expected_size = ctypes.sizeof(SharedBuffer)
         deadline = time.time() + self.timeout
+
         handle = None
         ptr = None
 
-        logger.debug("Mapping ActiChamp shared memory block '%s'", SHM_NAME)
+        logger.debug("Mapping ActiChamp shared memory block '%s' (expected size=%s)", SHM_NAME, expected_size)
 
+        # Try to open and map the whole mapping (pass 0 to MapViewOfFile to map entire mapping)
         while time.time() < deadline:
-            handle = kernel32.OpenFileMappingW(FILE_MAP_ALL_ACCESS, False, SHM_NAME)
-            if handle:
-                ptr = kernel32.MapViewOfFile(handle, FILE_MAP_ALL_ACCESS, 0, 0, size)
-                kernel32.CloseHandle(handle)
-                if ptr:
-                    break
+            # Open wide string explicitly (LPCWSTR)
+            handle = kernel32.OpenFileMappingW(FILE_MAP_ALL_ACCESS, False, ctypes.c_wchar_p(SHM_NAME))
+            if not handle:
+                time.sleep(0.05)
+                continue
+
+            # Map entire mapping by specifying 0 for number of bytes (MapViewOfFile maps whole mapping if 0).
+            ptr = kernel32.MapViewOfFile(handle, FILE_MAP_ALL_ACCESS, 0, 0, 0)
+            # Close the handle immediately — mapping remains valid.
+            kernel32.CloseHandle(handle)
+            handle = None
+
+            if ptr:
+                break
+
             time.sleep(0.05)
 
         if not ptr:
             logger.error("Unable to map ActiChamp shared memory block '%s' before timeout", SHM_NAME)
             raise RuntimeError("Unable to map ActiChamp shared memory. Is the producer running?")
 
-        expected_size = ctypes.sizeof(SharedBuffer)
+        # Validate mapped region via VirtualQuery
         mbi = _MemoryBasicInformation()
-        if kernel32.VirtualQuery(ctypes.c_void_p(ptr), ctypes.byref(mbi), ctypes.sizeof(mbi)):
-            if mbi.RegionSize < expected_size:
-                ctypes.windll.kernel32.UnmapViewOfFile(ctypes.c_void_p(ptr))
-                logger.error(
-                    "ActiChamp shared memory layout mismatch (got %s bytes, expected >= %s). "
-                    "Rebuild the producer with the current SharedBuffer.h.",
-                    mbi.RegionSize,
-                    expected_size,
-                )
-                raise RuntimeError("ActiChamp shared memory layout mismatch.")
+        ok = kernel32.VirtualQuery(ctypes.c_void_p(ptr), ctypes.byref(mbi), ctypes.sizeof(mbi))
+        if not ok:
+            # defensive: unmap and raise
+            kernel32.UnmapViewOfFile(ctypes.c_void_p(ptr))
+            logger.error("VirtualQuery failed for mapped pointer 0x%016x", ptr)
+            raise RuntimeError("ActiChamp shared memory pointer is invalid (VirtualQuery failed).")
 
+        # Region must be >= expected size
+        if mbi.RegionSize < expected_size:
+            kernel32.UnmapViewOfFile(ctypes.c_void_p(ptr))
+            logger.error(
+                "ActiChamp shared memory layout mismatch (region %s bytes < expected %s bytes). Rebuild or match headers.",
+                mbi.RegionSize,
+                expected_size,
+            )
+            raise RuntimeError("ActiChamp shared memory layout mismatch.")
+
+        # OK: set internal pointers
         self._buffer_ptr = ptr
         self._buffer = ctypes.cast(ptr, ctypes.POINTER(SharedBuffer))
 
+        # create numpy view from the 2D float array
         try:
-            buf = self._buf
-            # buf.data is a (BUFFER_SIZE x MAX_CHANNELS) ctypes 2D array.
-            first_row = buf.data[0]
-            data_addr = ctypes.addressof(first_row)
+            # note: SharedBuffer.data is defined as array-of-rows, so get address of first element
+            buf = self._buf  # will raise if pointer invalid
+            # data field is an array of rows; addressof returns start of data[0]
+            data_addr = ctypes.addressof(buf.data)
             flat_type = ctypes.c_float * (BUFFER_SIZE * MAX_CHANNELS)
             flat = flat_type.from_address(data_addr)
-            self._data_view = np.ndarray(
-                (BUFFER_SIZE, MAX_CHANNELS), dtype=np.float32, buffer=flat
-            )
+            self._data_view = np.ndarray((BUFFER_SIZE, MAX_CHANNELS), dtype=np.float32, buffer=flat)
         except Exception as exc:
-            ctypes.windll.kernel32.UnmapViewOfFile(ctypes.c_void_p(ptr))
+            # cleanup mapping on failure
+            kernel32.UnmapViewOfFile(ctypes.c_void_p(ptr))
             self._buffer_ptr = None
             self._buffer = None
-            logger.error("Failed to initialize ActiChamp buffer view: %s", exc)
+            logger.exception("Failed to initialize ActiChamp buffer view: %s", exc)
             raise RuntimeError("Failed to initialize ActiChamp shared buffer view.") from exc
 
-        logger.info("Mapped ActiChamp shared memory and initialized buffer view.")
+        logger.info("Mapped ActiChamp shared memory and initialized buffer view (ptr=0x%016x, region=%d bytes)",
+                    self._buffer_ptr, mbi.RegionSize)
 
     def _initialize_buffer_state(self) -> None:
         if self._buffer is None or self._data_view is None:
