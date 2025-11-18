@@ -8,6 +8,7 @@ from .base import DeviceInterface
 from .dummy import DummyDevice
 from .lsl import LSLDevice
 from .offline import OfflineDevice
+from .unicorn import UnicornDevice
 
 
 class DeviceFactory:
@@ -18,7 +19,33 @@ class DeviceFactory:
         device_name = str(params.get("Device", "LSL")).lower()
         device_params = params.get("Parameters", {})
 
-        if device_name in {"unicorn", "actichamp", "lsl"}:
+        if device_name == "unicorn":
+            port = (
+                params.get("UnicornPort")
+                or params.get("UnicornAddress")
+                or device_params.get("UNICORNPort")
+                or device_params.get("UNICORNAddress")
+                or device_params.get("UnicornPort")
+                or device_params.get("UnicornAddress")
+            )
+            if not port:
+                raise ValueError("UNICORN device requires 'UnicornPort' (serial/Bluetooth COM port).")
+            device_label = (
+                params.get("UnicornDeviceName")
+                or device_params.get("UNICORNDeviceName")
+                or device_params.get("UnicornDeviceName")
+                or str(port)
+            )
+            fs = float(device_params.get("fs", 250))
+            timeout = float(device_params.get("UnicornTimeout") or params.get("UnicornTimeout") or 5.0)
+            return UnicornDevice(
+                port=str(port),
+                device_name=str(device_label),
+                sampling_rate=fs,
+                timeout=timeout,
+            )
+
+        if device_name in {"actichamp", "lsl"}:
             stream_name = params.get("StreamName") or device_params.get("StreamName")
             if stream_name is None:
                 stream_name = "EEG"

@@ -391,6 +391,7 @@ def alpha_snr_ram(
     snr_db = np.zeros(num_channels)
     r_am = np.zeros(num_channels)
     r_am_db = np.zeros(num_channels)
+    debug_metrics: list[dict[str, float | int]] = []
 
     for ch in range(num_channels):
         channel_psd = psd_cube[ch, :, :]
@@ -420,10 +421,27 @@ def alpha_snr_ram(
             snr_db[ch] = np.nan
             r_am_db[ch] = np.nan
 
+        debug_metrics.append(
+            {
+                "channel": ch + 1,
+                "alpha_closed": alpha_power,
+                "alpha_open": alpha_power_open,
+                "noise_closed": noise_power,
+            }
+        )
+
     evaluation["SNR"] = snr
     evaluation["SNR_dB"] = snr_db
     evaluation["R_AM"] = r_am
     evaluation["R_AM_dB"] = r_am_db
+    evaluation["alpha_debug"] = {
+        "mask_closed_samples": int(mask_closed.sum()),
+        "mask_open_samples": int(mask_open.sum()),
+        "mask_total": int(mask_closed.size),
+        "channels": debug_metrics,
+    }
+    if np.any(np.isfinite(snr) & (snr > 1e6)):
+        print("Alpha SNR diagnostic:", evaluation["alpha_debug"])
     return evaluation
 
 
@@ -433,25 +451,47 @@ def eye_state_masks(
     after_trig: float,
     before_trig: float,
 ) -> Tuple[np.ndarray, np.ndarray]:
+    trigger_times = np.asarray(trigger_times, dtype=float)
+    time_axis = np.asarray(time_axis, dtype=float)
     if trigger_times.size == 0:
         empty = np.zeros_like(time_axis, dtype=bool)
         return empty, empty
 
+    def _interval(start: float, end: float) -> np.ndarray:
+        if not np.isfinite(start) or not np.isfinite(end) or end <= start:
+            return np.zeros_like(time_axis, dtype=bool)
+        return (time_axis >= start) & (time_axis <= end)
+
     closed_mask = np.zeros_like(time_axis, dtype=bool)
     open_mask = np.zeros_like(time_axis, dtype=bool)
-    state_closed = True  # recordings start with eyes closed
-    start = after_trig
+    num_trigger = trigger_times.size
+    odd_or_even = num_trigger % 2
 
-    for trig_time in trigger_times:
-        end = trig_time - before_trig
-        if end > start:
-            interval = (time_axis >= start) & (time_axis <= end)
-            if state_closed:
-                closed_mask |= interval
-            else:
-                open_mask |= interval
-        state_closed = not state_closed
-        start = trig_time + after_trig
+    if odd_or_even == 0:
+        closed_indices = range(0, num_trigger - 1, 2)
+        open_indices = range(1, num_trigger, 2)
+    else:
+        closed_indices = range(0, num_trigger, 2)
+        open_indices = range(1, num_trigger - 1, 2)
+
+    for trig in closed_indices:
+        if trig == 0:
+            start = after_trig
+        else:
+            start = trigger_times[trig - 1] + after_trig
+        end_idx = trig
+        if end_idx >= num_trigger:
+            continue
+        end = trigger_times[end_idx] - before_trig
+        closed_mask |= _interval(start, end)
+
+    for trig in open_indices:
+        start = trigger_times[trig - 1] + after_trig
+        end_idx = trig
+        if end_idx >= num_trigger:
+            continue
+        end = trigger_times[end_idx] - before_trig
+        open_mask |= _interval(start, end)
 
     return closed_mask, open_mask
 
@@ -472,6 +512,29 @@ def plot_alpha_matrix(
     metrics = np.column_stack(
         [evaluation["R_AM"], evaluation["R_AM_dB"], evaluation["SNR"], evaluation["SNR_dB"]]
     )
+    import json
+    def to_python(obj):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        if isinstance(obj, (np.float32, np.float64)):
+            return float(obj)
+        if isinstance(obj, (np.int32, np.int64)):
+            return int(obj)
+        if isinstance(obj, dict):
+            return {k: to_python(v) for k, v in obj.items()}
+        if isinstance(obj, list):
+            return [to_python(v) for v in obj]
+        return obj
+
+    results = {
+        "R_AM": evaluation["R_AM"],
+        "R_AM_dB": evaluation["R_AM_dB"],
+        "SNR": evaluation["SNR"],
+        "SNR_dB": evaluation["SNR_dB"]
+    }
+
+    with open("results.json", "w") as f:
+        json.dump(to_python(results), f, indent=4)
     fig, ax = plt.subplots()
     im = ax.imshow(metrics, aspect="auto", cmap="cool")
     norm = im.norm

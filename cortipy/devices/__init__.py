@@ -1,8 +1,17 @@
-"""Namespace package exposing the top-level ``devices`` directory."""
+"""Device adapters exposed by cortipy."""
 
-from __future__ import annotations
+from .base import DeviceInterface
+from .dummy import DummyDevice
+from .factory import DeviceFactory
+from .lsl import LSLDevice
+from .offline import OfflineDevice
+from .unicorn import UnicornDevice
 
-from pathlib import Path
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-__path__ = [str(_REPO_ROOT / "devices")]
+__all__ = [
+    "DeviceInterface",
+    "DeviceFactory",
+    "DummyDevice",
+    "LSLDevice",
+    "OfflineDevice",
+    "UnicornDevice",
+]

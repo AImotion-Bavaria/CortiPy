@@ -1,0 +1,59 @@
+{
+    "GeneralParams": [
+        {
+            "name": "Method",
+            "type": "dropdown",
+            "options": ["Alpha", "BERA", "ASSR", "VEP", "SSVEP", "BCI", "P300"],
+            "tooltip": ""
+        },
+        {
+            "name": "Device",
+            "type": "dropdown",
+            "options": ["UNICORN", "ActiCHamp", "BIOPACK"],
+            "tooltip": ""
+        },      
+        {
+            "name": "Filename",
+            "type": "edit",
+            "options": [],
+            "tooltip": ""
+        }, 
+        {
+            "name": "AddInfos",
+            "type": "dropdown",
+            "options": ["No", "Yes"],
+            "tooltip": "Need extra guidance for setting up the selected method and device? Switch to YES."
+        }, 
+        {
+            "name": "RepeatMeas",
+            "type": "dropdown",
+            "options": ["Yes", "No"],
+            "tooltip": "Do you plan to make more then one measurement in one session?"
+        }, 
+
+        {
+            "name": "fs",
+            "type": "dropdown",
+            "options": ["100", "200", "250", "500", "1000", "2000", "2500", "5000", "10000", "20000", "25000", "50000", "100000"],
+            "tooltip": "Sampling frequency in Hz"
+        },
+        {
+            "name": "TestSubjectNo",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "Each subject has an assigned number. Ask Stefan Zott which number the subject has."
+        },
+        {
+            "name": "RecordingTime",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "Time / s"
+        },
+        {
+            "name": "Environment",
+            "type": "dropdown",
+            "options": ["J001", "EMV"],
+            "tooltip": "Where are you doing your measurements?"
+        }
+    ]
+}

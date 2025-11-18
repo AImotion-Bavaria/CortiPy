@@ -1,0 +1,64 @@
+{
+    "BERA": [
+        {
+            "name": "NumberEEGChannels",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "always 3"
+        },
+        {
+            "name": "NumberAUXChannels",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "always 1"
+        },
+        {
+            "name": "ReferenceChannel",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "always 2"
+        },
+        {
+            "name": "TriggerChannel",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "always 4; e.g. 10 if you have 9 EEG and 1 AUX"
+        },
+        {
+            "name": "LivePlotCH",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "Of which Channel do you want a live plot?"
+        },
+        {
+            "name": "ChannelIpsi",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "Use 1; Channel number of the stimulation side (ipsilateral)"
+        },
+        {
+            "name": "ChannelContra",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "Use 2, or 1 if not needed; Channel number of the not stimulated side (contralateral)"
+        },
+        {
+            "name": "Stimulus",
+            "type": "dropdown",
+            "options": ["Click", "other"],
+            "tooltip": "Click stimulus or sine, chirp..."
+        },
+        {
+            "name": "StimFreq",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "Frequency / Hz; Stimulation Frequency; E.g. every 100ms is one click stimulus"
+        },
+        {
+            "name": "dB_SPL",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "What is the level of stimulation in dB SPL"
+        }
+    ]
+}

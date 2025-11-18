@@ -1,8 +1,21 @@
-"""Namespace package exposing the top-level ``modules`` directory."""
+"""Measurement module implementations."""
 
-from __future__ import annotations
+from .alpha import AlphaModule
+from .assr import AssrModule
+from .base import ModuleBase
+from .bera import BeraModule
+from .bci import BciModule
+from .p300 import P300Module
+from .ssvep import SsvepModule
+from .vep import VepModule
 
-from pathlib import Path
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-__path__ = [str(_REPO_ROOT / "modules")]
+__all__ = [
+    "ModuleBase",
+    "AlphaModule",
+    "AssrModule",
+    "BeraModule",
+    "BciModule",
+    "P300Module",
+    "SsvepModule",
+    "VepModule",
+]

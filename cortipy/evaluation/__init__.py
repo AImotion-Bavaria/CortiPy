@@ -1,8 +1,19 @@
-"""Namespace package exposing the top-level ``evaluation`` directory."""
+"""Module evaluation helpers."""
 
-from __future__ import annotations
+from .alpha import AlphaEvaluator
+from .assr import AssrEvaluator
+from .base import EvaluatorBase
+from .bera import BeraEvaluator
+from .p300 import P300Evaluator
+from .ssvep import SsvepEvaluator
+from .vep import VepEvaluator
 
-from pathlib import Path
-
-_REPO_ROOT = Path(__file__).resolve().parents[2]
-__path__ = [str(_REPO_ROOT / "evaluation")]
+__all__ = [
+    "EvaluatorBase",
+    "AlphaEvaluator",
+    "BeraEvaluator",
+    "SsvepEvaluator",
+    "VepEvaluator",
+    "AssrEvaluator",
+    "P300Evaluator",
+]

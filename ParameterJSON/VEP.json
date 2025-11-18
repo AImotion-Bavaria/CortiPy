@@ -1,0 +1,46 @@
+{
+    "VEP": [
+        {
+            "name": "NumberEEGChannels",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "How many EEG Channels do you need? It nneds to be the same as in actiCHamp LSL Connector."
+        },
+        {
+            "name": "NumberAUXChannels",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "Normally one for the Triggersignal"
+        },
+        {
+            "name": "ReferenceChannel",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "Which Channel should be used as Refernece?"
+        },
+        {
+            "name": "TriggerChannel",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "e.g. 10 if you have 9 EEG and 1 AUX"
+        },
+        {
+            "name": "LivePlotCH",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "Of which Channel do you want a live plot?"
+        },
+        {
+            "name": "Stimulus",
+            "type": "dropdown",
+            "options": ["Checkerboard", "Flash", "Reference"],
+            "tooltip": "Programm evaluation only implemented for Checkerboard."
+        },
+        {
+            "name": "StimFreq",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "reversals/s (rps); When Reference measurement. Use a reasonable value e.g. 2 rps if you normally stimultate with 2 rps"
+        }
+    ]
+}

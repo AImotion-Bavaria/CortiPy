@@ -1,0 +1,34 @@
+{
+    "BCI": [
+        {
+            "name": "NumberEEGChannels",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "How many EEG Channels do you need? It nneds to be the same as in actiCHamp LSL Connector."
+        },
+        {
+            "name": "ReferenceChannel",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "Which Channel should be used as Refernece?"
+        },
+        {
+            "name": "LowestFrequency",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "Frequency / Hz; Only used to plot minimal frequency in the fft"
+        },
+        {
+            "name": "HighestFrequency",
+            "type": "numeric",
+            "options": [],
+            "tooltip": "Frequency / Hz; Only used to plot maximal frequency in the fft"
+        },
+        {
+            "name": "StimFreq",
+            "type": "edit",
+            "options": [],
+            "tooltip": "right, left, forward, stop (e.g. 8.6 12 10 14) / Hz'"
+        }
+    ]
+}

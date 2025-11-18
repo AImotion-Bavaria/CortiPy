@@ -1,0 +1,46 @@
+{
+  "Dry Electrodes": [
+    "Datwyler SoftPulse Brush Medium",
+    "Datwyler SoftPulse Brush Long",
+    "Datwyler SoftPulse Flex",
+    "Datwyler SoftPulse Flat",
+    "Flo-Res, TDE-212B Spike",
+    "Flo-Res, TDE-212 Spike",
+    "Flo-Res, TDE-200 Spike",
+    "Flo-Res, TDE-210 Spike",
+    "Flo-Res, TDE-202 Flat",
+    "g.te, Unicorn Hybrid"
+  ],
+  "Wet Electrodes": [
+    "EasyCap, Ring Ag/AgCl B18",
+    "Spes Medica, Cup Ag/AgCl DAGM152600",
+    "Spes Medica, Cup Ag/AgCl DGAGAT152600",
+    "Spes Medica, Cup Ag DESM152600"
+  ],
+  "Single Use Electrodes": [
+    "AMBU, Blue Sensor SP-00-S",
+    "BIOPAC, EL503 Einmalelektroden",
+    "Kendall, H93SG",
+    "TIGA-MED, 10000099",
+    "Clinical S55H (MSGLT-15DC)",
+    "FIAB, Nassgelelektroden (ZB38.AR3)",     
+    "Kendall, H69P",
+    "Kendall, H124SG",
+    "Kendall, H135SG"   
+  ],
+  "In Ear and Around Ear Electrodes": [
+    "Datwyler SoftPulse In-Ear",
+    "Spes Medica, Ear Electrode AgCl EAR1026SO-2",
+    "Medical Comp. Sys., Ear Electrode Ag/AgCl OHR-MT-26",
+    "DGS Diagnostics, Gold Eartip Electrode EM-1000-9400",
+    "DGS Diagnostics, Gold Eartip Electrode EM-1000-9410",
+    "EasyCap, cEEGrid",
+    "Stefan Specialty V1",
+    "Stefan Specialty V2"  
+  ],
+  "Sonstiges": [
+    "Brain Products, actiCAP",
+    "tens shop, Handschuh-Elektrode Art.Nr. 35506x",
+    "tens shop, Ellenbogen-Elektrode Art.Nr. 35505x-355057"
+  ]
+}
