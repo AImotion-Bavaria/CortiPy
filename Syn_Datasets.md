@@ -10,7 +10,7 @@
 ---
 
 ## Alpha
-- Start with **eyes closed**, then switch **open/closed 3 times** (3× open, 3× closed).
+- Start with **eyes closed**, then switch **open/closed 3 times** (3× open, 3× closed, 30s each).
 - Trigger is needed for closed/open see dummy data
 - Generate **more realistic data**, e.g., including other EEG frequencies and artifacts like **blinking** (short bursts of lower-frequency activity with higher power than higher frequencies with lower power); generally more low-frequency content. Example: [DOI: 10.1109/BIOCAS.2019.8918700](https://doi.org/10.1109/BIOCAS.2019.8918700)  
 - Use **32 channels** and a similar **topography** as in: [Norcia & Tyler, 2007](https://www.sciencedirect.com/science/article/pii/S1053811907011639?via%3Dihub) (they used an **average reference**).
