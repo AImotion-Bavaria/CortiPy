@@ -21,6 +21,7 @@ class PipelineHooks:
     params_provider: ParamsProvider
     should_continue: Optional[ContinueDecider] = None
     save_callback: Optional[SaveCallback] = None
+    context_hook: Optional[Callable[["ModuleContext"], None]] = None
 
 
 class MeasurementPipeline:
@@ -51,6 +52,8 @@ class MeasurementPipeline:
                 break
 
             context = ModuleContext(params)
+            if self.hooks.context_hook is not None:
+                self.hooks.context_hook(context)
             for module in self.modules:
                 module.connect(context)
             for module in self.modules:
@@ -68,6 +71,8 @@ class MeasurementPipeline:
     def run_once(self, params: Params) -> Params:
         """Execute the pipeline a single time with explicit parameters."""
         context = ModuleContext(params)
+        if self.hooks and self.hooks.context_hook is not None:
+            self.hooks.context_hook(context)
         for module in self.modules:
             module.connect(context)
         for module in self.modules:

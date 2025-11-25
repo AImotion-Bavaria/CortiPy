@@ -1,0 +1,47 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cortipy"
+description = "Python EEG acquisition and analysis toolkit"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "CortiPy developers" }]
+license = { text = "Proprietary" }
+classifiers = [
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+]
+dependencies = [
+    "numpy==1.26.4",
+    "scipy>=1.13.1",
+    "pylsl>=1.17.6",
+    "matplotlib==3.9.2",
+    "mne>=1.6.1",
+    "pandas>=2.1",
+    "pyserial==3.5",
+    "tomli>=2.0.1; python_version < \"3.11\"",
+]
+optional-dependencies = { ui = ["streamlit>=1.26"] }
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/CortiPy/CortiPy"
+
+[tool.setuptools]
+packages = { find = { include = ["cortipy*"], exclude = ["cortipy.__pycache__"] } }
+include-package-data = true
+
+[tool.setuptools.package-data]
+"cortipy.devices" = ["actichamp/*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "cortipy.__version__" }

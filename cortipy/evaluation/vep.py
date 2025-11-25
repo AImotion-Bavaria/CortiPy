@@ -4,15 +4,57 @@ from __future__ import annotations
 
 from typing import Any, Dict, MutableMapping, Optional, Sequence, Tuple
 
+import logging
+import matplotlib
 import numpy as np
 from scipy import stats
 from scipy.ndimage import uniform_filter1d
+
+try:  # pragma: no cover - optional Streamlit integration
+    import streamlit as st
+except Exception:  # pragma: no cover
+    st = None
+    _STREAMLIT_RUNTIME = False
+else:
+    _STREAMLIT_RUNTIME = bool(getattr(st, "runtime", None) and st.runtime.exists())
+    if _STREAMLIT_RUNTIME:
+        matplotlib.use("Agg", force=True)
+
+import matplotlib.pyplot as plt
 
 from cortipy.evaluation.base import EvaluatorBase
 from cortipy.shared.filtering import filter_vep
 from cortipy.shared.segmentation import seg_sig_fast
 from cortipy.shared.signal import time_vector
 from cortipy.shared.triggers import trigger_adc
+
+LOGGER = logging.getLogger("cortipy.evaluation.vep")
+
+
+def _show_mpl(fig: plt.Figure, key: str) -> None:
+    if not _is_streamlit_runtime():
+        LOGGER.debug("_show_mpl skipped (no streamlit runtime)", extra={"key": key})
+        return
+    placeholders = st.session_state.setdefault("_vep_eval_placeholders", {})
+    placeholder = placeholders.get(key)
+    if placeholder is None:
+        placeholder = st.empty()
+        placeholders[key] = placeholder
+        LOGGER.debug("_show_mpl created placeholder", extra={"key": key})
+    else:
+        LOGGER.debug("_show_mpl reused placeholder", extra={"key": key})
+    try:
+        placeholder.pyplot(fig, clear_figure=False)
+        LOGGER.debug("_show_mpl rendered figure", extra={"key": key, "fig": fig.number})
+    except Exception as exc:  # pragma: no cover
+        LOGGER.warning("_show_mpl failed to render", extra={"key": key, "error": str(exc)})
+
+
+def _is_streamlit_runtime() -> bool:
+    if st is None:
+        return False
+    runtime = getattr(st, "runtime", None)
+    return bool(runtime and runtime.exists())
 
 MAX_TIME = 0.51
 HP_CUTOFF = 0.5
@@ -28,8 +70,10 @@ class VepEvaluator(EvaluatorBase):
         self.show_plots = show_plots
 
     def evaluate(self, context) -> None:  # type: ignore[override]
+        LOGGER.debug("VepEvaluator.evaluate invoked")
         params = context.params
         if str(params.get("Method", "")).lower() != "vep":
+            LOGGER.debug("VepEvaluator skipped: method=%s", params.get("Method"))
             return
 
         data = params.get("data")
@@ -83,6 +127,7 @@ class VepEvaluator(EvaluatorBase):
         params["Evaluation"] = evaluation
 
         if show_plots:
+            LOGGER.debug("Rendering VEP evaluation plots")
             plot_vep(average_signals, params, peak_stats)
             plot_vep_matrix(evaluation, param_block.get("ReferenceChannel", 1), params.get("Channels"), average_signals)
 
@@ -247,9 +292,8 @@ def plot_vep(avg_signal: np.ndarray, params: dict, peaks: Dict[str, Dict[str, np
     t_ms = time_vector(avg_signal, fs, unit="ms")
     idx_max = np.argmin(np.abs(t_ms - MAX_TIME * 1000.0))
     channels = params.get("Channels")
-    import matplotlib.pyplot as plt
-
     for ch in range(avg_signal.shape[1]):
+        LOGGER.debug("plot_vep called", extra={"channel": ch + 1, "samples": avg_signal.shape[0]})
         fig = plt.figure()
         plt.plot(t_ms[: idx_max or None], avg_signal[: idx_max or None, ch], color="b")
         for name in ("P100", "N75", "N135"):
@@ -265,6 +309,7 @@ def plot_vep(avg_signal: np.ndarray, params: dict, peaks: Dict[str, Dict[str, np
         plt.ylabel("Amplitude (uV)")
         plt.grid(True, alpha=0.3)
         fig.tight_layout()
+        _show_mpl(fig, f"vep_channel_{ch+1}")
 
 
 def plot_vep_matrix(
@@ -273,8 +318,8 @@ def plot_vep_matrix(
     channels: Optional[Sequence[Any]],
     mean_voltages: np.ndarray,
 ) -> None:
+    LOGGER.debug("plot_vep_matrix called", extra={"channels": mean_voltages.shape[1]})
     channel_labels = _channel_labels(channels, mean_voltages.shape[1])
-    import matplotlib.pyplot as plt
     amplitude = evaluation["P100"]["peak_values"] - evaluation["N135"]["peak_values"]
     matrix = np.column_stack(
         [
@@ -309,6 +354,7 @@ def plot_vep_matrix(
     ax.set_title(f"Parameter matrix; REF {ref_label}")
     fig.colorbar(im, ax=ax, label="Value")
     fig.tight_layout()
+    _show_mpl(fig, "vep_matrix")
 
     fig2, ax2 = plt.subplots()
     amplitude_plot = np.nan_to_num(amplitude, nan=0.0)
@@ -318,6 +364,7 @@ def plot_vep_matrix(
     ax2.set_title(f"Amplitudes; REF {ref_label}")
     ax2.grid(True, alpha=0.3)
     fig2.tight_layout()
+    _show_mpl(fig2, "vep_amplitudes")
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,6 @@
 """Device adapters exposed by cortipy."""
 
+from .actichamp_device import ActiChampDevice
 from .base import DeviceInterface
 from .dummy import DummyDevice
 from .factory import DeviceFactory
@@ -10,6 +11,7 @@ from .unicorn import UnicornDevice
 __all__ = [
     "DeviceInterface",
     "DeviceFactory",
+    "ActiChampDevice",
     "DummyDevice",
     "LSLDevice",
     "OfflineDevice",

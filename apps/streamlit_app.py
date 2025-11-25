@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import json
+import copy
+import logging
 import re
 import sys
+import time
+import threading
 from dataclasses import dataclass
 import html
 import math
@@ -17,9 +21,26 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Circle, Rectangle, Polygon, FancyBboxPatch
 import streamlit as st
 try:
+    import plotly.graph_objects as go
+except Exception:  # pragma: no cover
+    go = None
+try:
+    from streamlit_plotly_events import plotly_events
+except Exception:  # pragma: no cover
+    plotly_events = None
+try:
+    from serial.tools import list_ports
+except Exception:  # pragma: no cover
+    list_ports = None
+try:
     import tomllib  # Python 3.11+
 except ModuleNotFoundError:  # pragma: no cover
     import tomli as tomllib  # type: ignore
+try:
+    from streamlit.runtime.scriptrunner import add_script_run_ctx, get_script_run_ctx
+except Exception:  # pragma: no cover
+    add_script_run_ctx = None
+    get_script_run_ctx = None
 
 try:
     import mne  # type: ignore
@@ -30,8 +51,46 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+LOG_PATH = ROOT / "streamlit_app.log"
+
+
+def _configure_logging() -> logging.Logger:
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    file_attached = any(
+        isinstance(handler, logging.FileHandler)
+        and Path(getattr(handler, "baseFilename", "")).resolve() == LOG_PATH
+        for handler in root_logger.handlers
+    )
+    if not file_attached:
+        file_handler = logging.FileHandler(LOG_PATH, encoding="utf-8")
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+
+    stream_attached = any(isinstance(handler, logging.StreamHandler) for handler in root_logger.handlers)
+    if not stream_attached:
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(formatter)
+        root_logger.addHandler(stream_handler)
+
+    logger = logging.getLogger(__name__)
+
+    def _hook(exc_type, exc, tb):
+        logger.error("Unhandled exception in Streamlit app", exc_info=(exc_type, exc, tb))
+        return sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = _hook
+    return logger
+
+
+LOGGER = _configure_logging()
+
 from cortipy import MeasurementPipeline
 from cortipy.core.pipeline import PipelineHooks
+from cortipy.devices import DeviceFactory, DeviceInterface
 from cortipy.ui import SaveManager, normalize_params
 
 DEFAULT_SAVE_DIR = Path.cwd() / "cortipy_runs"
@@ -198,6 +257,65 @@ TEN_TWENTY_32 = [
 UNICORN_8 = ["Fp1", "Fp2", "C3", "C4", "P3", "P4", "O1", "O2"]
 BIOPACK_16 = TEN_TWENTY_32[:16]
 
+TEN_TWENTY_COORDS = {
+    "Fp1": (-0.5, 0.9),
+    "Fpz": (0.0, 0.95),
+    "Fp2": (0.5, 0.9),
+    "F7": (-0.95, 0.6),
+    "F3": (-0.5, 0.6),
+    "Fz": (0.0, 0.65),
+    "F4": (0.5, 0.6),
+    "F8": (0.95, 0.6),
+    "FC5": (-0.7, 0.35),
+    "FC3": (-0.4, 0.35),
+    "FC1": (-0.2, 0.35),
+    "FCz": (0.0, 0.35),
+    "FC2": (0.2, 0.35),
+    "FC4": (0.4, 0.35),
+    "FC6": (0.7, 0.35),
+    "T7": (-1.05, 0.0),
+    "C5": (-0.7, 0.05),
+    "C3": (-0.5, 0.0),
+    "C1": (-0.2, 0.0),
+    "Cz": (0.0, 0.0),
+    "C2": (0.2, 0.0),
+    "C4": (0.5, 0.0),
+    "C6": (0.7, 0.05),
+    "T8": (1.05, 0.0),
+    "TP7": (-0.95, -0.2),
+    "CP5": (-0.7, -0.25),
+    "CP3": (-0.4, -0.25),
+    "CP1": (-0.2, -0.25),
+    "CPz": (0.0, -0.25),
+    "CP2": (0.2, -0.25),
+    "CP4": (0.4, -0.25),
+    "CP6": (0.7, -0.25),
+    "TP8": (0.95, -0.2),
+    "P7": (-0.95, -0.55),
+    "P5": (-0.65, -0.55),
+    "P3": (-0.5, -0.55),
+    "P1": (-0.2, -0.55),
+    "Pz": (0.0, -0.6),
+    "P2": (0.2, -0.55),
+    "P4": (0.5, -0.55),
+    "P6": (0.65, -0.55),
+    "P8": (0.95, -0.55),
+    "PO7": (-0.7, -0.75),
+    "PO3": (-0.35, -0.75),
+    "PO4": (0.35, -0.75),
+    "PO8": (0.7, -0.75),
+    "O1": (-0.3, -0.95),
+    "Oz": (0.0, -1.0),
+    "O2": (0.3, -0.95),
+}
+
+def _channel_default_coords(label: str) -> tuple[Optional[float], Optional[float]]:
+    clean = label.replace(" ", "")
+    coords = TEN_TWENTY_COORDS.get(clean)
+    if coords is None:
+        return None, None
+    return coords
+
 DEVICE_POSITION_DEFAULTS = {
     "ActiCHamp": TEN_TWENTY_32,
     "UNICORN": UNICORN_8,
@@ -248,12 +366,60 @@ METHOD_DESCRIPTIONS: Dict[str, str] = {
 
 PARTICIPANT_CARD_STYLE = """
 <style>
+:root {
+    --card-bg: linear-gradient(135deg, #f3f6ff 0%, #fff7f0 100%);
+    --card-border: #dbe2ef;
+    --card-shadow: rgba(15, 23, 42, 0.08);
+    --label-color: #6b7280;
+    --value-color: #111827;
+    --notes-color: #374151;
+    --divider-color: rgba(255, 255, 255, 0.6);
+}
+@media (prefers-color-scheme: dark) {
+    :root {
+        --card-bg: linear-gradient(135deg, #111827 0%, #0b1220 100%);
+        --card-border: #1f2937;
+        --card-shadow: rgba(0, 0, 0, 0.4);
+        --label-color: #9ca3af;
+        --value-color: #e5e7eb;
+        --notes-color: #cbd5e1;
+        --divider-color: rgba(255, 255, 255, 0.15);
+        --expander-bg: #0f172a;
+        --expander-border: #1f2937;
+        --expander-summary: #111827;
+        --expander-summary-hover: #152238;
+        --expander-text: #e5e7eb;
+    }
+}
+.snapshot-panel {
+    background: var(--card-bg);
+    color: var(--value-color);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 0.75rem 0.9rem;
+    box-shadow: 0 3px 10px var(--card-shadow);
+}
+.snapshot-panel .title {
+    font-weight: 700;
+    margin-bottom: 0.2rem;
+}
+.snapshot-panel .desc {
+    color: var(--label-color);
+    margin-bottom: 0.4rem;
+}
+.snapshot-panel .line {
+    margin-bottom: 0.1rem;
+}
+.snapshot-panel .stats {
+    margin-top: 0.35rem;
+    color: var(--label-color);
+}
 .participant-card {
-    background: linear-gradient(135deg, #f3f6ff 0%, #fff7f0 100%);
+    background: var(--card-bg);
     border-radius: 16px;
-    border: 1px solid #dbe2ef;
+    border: 1px solid var(--card-border);
     padding: 0.85rem 1rem;
-    box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+    box-shadow: 0 4px 12px var(--card-shadow);
     margin-bottom: 0.75rem;
 }
 .participant-card .avatar {
@@ -277,20 +443,20 @@ PARTICIPANT_CARD_STYLE = """
     font-size: 0.75rem;
     text-transform: uppercase;
     letter-spacing: 0.08em;
-    color: #6b7280;
+    color: var(--label-color);
     margin-bottom: 0.05rem;
 }
 .participant-card .value {
     font-size: 0.95rem;
-    color: #111827;
+    color: var(--value-color);
     font-weight: 600;
 }
 .participant-card .notes {
     margin-top: 0.5rem;
     font-size: 0.85rem;
-    color: #374151;
+    color: var(--notes-color);
     padding-top: 0.4rem;
-    border-top: 1px solid rgba(255, 255, 255, 0.6);
+    border-top: 1px solid var(--divider-color);
 }
 </style>
 """
@@ -343,6 +509,10 @@ def default_values(fields: Iterable[FieldSchema]) -> Dict[str, Any]:
 def resolve_choice(options: List[str], current: Optional[str]) -> str:
     if current in options:
         return current
+    if current is not None:
+        current_str = str(current)
+        if current_str in options:
+            return current_str
     return options[0] if options else ""
 
 
@@ -379,6 +549,65 @@ def render_numeric_input(target, field: FieldSchema, current: Any, key: str):
         help=field.tooltip or None,
         key=key,
     )
+
+
+MANUAL_UNICORN_PORT_OPTION = "__manual_unicorn_port__"
+
+
+def serial_port_options() -> List[tuple[str, str]]:
+    if list_ports is None:
+        return []
+    seen = set()
+    options: List[tuple[str, str]] = []
+    for info in list_ports.comports():
+        device = getattr(info, "device", None) or getattr(info, "name", None)
+        if not device or device in seen:
+            continue
+        description = getattr(info, "description", "")
+        manufacturer = getattr(info, "manufacturer", "")
+        details_parts = []
+        if description and description != device:
+            details_parts.append(description)
+        if manufacturer:
+            details_parts.append(manufacturer)
+        details = ", ".join(details_parts)
+        label = f"{device} – {details}" if details else device
+        options.append((device, label))
+        seen.add(device)
+    return options
+
+
+def render_unicorn_port_input(target, field: Dict[str, Any], current: Any, key: str) -> str:
+    port_entries = serial_port_options()
+    labels = {port: label for port, label in port_entries}
+    options: List[str] = [port for port, _ in port_entries]
+
+    current_str = str(current) if current not in (None, "") else ""
+    if current_str and current_str not in options:
+        options.append(current_str)
+        labels[current_str] = f"{current_str} (saved)"
+
+    options.append(MANUAL_UNICORN_PORT_OPTION)
+    default_choice = current_str if current_str in options else options[0]
+
+    selection = target.selectbox(
+        field["label"],
+        options=options,
+        index=options.index(default_choice) if options else 0,
+        format_func=lambda value: "Manual entry" if value == MANUAL_UNICORN_PORT_OPTION else labels.get(value, value),
+        help=field.get("help"),
+        key=key,
+    )
+
+    if selection == MANUAL_UNICORN_PORT_OPTION:
+        manual_value = target.text_input(
+            "Custom UNICORN port",
+            value=current_str if current_str and current_str not in labels else "",
+            help="Enter the UNICORN serial/Bluetooth port manually.",
+            key=f"{key}_manual",
+        )
+        return manual_value.strip()
+    return selection
 
 
 def _load_npz_array(source: Union[Path, Any]) -> Optional[np.ndarray]:
@@ -561,8 +790,198 @@ def _chart_from_eval_psd(label: str, psd_eval: Dict[str, Any], aggregate: bool =
     )
 
 
+def _chart_from_eval_fft(label: str, fft_eval: Dict[str, Any], aggregate: bool = False) -> Optional[ChartData]:
+    if not fft_eval:
+        return None
+    try:
+        freq = np.asarray(fft_eval.get("freq"))
+        xdft = np.asarray(fft_eval.get("xdft"))
+    except Exception:
+        return None
+    if freq.ndim != 1 or xdft.size == 0:
+        return None
+    if xdft.ndim == 1:
+        xdft = xdft[:, None]
+    if xdft.ndim == 3:
+        xdft = np.mean(xdft, axis=2)
+    if xdft.shape[0] != freq.shape[0]:
+        xdft = xdft.T if xdft.shape[1] == freq.shape[0] else xdft
+    if xdft.shape[0] != freq.shape[0]:
+        return None
+
+    magnitude = np.abs(xdft)
+    series: List[ChartSeries] = []
+    if aggregate or magnitude.shape[1] == 1:
+        series.append(ChartSeries(name=label, x=freq, y=magnitude.mean(axis=1)))
+    else:
+        max_channels = min(4, magnitude.shape[1])
+        for idx in range(max_channels):
+            series.append(ChartSeries(name=f"{label} – Ch {idx + 1}", x=freq, y=magnitude[:, idx]))
+
+    return ChartData(
+        key="eval_fft",
+        title="FFT (evaluation)",
+        x_label=fft_eval.get("freqUnit", "Frequency (Hz)"),
+        y_label=fft_eval.get("xdftUnit", "Amplitude"),
+        series=series,
+    )
+
+
+def _chart_from_average_signals(label: str, avg_eval: Dict[str, Any], aggregate: bool = False) -> Optional[ChartData]:
+    if not avg_eval:
+        return None
+    try:
+        time_axis = np.asarray(avg_eval.get("time"))
+        voltage = np.asarray(avg_eval.get("voltage"))
+    except Exception:
+        return None
+    if time_axis.ndim != 1 or voltage.ndim != 2 or voltage.shape[0] != time_axis.shape[0]:
+        return None
+
+    series: List[ChartSeries] = []
+    if aggregate or voltage.shape[1] == 1:
+        series.append(ChartSeries(name=label, x=time_axis, y=voltage.mean(axis=1)))
+    else:
+        max_channels = min(4, voltage.shape[1])
+        for idx in range(max_channels):
+            series.append(ChartSeries(name=f"{label} – Ch {idx + 1}", x=time_axis, y=voltage[:, idx]))
+
+    return ChartData(
+        key="avg_signals",
+        title="Average signals (evaluation)",
+        x_label=avg_eval.get("timeUnit", "Time"),
+        y_label=avg_eval.get("voltageUnit", "Amplitude"),
+        series=series,
+    )
+
+
+def _chart_from_metric_vector(label: str, name: str, values: Any, unit: str = "Value") -> Optional[ChartData]:
+    if values is None:
+        return None
+    arr = np.asarray(values)
+    if arr.ndim != 1 or arr.size == 0:
+        return None
+    x_axis = np.arange(1, arr.size + 1)
+    return ChartData(
+        key=f"metric_{name}",
+        title=f"{label} – {name}",
+        x_label="Index / Channel",
+        y_label=unit,
+        series=[ChartSeries(name=name, x=x_axis, y=arr)],
+    )
+
+
+def _autoevaluate_if_needed(params: Dict[str, Any], data: Optional[np.ndarray]) -> Dict[str, Any]:
+    # If Evaluation already exists (even empty), never auto-run evaluators.
+    if "Evaluation" in params:
+        return params.get("Evaluation") or {}
+
+    if data is None:
+        return {}
+
+    data_array = np.asarray(data)
+    if data_array.size == 0 or (data_array.ndim >= 2 and data_array.shape[1] == 0):
+        LOGGER.warning("Skipping auto-evaluation: empty data buffer", extra={"shape": data_array.shape})
+        return {}
+
+    evaluation: Dict[str, Any] = {}
+    method_name = str(params.get("Method", "")).lower()
+
+    evaluator_map = {
+        "alpha": "AlphaEvaluator",
+        "ssvep": "SsvepEvaluator",
+        "assr": "AssrEvaluator",
+        "vep": "VepEvaluator",
+        "p300": "P300Evaluator",
+        "bera": "BeraEvaluator",
+    }
+    evaluator_name = evaluator_map.get(method_name)
+    if not evaluator_name:
+        return evaluation
+
+    try:  # pragma: no cover - runtime convenience
+        from cortipy.core.context import ModuleContext
+
+        if evaluator_name == "AlphaEvaluator":
+            from cortipy.evaluation.alpha import AlphaEvaluator as EvalCls
+        elif evaluator_name == "SsvepEvaluator":
+            from cortipy.evaluation.ssvep import SsvepEvaluator as EvalCls
+        elif evaluator_name == "AssrEvaluator":
+            from cortipy.evaluation.assr import AssrEvaluator as EvalCls
+        elif evaluator_name == "VepEvaluator":
+            from cortipy.evaluation.vep import VepEvaluator as EvalCls
+        elif evaluator_name == "P300Evaluator":
+            from cortipy.evaluation.p300 import P300Evaluator as EvalCls
+        elif evaluator_name == "BeraEvaluator":
+            from cortipy.evaluation.bera import BeraEvaluator as EvalCls
+        else:
+            return evaluation
+
+        temp_params = dict(params)
+        temp_params["Parameters"] = dict(params.get("Parameters", {}))
+        temp_params["data"] = data
+        ctx = ModuleContext(temp_params)
+        EvalCls(show_plots=False).evaluate(ctx)
+        evaluation = ctx.params.get("Evaluation") or {}
+        params["Evaluation"] = evaluation
+    except Exception as exc:
+        LOGGER.warning("Evaluation generation failed for method %s: %s", method_name, exc)
+    return evaluation
+
+
+def _render_evaluation_figures(params: Dict[str, Any], data: Optional[np.ndarray]) -> List[plt.Figure]:
+    if data is None:
+        return []
+    method_name = str(params.get("Method", "")).lower()
+    evaluator_map = {
+        "alpha": "AlphaEvaluator",
+        "ssvep": "SsvepEvaluator",
+        "assr": "AssrEvaluator",
+        "vep": "VepEvaluator",
+        "p300": "P300Evaluator",
+        "bera": "BeraEvaluator",
+    }
+    evaluator_name = evaluator_map.get(method_name)
+    if not evaluator_name:
+        return []
+
+    try:  # pragma: no cover - UI rendering only
+        from cortipy.core.context import ModuleContext
+
+        if evaluator_name == "AlphaEvaluator":
+            from cortipy.evaluation.alpha import AlphaEvaluator as EvalCls
+        elif evaluator_name == "SsvepEvaluator":
+            from cortipy.evaluation.ssvep import SsvepEvaluator as EvalCls
+        elif evaluator_name == "AssrEvaluator":
+            from cortipy.evaluation.assr import AssrEvaluator as EvalCls
+        elif evaluator_name == "VepEvaluator":
+            from cortipy.evaluation.vep import VepEvaluator as EvalCls
+        elif evaluator_name == "P300Evaluator":
+            from cortipy.evaluation.p300 import P300Evaluator as EvalCls
+        elif evaluator_name == "BeraEvaluator":
+            from cortipy.evaluation.bera import BeraEvaluator as EvalCls
+        else:
+            return []
+
+        temp_params = copy.deepcopy(params)
+        temp_params["data"] = np.asarray(data)
+        ctx = ModuleContext(temp_params)
+        EvalCls(show_plots=True).evaluate(ctx)
+        fig_nums = list(plt.get_fignums())
+        LOGGER.debug(
+            "Evaluation figures captured",
+            extra={"method": method_name, "fig_nums": fig_nums},
+        )
+        figures = [plt.figure(num) for num in fig_nums]
+        return figures
+    except Exception as exc:
+        LOGGER.warning("Evaluation figure rendering failed for %s: %s", method_name, exc)
+    return []
+
+
 def collect_chart_data(label: str, params: Dict[str, Any], data: Optional[np.ndarray], aggregate: bool = False) -> Dict[str, ChartData]:
     charts: Dict[str, ChartData] = {}
+    method_name = str(params.get("Method", "")).lower()
     if data is not None:
         raw_chart = _chart_from_raw_data(label, params, data, aggregate=aggregate)
         if raw_chart:
@@ -571,7 +990,7 @@ def collect_chart_data(label: str, params: Dict[str, Any], data: Optional[np.nda
         if psd_chart:
             charts[psd_chart.key] = psd_chart
 
-    evaluation = params.get("Evaluation") if params else None
+    evaluation = _autoevaluate_if_needed(params, data)
     if isinstance(evaluation, dict):
         alpha_chart = _chart_from_alpha_power(label, evaluation.get("alphaPower", {}), aggregate=aggregate)
         if alpha_chart:
@@ -579,8 +998,542 @@ def collect_chart_data(label: str, params: Dict[str, Any], data: Optional[np.nda
         eval_psd_chart = _chart_from_eval_psd(label, evaluation.get("PSD", {}), aggregate=aggregate)
         if eval_psd_chart:
             charts[eval_psd_chart.key] = eval_psd_chart
+        fft_chart = _chart_from_eval_fft(label, evaluation.get("fft", {}), aggregate=aggregate)
+        if fft_chart:
+            charts[fft_chart.key] = fft_chart
+        avg_chart = _chart_from_average_signals(label, evaluation.get("average_signals", {}), aggregate=aggregate)
+        if avg_chart:
+            charts[avg_chart.key] = avg_chart
+
+        # Peak metrics for VEP-like evaluations
+        for peak_name in ("P100", "N75", "N135"):
+            peak_block = evaluation.get(peak_name)
+            if isinstance(peak_block, dict):
+                peak_vals = peak_block.get("peak_values")
+                peak_times = peak_block.get("peak_times")
+                val_chart = _chart_from_metric_vector(label, f"{peak_name} amplitude", peak_vals, unit="Amplitude (uV)")
+                if val_chart:
+                    charts.setdefault(f"metric_{peak_name}_amp", val_chart)
+                time_chart = _chart_from_metric_vector(
+                    label,
+                    f"{peak_name} latency",
+                    peak_times,
+                    unit="Time (ms)",
+                )
+                if time_chart:
+                    charts.setdefault(f"metric_{peak_name}_latency", time_chart)
+
+        # Scalar-within-dict metrics (e.g., tRes.h)
+        t_res = evaluation.get("tRes")
+        if isinstance(t_res, dict) and "h" in t_res:
+            tres_chart = _chart_from_metric_vector(label, "tRes", t_res.get("h"), unit="tRes h")
+            if tres_chart:
+                charts.setdefault("metric_tRes", tres_chart)
+
+        # Generic metric vectors (e.g., SNR, Fsp, RN values, rho)
+        metric_map = {
+            "SNR": "SNR",
+            "SNR_dB": "SNR (dB)",
+            "R_AM": "R_AM",
+            "R_AM_dB": "R_AM (dB)",
+            "Fsp": "Fsp",
+            "Fmp": "Fmp",
+            "RN_elberlingDon": "Residual noise (Elberling)",
+            "RN_eclipse": "Residual noise (Eclipse)",
+            "rho": "Correlation",
+            "f_CCA": "F_CCA",
+            "T2circ": "T2 circ",
+            "p_values": "p-values",
+            "SNR_2_45Hz": "SNR 2-45 Hz",
+            "SNR_max": "SNR max",
+            "amp_V": "Amplitude",
+            "SNR_time": "SNR time",
+            "SNR_Peak": "SNR peak",
+            "RN_micV": "Residual noise (µV)",
+        }
+        for key, label_name in metric_map.items():
+            metric_chart = _chart_from_metric_vector(label, label_name, evaluation.get(key), unit=label_name)
+            if metric_chart:
+                charts.setdefault(metric_chart.key, metric_chart)
+
+    eval_keys = list(evaluation.keys()) if isinstance(evaluation, dict) else None
+    chart_keys = sorted(charts.keys()) if charts else []
+    LOGGER.info(
+        "Chart collection complete label=%s method=%s data_present=%s eval_keys=%s charts=%s",
+        label,
+        method_name,
+        bool(data is not None),
+        eval_keys,
+        chart_keys,
+    )
 
     return charts
+
+
+def _resolve_aux_channels(params: Dict[str, Any]) -> int:
+    if params.get("Device") == "ActiCHamp":
+        return int(params.get("Parameters", {}).get("NumberAUXChannels", 0) or 0)
+    return 0
+
+
+def _plot_live_buffer(
+    buffer: np.ndarray,
+    fs: float,
+    placeholder: "st.delta_generator.DeltaGenerator",
+    channel_indices: Optional[List[int]] = None,
+) -> None:
+    if buffer.size == 0:
+        return
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+    time_axis = np.arange(buffer.shape[0]) / fs if fs > 0 else np.arange(buffer.shape[0])
+    total_channels = buffer.shape[1]
+    indices = _normalize_channel_indices(channel_indices, total_channels)
+    colors = plt.cm.tab10.colors
+    for plot_idx, ch in enumerate(indices):
+        color = colors[plot_idx % len(colors)]
+        ax.plot(time_axis, buffer[:, ch], label=f"Ch {ch + 1}", color=color)
+    ax.set_xlabel("Time (s)" if fs > 0 else "Samples")
+    ax.set_ylabel("Amplitude (uV)")
+    label_part = "All channels" if len(indices) == total_channels else ", ".join(f"{ch + 1}" for ch in indices)
+    ax.set_title(f"Live preview – {label_part}")
+    ax.legend(loc="upper right", fontsize=8)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    placeholder.pyplot(fig)
+    plt.close(fig)
+
+
+def _plot_fft_spectrum(
+    buffer: np.ndarray,
+    fs: float,
+    placeholder: Optional["st.delta_generator.DeltaGenerator"],
+    channel_indices: Optional[List[int]] = None,
+) -> None:
+    if placeholder is None or buffer.size == 0 or fs <= 0:
+        return
+    total_channels = buffer.shape[1]
+    indices = _normalize_channel_indices(channel_indices, total_channels)
+    colors = plt.cm.tab10.colors
+    fig, ax = plt.subplots(figsize=(10, 4))
+    max_freq = None
+    filled = False
+    bands = [
+        ("Delta", 0.5, 4.0, "#6C91FF"),
+        ("Theta", 4.0, 8.0, "#7ED957"),
+        ("Alpha", 8.0, 13.0, "#FFB347"),
+        ("Beta", 13.0, 30.0, "#FF6F61"),
+        ("Gamma", 30.0, 50.0, "#9B59B6"),
+    ]
+
+    for plot_idx, ch in enumerate(indices):
+        data = buffer[:, ch]
+        if data.size < 4:
+            continue
+        detrended = data - np.mean(data)
+        window = np.hanning(detrended.size)
+        windowed = detrended * window
+        spectrum = np.fft.rfft(windowed)
+        freq = np.fft.rfftfreq(detrended.size, d=1.0 / fs)
+        power = (np.abs(spectrum) ** 2) / (np.sum(window**2) * fs)
+        power_db = 10 * np.log10(power + 1e-12)
+
+        if max_freq is None:
+            max_freq = min(60.0, freq.max())
+        freq_mask = freq <= max_freq
+        color = colors[plot_idx % len(colors)]
+        ax.plot(freq[freq_mask], power_db[freq_mask], linewidth=1.0, color=color, label=f"Ch {ch + 1}")
+
+        if not filled:
+            for name, low, high, band_color in bands:
+                band_mask = (freq >= low) & (freq <= high)
+                if not np.any(band_mask):
+                    continue
+                ax.fill_between(freq[band_mask], power_db[band_mask], color=band_color, alpha=0.15, label=name)
+            filled = True
+
+    if max_freq is None:
+        plt.close(fig)
+        return
+    ax.set_xlim(0, max_freq)
+    ax.set_xlabel("Frequency (Hz)")
+    ax.set_ylabel("Power (dB/Hz)")
+    label_part = "All channels" if len(indices) == total_channels else ", ".join(f"{ch + 1}" for ch in indices)
+    ax.set_title(f"FFT – {label_part}")
+    ax.legend(loc="upper right", fontsize=8, ncol=2)
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+    placeholder.pyplot(fig)
+    plt.close(fig)
+
+
+def _plot_topography(rows: List[Dict[str, Any]], placeholder: "st.delta_generator.DeltaGenerator") -> None:
+    if placeholder is None:
+        return
+    if not rows:
+        placeholder.info("No channels configured.")
+        return
+
+    labels = [row.get("Position") or row.get("Channel") or "" for row in rows]
+    impedances = [coerce_number(row.get("Impedance")) for row in rows]
+    total = len(labels)
+    angles = np.linspace(0, 2 * np.pi, max(total, 8), endpoint=False)
+
+    coords: List[tuple[str, float, float, Optional[float]]] = []
+    fallback_idx = 0
+    for idx, label in enumerate(labels):
+        clean = label.replace(" ", "")
+        custom_x = coerce_number(rows[idx].get("PosX"))
+        custom_y = coerce_number(rows[idx].get("PosY"))
+        xy = None
+        if custom_x is not None and custom_y is not None:
+            xy = (float(custom_x), float(custom_y))
+        if xy is None:
+            xy = TEN_TWENTY_COORDS.get(clean)
+        if xy is None:
+            angle = angles[fallback_idx % len(angles)]
+            xy = (0.8 * np.cos(angle), 0.8 * np.sin(angle))
+            fallback_idx += 1
+        coords.append((label or f"Ch {idx+1}", xy[0], xy[1], impedances[idx]))
+
+    fig, ax = plt.subplots(figsize=(5, 5))
+    head = plt.Circle((0, 0), 1.05, edgecolor="black", facecolor="none", linewidth=1.5)
+    ax.add_patch(head)
+    nose = np.array([[0.0, 1.05], [-0.08, 1.15], [0.08, 1.15]])
+    ax.plot(nose[:, 0], nose[:, 1], color="black", linewidth=1.2)
+    ax.plot([-1.05, -1.2, -1.05], [0.15, 0.0, -0.15], color="black", linewidth=1.0)
+    ax.plot([1.05, 1.2, 1.05], [0.15, 0.0, -0.15], color="black", linewidth=1.0)
+
+    impedance_values = [val for val in impedances if val is not None]
+    vmin, vmax = (min(impedance_values), max(impedance_values)) if impedance_values else (0.0, 1.0)
+    if vmax == vmin:
+        vmax = vmin + 1.0
+    cmap = plt.cm.plasma
+
+    for label, x, y, imp in coords:
+        color = "#2d6cdf"
+        if imp is not None:
+            norm = (float(imp) - vmin) / (vmax - vmin)
+            color = cmap(np.clip(norm, 0, 1))
+        ax.scatter(x, y, s=160, color=color, edgecolors="white", linewidth=1.0, zorder=3)
+        ax.text(x, y, label, ha="center", va="center", fontsize=8, color="white", weight="bold", zorder=4)
+
+    if impedance_values:
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=vmin, vmax=vmax))
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.02)
+        cbar.set_label("Impedance (kΩ)")
+
+    ax.set_xlim(-1.25, 1.25)
+    ax.set_ylim(-1.25, 1.25)
+    ax.axis("off")
+    ax.set_title("Scalp topography (positions + impedances)")
+    fig.tight_layout()
+    placeholder.pyplot(fig)
+    plt.close(fig)
+
+
+def _plotly_topography(rows: List[Dict[str, Any]]) -> Optional["go.Figure"]:
+    if go is None:
+        return None
+    labels = [row.get("Position") or row.get("Channel") or "" for row in rows]
+    impedances = [coerce_number(row.get("Impedance")) for row in rows]
+    xs: List[float] = []
+    ys: List[float] = []
+    texts: List[str] = []
+    colors: List[float] = []
+    for idx, label in enumerate(labels):
+        clean = label.replace(" ", "")
+        custom_x = coerce_number(rows[idx].get("PosX"))
+        custom_y = coerce_number(rows[idx].get("PosY"))
+        xy = None
+        if custom_x is not None and custom_y is not None:
+            xy = (float(custom_x), float(custom_y))
+        if xy is None:
+            xy = TEN_TWENTY_COORDS.get(clean, (0.0, 0.0))
+        xs.append(xy[0])
+        ys.append(xy[1])
+        texts.append(f"{label}<br>Imp: {impedances[idx] if impedances[idx] is not None else '—'} kΩ")
+        colors.append(impedances[idx] if impedances[idx] is not None else 0.0)
+
+    scatter = go.Scatter(
+        x=xs,
+        y=ys,
+        mode="markers+text",
+        text=[row.get("Channel") or f"Ch {i+1}" for i, row in enumerate(rows)],
+        textposition="middle center",
+        marker=dict(
+            size=18,
+            color=colors,
+            colorscale="Plasma",
+            showscale=True,
+            colorbar=dict(title="Imp (kΩ)"),
+            line=dict(color="white", width=1),
+        ),
+        hoverinfo="text",
+        hovertext=texts,
+    )
+
+    # Invisible dense grid to capture click positions everywhere inside the head.
+    grid_x = []
+    grid_y = []
+    for gx in np.linspace(-1.1, 1.1, 30):
+        for gy in np.linspace(-1.1, 1.1, 30):
+            if gx**2 + gy**2 <= 1.25**2:
+                grid_x.append(gx)
+                grid_y.append(gy)
+    grid = go.Scatter(
+        x=grid_x,
+        y=grid_y,
+        mode="markers",
+        marker=dict(size=16, opacity=0.01, color="rgba(0,0,0,0.05)"),
+        hoverinfo="none",
+        showlegend=False,
+        name="click-target",
+    )
+
+    fig = go.Figure()
+    fig.add_trace(grid)
+    fig.add_trace(scatter)
+    fig.update_layout(
+        width=500,
+        height=500,
+        xaxis=dict(visible=False, range=[-1.3, 1.3]),
+        yaxis=dict(visible=False, range=[-1.3, 1.3]),
+        title="Drag or click to reposition a channel",
+        margin=dict(l=10, r=10, t=40, b=10),
+        clickmode="event+select",
+        dragmode="pan",
+    )
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True, scaleanchor="x", scaleratio=1)
+    fig.add_shape(type="circle", x0=-1.05, y0=-1.05, x1=1.05, y1=1.05, line=dict(color="black", width=2))
+    fig.add_shape(type="line", x0=-1.05, y0=0.15, x1=-1.2, y1=0.0, line=dict(color="black"))
+    fig.add_shape(type="line", x0=-1.2, y0=0.0, x1=-1.05, y1=-0.15, line=dict(color="black"))
+    fig.add_shape(type="line", x0=1.05, y0=0.15, x1=1.2, y1=0.0, line=dict(color="black"))
+    fig.add_shape(type="line", x0=1.2, y0=0.0, x1=1.05, y1=-0.15, line=dict(color="black"))
+    fig.add_shape(type="path", path="M -0.08 1.05 L 0 1.15 L 0.08 1.05", line=dict(color="black", width=2))
+    return fig
+
+
+class LiveViewDevice(DeviceInterface):
+    """Device wrapper that mirrors prime/acquire results into a Streamlit live view."""
+
+    def __init__(self, wrapped: DeviceInterface, live_view: "LiveViewService", fs: float) -> None:
+        self._wrapped = wrapped
+        self._live_view = live_view
+        self._fs = fs
+
+    def __getattr__(self, name: str):
+        return getattr(self._wrapped, name)
+
+    def connect(self) -> None:
+        self._wrapped.connect()
+
+    def acquire(self, duration_seconds: float, aux_channels: int = 0):
+        chunk = self._wrapped.acquire(duration_seconds, aux_channels)
+        self._live_view.push(chunk, self._fs)
+        return chunk
+
+    def prime(self, duration_seconds: float, aux_channels: int = 0):
+        chunk = self._wrapped.prime(duration_seconds, aux_channels)
+        self._live_view.push(chunk, self._fs)
+        return chunk
+
+    def disconnect(self) -> None:
+        self._wrapped.disconnect()
+
+
+def _normalize_channel_indices(indices: Optional[List[int]], total_channels: int) -> List[int]:
+    if total_channels <= 0:
+        return []
+    if not indices:
+        return list(range(total_channels))
+    deduped = []
+    for idx in indices:
+        clipped = int(np.clip(idx, 0, total_channels - 1))
+        if clipped not in deduped:
+            deduped.append(clipped)
+    return deduped or list(range(total_channels))
+
+
+class LiveViewService:
+    def __init__(
+        self,
+        placeholder: "st.delta_generator.DeltaGenerator",
+        window_seconds: float = 5.0,
+        channel_indices: Optional[List[int]] = None,
+        fft_placeholder: Optional["st.delta_generator.DeltaGenerator"] = None,
+    ) -> None:
+        self.placeholder = placeholder
+        self.fft_placeholder = fft_placeholder
+        self.window_seconds = max(1.0, float(window_seconds))
+        self.channel_indices = channel_indices or []
+        self.buffer: np.ndarray = np.empty((0, 0))
+
+    def wrap_device(self, device: DeviceInterface, params: Dict[str, Any]) -> LiveViewDevice:
+        fs_value = coerce_number(params.get("Parameters", {}).get("fs"))
+        fs = float(fs_value) if fs_value else 0.0
+        self.reset()
+        return LiveViewDevice(device, self, fs)
+
+    def reset(self) -> None:
+        self.buffer = np.empty((0, 0))
+        if self.placeholder is not None:
+            self.placeholder.empty()
+
+    def push(self, chunk: Any, fs: float) -> None:
+        if chunk is None or self.placeholder is None:
+            return
+        array = np.asarray(chunk, dtype=float)
+        if array.ndim == 1:
+            array = array[:, np.newaxis]
+        if array.size == 0:
+            return
+        if self.buffer.size == 0:
+            self.buffer = array
+        else:
+            self.buffer = np.vstack([self.buffer, array])
+        max_window = int(fs * self.window_seconds) if fs > 0 else self.buffer.shape[0]
+        if max_window > 0 and self.buffer.shape[0] > max_window:
+            self.buffer = self.buffer[-max_window:]
+        indices = _normalize_channel_indices(self.channel_indices, self.buffer.shape[1])
+        _plot_live_buffer(self.buffer, fs, self.placeholder, channel_indices=indices)
+        if self.fft_placeholder is not None:
+            _plot_fft_spectrum(self.buffer, fs, self.fft_placeholder, channel_indices=indices)
+
+
+class LivePreviewRunner:
+    def __init__(
+        self,
+        params: Dict[str, Any],
+        placeholder: "st.delta_generator.DeltaGenerator",
+        fft_placeholder: Optional["st.delta_generator.DeltaGenerator"],
+        window: float,
+        update_interval: float,
+        channel_indices: Optional[List[int]],
+    ) -> None:
+        self.params = params
+        self.placeholder = placeholder
+        self.fft_placeholder = fft_placeholder
+        self.window = window
+        self.update_interval = update_interval
+        self.channel_indices = channel_indices or []
+        self._stop_event = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        if self.is_running():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._loop, name="live_preview", daemon=True)
+        if add_script_run_ctx and get_script_run_ctx:
+            ctx = get_script_run_ctx()
+            if ctx is not None:
+                add_script_run_ctx(self._thread, ctx)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+
+    def is_running(self) -> bool:
+        return self._thread is not None and self._thread.is_alive() and not self._stop_event.is_set()
+
+    def _loop(self) -> None:
+        try:
+            run_live_preview(
+                self.params,
+                self.placeholder,
+                self.fft_placeholder,
+                duration=math.inf,
+                window=self.window,
+                update_interval=self.update_interval,
+                channel_indices=self.channel_indices,
+                stop_event=self._stop_event,
+            )
+        except Exception as exc:  # pragma: no cover
+            LOGGER.exception("Live preview failed")
+            st.session_state["_live_preview_error"] = str(exc)
+        finally:
+            self._stop_event.set()
+            st.session_state["_live_preview_running"] = False
+
+
+def run_live_preview(
+    params: Dict[str, Any],
+    placeholder: "st.delta_generator.DeltaGenerator",
+    fft_placeholder: Optional["st.delta_generator.DeltaGenerator"],
+    duration: float,
+    window: float,
+    update_interval: float,
+    channel_indices: Optional[List[int]],
+    stop_event: Optional[threading.Event] = None,
+) -> np.ndarray:
+    params = dict(params)
+    params.pop("data", None)
+    stop_signal = stop_event or threading.Event()
+
+    fs_value = coerce_number(params.get("Parameters", {}).get("fs"))
+    fs = float(fs_value) if fs_value else 0.0
+    if fs <= 0:
+        raise ValueError("Live preview requires a valid sampling rate (fs) in Parameters.")
+
+    aux_channels = _resolve_aux_channels(params)
+    device = DeviceFactory.create(params)
+    device.connect()
+
+    try:
+        prime_span = min(update_interval, duration) if math.isfinite(duration) else update_interval
+        buffer = np.asarray(device.prime(prime_span, aux_channels), dtype=float)
+        if buffer.ndim == 1:
+            buffer = buffer[:, np.newaxis]
+        indices = _normalize_channel_indices(channel_indices, buffer.shape[1])
+        _plot_live_buffer(buffer, fs, placeholder, channel_indices=indices)
+        _plot_fft_spectrum(buffer, fs, fft_placeholder, channel_indices=indices)
+        deadline = None if not math.isfinite(duration) else time.time() + duration
+        while not stop_signal.is_set() and (deadline is None or time.time() < deadline):
+            chunk_duration = update_interval
+            if deadline is not None:
+                remaining = max(0.0, deadline - time.time())
+                if remaining <= 0:
+                    break
+                chunk_duration = min(update_interval, remaining)
+            chunk = np.asarray(device.acquire(chunk_duration, aux_channels), dtype=float)
+            if chunk.ndim == 1:
+                chunk = chunk[:, np.newaxis]
+            if chunk.size > 0:
+                if buffer.size == 0:
+                    buffer = chunk
+                else:
+                    buffer = np.vstack([buffer, chunk])
+                max_window = int(fs * window) if fs > 0 else buffer.shape[0]
+                if buffer.shape[0] > max_window:
+                    buffer = buffer[-max_window:]
+                _plot_live_buffer(buffer, fs, placeholder, channel_indices=indices)
+                _plot_fft_spectrum(buffer, fs, fft_placeholder, channel_indices=indices)
+            else:
+                if stop_signal.wait(update_interval):
+                    break
+        return buffer
+    finally:
+        stop_signal.set()
+        device.disconnect()
+
+
+def stop_live_preview_runner(clear_placeholder: bool = True) -> None:
+    runner = st.session_state.get("_live_preview_runner")
+    if isinstance(runner, LivePreviewRunner):
+        runner.stop()
+        if clear_placeholder:
+            runner.placeholder.empty()
+            if runner.fft_placeholder is not None:
+                runner.fft_placeholder.empty()
+    st.session_state["_live_preview_running"] = False
+    st.session_state["_live_preview_runner"] = None
+    st.session_state.pop("_live_preview_error", None)
+    st.session_state["_live_view_banner"] = None
 
 
 def render_chart(chart: ChartData) -> None:
@@ -607,11 +1560,25 @@ def render_chart(chart: ChartData) -> None:
 
 
 def render_chart_section(label: str, params: Dict[str, Any], data: Optional[np.ndarray], aggregate: bool = False) -> None:
+    eval_figures = _render_evaluation_figures(params, data)
+    LOGGER.debug(
+        "Render chart section",
+        extra={
+            "label": label,
+            "method": params.get("Method"),
+            "eval_figures": len(eval_figures),
+        },
+    )
     charts = collect_chart_data(label, params or {}, data, aggregate=aggregate)
     if not charts:
         st.info("No charts available for this session yet.")
         return
     st.subheader(f"Charts – {label}")
+    if eval_figures:
+        st.caption("Evaluation plots")
+        for fig in eval_figures:
+            st.pyplot(fig, clear_figure=False)
+        plt.close("all")
     for key in sorted(charts.keys()):
         render_chart(charts[key])
 
@@ -655,6 +1622,9 @@ def load_params_into_state(params: Dict[str, Any], data_override: Optional[np.nd
             continue
         if field.name in parameters:
             general[field.name] = parameters[field.name]
+    if device.lower() == "unicorn":
+        general["fs"] = "250"
+        st.session_state["general_fs"] = "250"
 
     schema = METHOD_SCHEMAS.get(method, [])
     method_state = st.session_state["method_forms"].setdefault(method, default_values(schema))
@@ -691,6 +1661,8 @@ def load_params_into_state(params: Dict[str, Any], data_override: Optional[np.nd
                     "Rubrik": ch.get("Rubrik") or ch.get("Rubric") or (ELECTRODE_RUBRICS[0] if ELECTRODE_RUBRICS else ""),
                     "Model": ch.get("Model") or (ELECTRODE_MODELS[0] if ELECTRODE_MODELS else ""),
                     "Impedance": coerce_number(ch.get("Impedance")) or 0.0,
+                    "PosX": coerce_number(ch.get("PosX")),
+                    "PosY": coerce_number(ch.get("PosY")),
                     "Active": bool(ch.get("Active", True)),
                 }
             )
@@ -705,7 +1677,13 @@ def load_params_into_state(params: Dict[str, Any], data_override: Optional[np.nd
     if data_array is None and params.get("data") is not None:
         data_array = np.asarray(params["data"])
     st.session_state["imported_data"] = data_array
-    st.session_state["use_imported_data"] = bool(data_array)
+    has_data = False
+    if data_array is not None:
+        try:
+            has_data = np.asarray(data_array).size > 0
+        except Exception:
+            has_data = True
+    st.session_state["use_imported_data"] = has_data
     st.session_state["imported_params_raw"] = params
 
 
@@ -729,6 +1707,100 @@ def ensure_state() -> None:
         st.session_state["imported_params_raw"] = None
     if "use_imported_data" not in st.session_state:
         st.session_state["use_imported_data"] = False
+    if "_last_device_selection" not in st.session_state:
+        st.session_state["_last_device_selection"] = None
+    if "_actichamp_impedance_loaded" not in st.session_state:
+        st.session_state["_actichamp_impedance_loaded"] = False
+    if "_actichamp_impedance_timestamp" not in st.session_state:
+        st.session_state["_actichamp_impedance_timestamp"] = None
+    if "_actichamp_impedance_status" not in st.session_state:
+        st.session_state["_actichamp_impedance_status"] = None
+    if "_live_view_active" not in st.session_state:
+        st.session_state["_live_view_active"] = False
+    if "_live_preview_running" not in st.session_state:
+        st.session_state["_live_preview_running"] = False
+    if "_live_preview_runner" not in st.session_state:
+        st.session_state["_live_preview_runner"] = None
+    if "live_preview_channel" not in st.session_state:
+        st.session_state["live_preview_channel"] = 1
+    if "live_preview_channel_selection" not in st.session_state:
+        st.session_state["live_preview_channel_selection"] = ["All"]
+    if "_live_preview_fft_placeholder" not in st.session_state:
+        st.session_state["_live_preview_fft_placeholder"] = None
+
+
+def get_live_view_placeholder():
+    placeholder = st.session_state.get("_live_view_placeholder")
+    if placeholder is None:
+        placeholder = st.empty()
+        st.session_state["_live_view_placeholder"] = placeholder
+    return placeholder
+
+
+def _actichamp_channel_count(rows: List[Dict[str, Any]]) -> int:
+    extras = set(DEVICE_EXTRA_LABELS.get("ActiCHamp", []))
+    return sum(1 for row in rows if row.get("Channel") not in extras)
+
+
+def _map_impedances_to_channels(rows: List[Dict[str, Any]], values: List[float]) -> List[Dict[str, Any]]:
+    if len(values) < 3:
+        return rows
+
+    labels = ["GND", "REF"] + [f"Ch {idx}" for idx in range(1, len(values) - 1)]
+    mapping = {label: values[idx] for idx, label in enumerate(labels) if idx < len(values)}
+
+    for row in rows:
+        value = mapping.get(row.get("Channel"))
+        if value is None or value < 0:
+            continue
+        row["Impedance"] = round(float(value) / 1000.0, 1)
+
+    return rows
+
+
+def _fetch_actichamp_impedances(fs_value: Any) -> None:
+    if st.session_state.get("_actichamp_impedance_loaded"):
+        return
+
+    fs = coerce_number(fs_value)
+    if fs is None or fs <= 0:
+        st.session_state["_actichamp_impedance_status"] = "Set a valid sampling rate (fs) to read ActiCHamp impedances."
+        return
+
+    channel_tables = st.session_state.setdefault("channel_tables", {})
+    rows = ensure_channel_rows("ActiCHamp", channel_tables.get("ActiCHamp"))
+    channel_tables["ActiCHamp"] = rows
+    channel_count = _actichamp_channel_count(rows)
+
+    params = {
+        "Device": "ActiCHamp",
+        "Parameters": {"fs": float(fs), "NumberEEGChannels": channel_count},
+    }
+
+    LOGGER.info("Attempting ActiCHamp impedance read (fs=%s, channels=%s)", fs, channel_count)
+    values: List[float] = []
+
+    try:
+        with st.spinner("Checking ActiCHamp impedances..."):
+            with DeviceFactory.create(params) as device:
+                reader = getattr(device, "read_impedances", None)
+                values = reader() if callable(reader) else []
+    except Exception as exc:  # pragma: no cover
+        LOGGER.exception("ActiCHamp impedance read failed")
+        st.warning(f"ActiCHamp impedance read failed: {exc}")
+        st.session_state["_actichamp_impedance_status"] = f"ActiCHamp impedance read failed: {exc}"
+        return
+
+    if not values:
+        LOGGER.warning("ActiCHamp impedance read returned no values.")
+        st.session_state["_actichamp_impedance_status"] = "ActiCHamp impedance read returned no values."
+        return
+
+    LOGGER.info("Loaded %d ActiCHamp impedance values", len(values))
+    channel_tables["ActiCHamp"] = _map_impedances_to_channels(rows, values)
+    st.session_state["_actichamp_impedance_loaded"] = True
+    st.session_state["_actichamp_impedance_status"] = f"Loaded {len(values)} impedance values."
+    st.session_state["_actichamp_impedance_timestamp"] = time.time()
 
 
 def coerce_number(value: Any) -> Optional[float | int]:
@@ -801,17 +1873,21 @@ def render_config_snapshot(method: str, device: str, general: Dict[str, Any]) ->
     duration = coerce_number(params_block.get("RecordingTime") or general.get("RecordingTime"))
 
     method_label = f"{method} – {full_name}" if full_name else method
-    lines = [f"**Method:** {method_label}"]
-    if desc:
-        lines.append(desc)
-    lines.append(f"**Device:** {device}")
-
     fs_txt = f"{fs_value} Hz" if fs_value is not None else "—"
     ch_txt = f"{int(channels)}" if channels is not None else "—"
     dur_txt = f"{duration} s" if duration is not None else "— s"
 
-    stats_md = f"fs: {fs_txt}  \nChannels: {ch_txt}  \nRecording time: {dur_txt}"
-    st.markdown("\n\n".join(lines + [stats_md]))
+    html_block = textwrap.dedent(
+        f"""
+        <div class="snapshot-panel">
+            <div class="title">Method: {html.escape(method_label)}</div>
+            {'<div class="desc">' + html.escape(desc) + '</div>' if desc else ''}
+            <div class="line"><strong>Device:</strong> {html.escape(device)}</div>
+            <div class="stats">fs: {fs_txt}<br>Channels: {ch_txt}<br>Recording time: {dur_txt}</div>
+        </div>
+        """
+    )
+    st.markdown(html_block, unsafe_allow_html=True)
 
 
 def _electrode_map_figure(device: str, rows: List[Dict[str, Any]]) -> plt.Figure:
@@ -956,33 +2032,57 @@ def render_general_form() -> Dict[str, Any]:
         general["Method"] = method
         general["Device"] = device
 
-        other_fields = [field for field in GENERAL_SCHEMA if field.name not in {"Method", "Device"}]
-        cols = form_col.columns(2)
-        for idx, field in enumerate(other_fields):
-            target = cols[idx % 2]
-            key = f"general_{field.name}"
-            current = general.get(field.name)
-            if field.kind == "dropdown":
-                options = field.options or [""]
-                resolved = resolve_choice(options, current)
-                value = target.selectbox(
-                    field.name,
-                    options=options,
-                    index=options.index(resolved),
-                    help=field.tooltip or None,
-                    key=key,
-                )
-            elif field.kind == "numeric":
-                value = render_numeric_input(target, field, current, key)
-            else:
-                value = target.text_input(field.name, value=current or "", help=field.tooltip or None, key=key)
-            general[field.name] = value
+    other_fields = [field for field in GENERAL_SCHEMA if field.name not in {"Method", "Device"}]
+    device_is_unicorn = device.lower() == "unicorn"
+    cols = form_col.columns(2)
+    for idx, field in enumerate(other_fields):
+        target = cols[idx % 2]
+        key = f"general_{field.name}"
+        current = general.get(field.name)
+        if field.name == "fs" and device_is_unicorn:
+            locked_value = "250"
+            if st.session_state.get(key) != locked_value:
+                st.session_state[key] = locked_value
+            options = [locked_value] + [opt for opt in (field.options or []) if opt != locked_value]
+            value = target.selectbox(
+                field.name,
+                options=options,
+                index=options.index(locked_value),
+                help="UNICORN sampling rate is fixed to 250 Hz.",
+                key=key,
+                disabled=True,
+            )
+        elif field.kind == "dropdown":
+            options = field.options or [""]
+            resolved = resolve_choice(options, current)
+            value = target.selectbox(
+                field.name,
+                options=options,
+                index=options.index(resolved),
+                help=field.tooltip or None,
+                key=key,
+            )
+        elif field.kind == "numeric":
+            value = render_numeric_input(target, field, current, key)
+        else:
+            value = target.text_input(field.name, value=current or "", help=field.tooltip or None, key=key)
+        general[field.name] = value
+    with viz_col:
+        spacer_col, snap_col = viz_col.columns([1, 5])
+        with snap_col:
+            st.caption("Configuration snapshot")
+            render_config_snapshot(general.get("Method", ""), general.get("Device", ""), general)
+    previous_device = st.session_state.get("_last_device_selection")
+    device_changed = device != previous_device
+    if device_changed:
+        st.session_state["_last_device_selection"] = device
+        st.session_state["_actichamp_impedance_loaded"] = False
+        st.session_state["_actichamp_impedance_status"] = None
+        st.session_state["_actichamp_impedance_timestamp"] = None
 
-        with viz_col:
-            spacer_col, snap_col = viz_col.columns([1, 5])
-            with snap_col:
-                st.caption("Configuration snapshot")
-                render_config_snapshot(general.get("Method", ""), general.get("Device", ""), general)
+    if device == "ActiCHamp" and device_changed:
+        _fetch_actichamp_impedances(general.get("fs"))
+
     return dict(general)
 
 
@@ -999,7 +2099,9 @@ def render_device_config(device: str) -> Dict[str, Any]:
             target = cols[idx % 2]
             key = f"device_{device}_{field['name']}"
             current = form_state.get(field["name"], field.get("default"))
-            if field["kind"] == "number":
+            if device == "UNICORN" and field["name"] == "UNICORNPort":
+                value = render_unicorn_port_input(target, field, current, key)
+            elif field["kind"] == "number":
                 fallback = field.get("default", 0.0)
                 numeric = coerce_number(current)
                 value_default = float(numeric if numeric is not None else fallback or 0.0)
@@ -1069,6 +2171,7 @@ def ensure_channel_rows(device: str, existing: Optional[List[Dict[str, Any]]] = 
         position_label = label.replace(" ", "")
         if index is not None and index < len(default_positions):
             position_label = default_positions[index]
+        pos_x, pos_y = _channel_default_coords(position_label)
         row = {
             "Channel": label,
             "Position": position_label,
@@ -1076,6 +2179,8 @@ def ensure_channel_rows(device: str, existing: Optional[List[Dict[str, Any]]] = 
             "Model": default_model,
             "Impedance": 0.0,
             "Active": True if is_extra else False,
+            "PosX": pos_x,
+            "PosY": pos_y,
         }
         return row
 
@@ -1097,6 +2202,30 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
     channel_state = st.session_state["channel_tables"]
     rows = ensure_channel_rows(device, channel_state.get(device))
     with st.expander(f"Electrodes ({device})", expanded=True):
+        st.caption(
+            "Toggle the channels you intend to record, set the 10-20 name (Position), adjust coordinates, and choose "
+            "hardware. Ground/Reference rows stay enabled automatically."
+        )
+        if device == "ActiCHamp":
+            fs_value = st.session_state.get("general_form", {}).get("fs")
+            status = st.session_state.get("_actichamp_impedance_status")
+            last_ts = st.session_state.get("_actichamp_impedance_timestamp")
+            btn_cols = st.columns([1, 1, 2])
+            if btn_cols[0].button("Read ActiCHamp impedances", key="actichamp_impedance_button"):
+                st.session_state["_actichamp_impedance_loaded"] = False
+                _fetch_actichamp_impedances(fs_value)
+                rows = st.session_state["channel_tables"].get("ActiCHamp", rows)
+            if btn_cols[1].button("Clear impedances", key="actichamp_impedance_clear"):
+                st.session_state["_actichamp_impedance_loaded"] = False
+                st.session_state["_actichamp_impedance_timestamp"] = None
+                st.session_state["_actichamp_impedance_status"] = "Cleared previously loaded impedances."
+            with btn_cols[2]:
+                if status:
+                    st.info(status)
+                if last_ts:
+                    ts_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_ts))
+                    st.caption(f"Last read: {ts_str}")
+
         table_col, map_col = st.columns((2, 1))
         with table_col:
             edited = st.data_editor(
@@ -1123,22 +2252,153 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                         step=0.5,
                         format="%.1f",
                     ),
+                    "PosX": st.column_config.NumberColumn(
+                        "Pos X",
+                        help="Custom X coordinate for scalp plot (-1.5 to 1.5). Leave blank to use defaults.",
+                        min_value=-1.5,
+                        max_value=1.5,
+                        step=0.05,
+                        format="%.2f",
+                    ),
+                    "PosY": st.column_config.NumberColumn(
+                        "Pos Y",
+                        help="Custom Y coordinate for scalp plot (-1.5 to 1.5). Leave blank to use defaults.",
+                        min_value=-1.5,
+                        max_value=1.5,
+                        step=0.05,
+                        format="%.2f",
+                    ),
                     "Active": st.column_config.CheckboxColumn("Use channel"),
                 },
             )
+            extras = set(DEVICE_EXTRA_LABELS.get(device, []))
+            for row in edited:
+                if row["Channel"] in extras:
+                    row["Active"] = True
+                if not row.get("Position"):
+                    row["Position"] = row["Channel"].replace(" ", "")
+                if row.get("PosX") in ("", None) or row.get("PosY") in ("", None):
+                    pos_x, pos_y = _channel_default_coords(row["Position"])
+                    row["PosX"] = pos_x
+                    row["PosY"] = pos_y
+            channel_state[device] = edited
+
         with map_col:
-            st.caption("Montage preview")
-            st.markdown("<div style='margin-top: 0.75rem'></div>", unsafe_allow_html=True)
-            fig = _electrode_map_figure(device, edited)
-            st.pyplot(fig, use_container_width=True)
-            plt.close(fig)
-            st.caption("Active selections glow; reference/ground remain pinned.")
-        extras = set(DEVICE_EXTRA_LABELS.get(device, []))
-        for row in edited:
-            if row["Channel"] in extras:
-                row["Active"] = True
-        channel_state[device] = edited
+            st.caption("Scalp map")
+            if plotly_events is not None and go is not None:
+                channel_labels = [row.get("Channel") or f"Ch {idx+1}" for idx, row in enumerate(edited)]
+                target = st.selectbox("Channel to place", options=channel_labels, key=f"topo_target_{device}")
+                fig = _plotly_topography(edited)
+                st.caption("Pick a channel, then click on the head map to place it.")
+                events = plotly_events(
+                    fig,
+                    click_event=True,
+                    select_event=True,
+                    override_height=520,
+                    override_width=520,
+                    key=f"topo_events_{device}",
+                )
+                if events:
+                    evt = events[0]
+                    x_new = evt.get("x")
+                    y_new = evt.get("y")
+                    if x_new is not None and y_new is not None:
+                        idx = channel_labels.index(target)
+                        edited[idx]["PosX"] = float(x_new)
+                        edited[idx]["PosY"] = float(y_new)
+                        channel_state[device] = edited
+                        st.session_state["_topo_last_message"] = f"Updated {target} to ({x_new:.2f}, {y_new:.2f})."
+                        st.rerun()
+                if msg := st.session_state.get("_topo_last_message"):
+                    st.info(msg)
+            else:
+                st.info("Install optional deps `plotly` and `streamlit-plotly-events` for click placement.")
+            _plot_topography(edited, st.empty())
     return edited
+
+
+def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]) -> None:
+    st.subheader("Live preview (beta)")
+    st.caption(
+        "Stream one or more channels with a rolling time window (left) and live FFT highlighting delta/theta/alpha/"
+        "beta/gamma bands (right) using the current session settings."
+    )
+    banner = st.session_state.get("_live_view_banner")
+    if banner:
+        st.warning(banner)
+
+    live_view_placeholder = get_live_view_placeholder()
+    if st.session_state.get("_live_view_active"):
+        live_view_placeholder.caption("Live measurement view will update here during an active run.")
+        st.session_state["_live_view_banner"] = "Measurement running: live EEG and FFT updating below."
+    else:
+        live_view_placeholder.info("Live measurement view appears here during an active run.")
+
+    if validation_issues:
+        st.warning("Fix configuration issues in the Session tab before starting a live preview.")
+        return
+
+    parameters = params.get("Parameters", {})
+    channel_count = len(params.get("Channels", [])) or int(
+        parameters.get("NumberEEGChannels") or DEVICE_DEFAULT_CHANNELS.get(params.get("Device"), 8)
+    )
+    channel_count = max(channel_count, 1)
+    channel_labels = [row.get("Channel") or f"Ch {idx+1}" for idx, row in enumerate(params.get("Channels", []))] or [
+        f"Ch {idx+1}" for idx in range(channel_count)
+    ]
+    options = ["All"] + channel_labels
+    default_selection = st.session_state.get("live_preview_channel_selection") or ["All"]
+    selection = st.multiselect("Channels to preview", options=options, default=default_selection)
+    if not selection:
+        selection = ["All"]
+    st.session_state["live_preview_channel_selection"] = selection
+    if "All" in selection:
+        selected_indices = list(range(channel_count))
+    else:
+        selected_indices = [channel_labels.index(label) for label in selection if label in channel_labels]
+
+    window = st.slider("Rolling window (s)", min_value=1, max_value=60, value=5, step=1)
+    interval = st.slider("Update interval (s)", min_value=0.1, max_value=1.0, value=0.25, step=0.05)
+
+    chart_cols = st.columns(2)
+    placeholder = st.session_state.get("_live_preview_placeholder")
+    if placeholder is None:
+        placeholder = chart_cols[0].empty()
+        st.session_state["_live_preview_placeholder"] = placeholder
+    fft_placeholder = st.session_state.get("_live_preview_fft_placeholder")
+    if fft_placeholder is None:
+        fft_placeholder = chart_cols[1].empty()
+        st.session_state["_live_preview_fft_placeholder"] = fft_placeholder
+
+    running = st.session_state.get("_live_preview_running", False)
+    error = st.session_state.get("_live_preview_error")
+    cols = st.columns(2)
+    start_clicked = cols[0].button("Start live preview", type="primary", disabled=running)
+    stop_clicked = cols[1].button("Stop live preview", disabled=not running)
+
+    if start_clicked:
+        stop_live_preview_runner()
+        runner = LivePreviewRunner(
+            params,
+            placeholder,
+            fft_placeholder,
+            window=float(window),
+            update_interval=float(interval),
+            channel_indices=selected_indices,
+        )
+        st.session_state["_live_preview_runner"] = runner
+        st.session_state["_live_preview_running"] = True
+        st.session_state.pop("_live_preview_error", None)
+        runner.start()
+        st.info("Live preview running. Press Stop or start a measurement to end.")
+    if stop_clicked:
+        stop_live_preview_runner()
+        st.info("Live preview stopped.")
+
+    if running and not start_clicked:
+        st.caption("Streaming continuously; live chart uses a rolling window.")
+    if error:
+        st.error(f"Live preview error: {error}")
 
 
 def render_participant_form() -> Dict[str, Any]:
@@ -1189,6 +2449,11 @@ def build_channels(device: str) -> List[Dict[str, Any]]:
             "Impedance": coerce_number(row.get("Impedance")),
             "Active": bool(is_active),
         }
+        pos_x = coerce_number(row.get("PosX"))
+        pos_y = coerce_number(row.get("PosY"))
+        if pos_x is not None and pos_y is not None:
+            entry["PosX"] = float(pos_x)
+            entry["PosY"] = float(pos_y)
         active_rows.append(entry)
     return active_rows
 
@@ -1226,6 +2491,9 @@ def assemble_params(
             params["Parameters"][key] = value
             for alias in DEVICE_FIELD_ALIASES.get(key, []):
                 params["Parameters"][alias] = value
+
+    if params["Device"].lower() == "unicorn":
+        params["Parameters"]["fs"] = 250
 
     channels = build_channels(params["Device"])
     if channels:
@@ -1281,7 +2549,11 @@ def list_saved_sessions(base_dir: Path) -> List[Path]:
     return sorted([path for path in base_dir.iterdir() if path.is_dir()], reverse=True)
 
 
-def run_pipeline_once(params: Dict[str, Any], save_dir: Path) -> tuple[Dict[str, Any], Optional[Path]]:
+def run_pipeline_once(
+    params: Dict[str, Any],
+    save_dir: Path,
+    live_view: Optional[LiveViewService] = None,
+) -> tuple[Dict[str, Any], Optional[Path]]:
     saver = SaveManager(save_dir)
     provider_called = {"done": False}
     captured: Dict[str, Any] = {}
@@ -1297,7 +2569,16 @@ def run_pipeline_once(params: Dict[str, Any], save_dir: Path) -> tuple[Dict[str,
         saver(run_params)
         captured["path"] = getattr(saver, "last_target_dir", None)
 
-    hooks = PipelineHooks(params_provider=provider, save_callback=save_and_capture, should_continue=lambda _: False)
+    def attach_context(context):
+        if live_view is not None:
+            context.attach_service("live_view", live_view)
+
+    hooks = PipelineHooks(
+        params_provider=provider,
+        save_callback=save_and_capture,
+        should_continue=lambda _: False,
+        context_hook=attach_context,
+    )
     MeasurementPipeline(hooks=hooks).run()
     return captured.get("params", params), captured.get("path")
 
@@ -1367,7 +2648,13 @@ def render_saved_sessions(base_dir: Path) -> tuple[Optional[tuple[str, Dict[str,
     primary_payload: Optional[tuple[str, Dict[str, Any], Optional[np.ndarray]]] = None
     chart_button = st.button("Show charts for selected session", key="show_primary_charts")
     if chart_button and params_content:
-        primary_payload = (primary.name, normalize_params(params_content), data_array)
+        normalized = normalize_params(params_content)
+        primary_payload = (primary.name, normalized, data_array)
+        st.session_state["last_results"] = {
+            "label": primary.name,
+            "params": normalized,
+            "data": data_array,
+        }
 
     compare_payloads: List[tuple[str, Dict[str, Any], Optional[np.ndarray]]] = []
     compare_button = st.button("Compare selected sessions", key="compare_sessions")
@@ -1420,19 +2707,38 @@ def main() -> None:
     st.markdown(
         """
 <style>
+:root {
+    --expander-bg: #ffffff;
+    --expander-border: #e5e7eb;
+    --expander-summary: #eef2ff;
+    --expander-summary-hover: #e0e7ff;
+    --expander-text: #111827;
+}
+@media (prefers-color-scheme: dark) {
+    :root {
+        --expander-bg: #0f172a;
+        --expander-border: #1f2937;
+        --expander-summary: #111827;
+        --expander-summary-hover: #152238;
+        --expander-text: #e5e7eb;
+    }
+}
 div[data-testid="stExpander"] > details {
     border-radius: 12px;
-    border: 1px solid #e5e7eb;
-    background-color: #ffffff;
+    border: 1px solid var(--expander-border);
+    background-color: var(--expander-bg);
+    color: var(--expander-text);
 }
 div[data-testid="stExpander"] > details > summary {
-    background-color: #eef2ff;
+    background-color: var(--expander-summary);
+    color: var(--expander-text);
 }
 div[data-testid="stExpander"] > details > summary:hover {
-    background-color: #e0e7ff;
+    background-color: var(--expander-summary-hover);
 }
 div[data-testid="stExpander"] > details > div[role="group"] {
     padding-top: 0.5rem;
+    color: var(--expander-text);
 }
 </style>
         """,
@@ -1446,6 +2752,8 @@ div[data-testid="stExpander"] > details > div[role="group"] {
     handle_upload()
     default_save = sidebar.text_input("Save directory", value=str(DEFAULT_SAVE_DIR))
     simulate = sidebar.checkbox("Simulate run (no device)", value=False)
+    live_view_enabled = sidebar.checkbox("Live view during measurement", value=True)
+    live_view_window = sidebar.slider("Live view window (s)", min_value=1, max_value=60, value=5)
     imported_data = st.session_state.get("imported_data")
     default_use_imported = st.session_state.get("use_imported_data", False) or bool(imported_data)
     use_imported_data = sidebar.checkbox(
@@ -1456,8 +2764,8 @@ div[data-testid="stExpander"] > details > div[role="group"] {
     st.session_state["use_imported_data"] = use_imported_data and imported_data is not None
     start_button = sidebar.button("Start measurement")
 
-    session_tab, electrodes_tab, preview_tab, charts_tab, saved_tab = st.tabs(
-        ["Session configuration", "Electrodes", "Preview", "Charts", "Saved sessions"]
+    session_tab, electrodes_tab, live_tab, preview_tab, charts_tab, saved_tab = st.tabs(
+        ["Session configuration", "Electrodes", "Live preview", "Preview", "Charts", "Saved sessions"]
     )
 
     with session_tab:
@@ -1471,6 +2779,9 @@ div[data-testid="stExpander"] > details > div[role="group"] {
 
     assembled_params = assemble_params(general_values, method_values, participant_values, device_values)
     validation_issues = validate_params(assembled_params)
+
+    with live_tab:
+        render_live_preview_tab(assembled_params, validation_issues)
 
     with preview_tab:
         if validation_issues:
@@ -1517,11 +2828,38 @@ div[data-testid="stExpander"] > details > div[role="group"] {
         if validation_issues:
             st.error("Please fix the highlighted configuration issues before starting a run.")
             return
+        if st.session_state.get("_live_preview_running"):
+            stop_live_preview_runner()
+        channels_for_run = len(assembled_params.get("Channels", [])) or int(
+            assembled_params.get("Parameters", {}).get("NumberEEGChannels") or 0
+        )
+        if channels_for_run <= 0:
+            channels_for_run = DEVICE_DEFAULT_CHANNELS.get(assembled_params.get("Device"), 8)
+        selection = st.session_state.get("live_preview_channel_selection") or ["All"]
+        if "All" in selection or not selection:
+            selected_indices = list(range(max(1, channels_for_run)))
+        else:
+            channel_labels = [row.get("Channel") or f"Ch {idx+1}" for idx, row in enumerate(assembled_params.get("Channels", []))] or [
+                f"Ch {idx+1}" for idx in range(max(1, channels_for_run))
+            ]
+            selected_indices = [channel_labels.index(label) for label in selection if label in channel_labels]
+        if not selected_indices:
+            selected_indices = list(range(max(1, channels_for_run)))
         save_dir = Path(default_save).expanduser()
         save_dir.mkdir(parents=True, exist_ok=True)
         params_to_run = dict(assembled_params)
         params_to_run.pop("Evaluation", None)
         params_to_run.pop("data", None)
+        live_view_service: Optional[LiveViewService] = None
+        if live_view_enabled:
+            live_view_service = LiveViewService(
+                get_live_view_placeholder(),
+                window_seconds=float(live_view_window),
+                channel_indices=selected_indices,
+                fft_placeholder=st.session_state.get("_live_preview_fft_placeholder"),
+            )
+            st.session_state["_live_view_active"] = True
+            st.session_state["_live_view_banner"] = "Measurement running: live EEG and FFT updating below."
         if simulate:
             fs = int(assembled_params["Parameters"].get("fs", 250))
             n_channels = int(assembled_params["Parameters"].get("NumberEEGChannels", len(assembled_params.get("Channels", [])) or 8))
@@ -1533,6 +2871,9 @@ div[data-testid="stExpander"] > details > div[role="group"] {
                 "data": params_to_run.get("data"),
             }
             st.success("Simulated data saved. Charts available in the Charts tab.")
+            if live_view_service is not None:
+                live_view_service.reset()
+            st.session_state["_live_view_active"] = False
         else:
             imported_data = st.session_state.get("imported_data")
             use_imported = st.session_state.get("use_imported_data", False)
@@ -1543,7 +2884,7 @@ div[data-testid="stExpander"] > details > div[role="group"] {
                 st.error("No imported data attached. Upload a data file or select a saved session first.")
                 return
             try:
-                run_params, saved_path = run_pipeline_once(params_to_run, save_dir)
+                run_params, saved_path = run_pipeline_once(params_to_run, save_dir, live_view=live_view_service)
                 st.session_state["last_results"] = {
                     "label": getattr(saved_path, "name", "Last run"),
                     "params": run_params,
@@ -1551,8 +2892,20 @@ div[data-testid="stExpander"] > details > div[role="group"] {
                 }
                 st.success("Measurement finished and saved. Charts available in the Charts tab.")
             except Exception as exc:  # pragma: no cover
+                LOGGER.exception("Measurement failed")
                 st.error(f"Measurement failed: {exc}")
+            finally:
+                st.session_state["_live_view_active"] = False
+                st.session_state["_live_view_banner"] = None
+                if live_view_service is not None:
+                    live_view_service.reset()
 
 
 if __name__ == "__main__":
-    main()
+    if hasattr(st, "runtime") and st.runtime.exists():
+        main()  # Already inside a Streamlit runtime (e.g., `streamlit run ...`)
+    else:  # Allow launching via `python apps/streamlit_app.py` (common on Windows)
+        from streamlit.web import cli as stcli
+
+        sys.argv = ["streamlit", "run", __file__]
+        sys.exit(stcli.main())
