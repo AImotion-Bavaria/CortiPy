@@ -10,12 +10,15 @@ import sys
 import time
 import threading
 from dataclasses import dataclass
+import html
 import math
+import textwrap
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Union
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.patches import Circle, Rectangle, Polygon, FancyBboxPatch
 import streamlit as st
 try:
     import plotly.graph_objects as go
@@ -38,6 +41,11 @@ try:
 except Exception:  # pragma: no cover
     add_script_run_ctx = None
     get_script_run_ctx = None
+
+try:
+    import mne  # type: ignore
+except Exception:  # pragma: no cover
+    mne = None
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -316,6 +324,163 @@ DEVICE_POSITION_DEFAULTS = {
     "Offline": UNICORN_8,
     "Dummy": UNICORN_8,
 }
+
+
+def _normalize_position_label(label: str) -> str:
+    return re.sub(r"\s+", "", str(label or "").strip()).upper()
+
+
+_STANDARD_POSITION_ORDER: List[str] = []
+for positions in DEVICE_POSITION_DEFAULTS.values():
+    for pos in positions:
+        normalized = _normalize_position_label(pos)
+        if normalized and normalized not in _STANDARD_POSITION_ORDER:
+            _STANDARD_POSITION_ORDER.append(normalized)
+for extras in DEVICE_EXTRA_LABELS.values():
+    for label in extras:
+        normalized = _normalize_position_label(label)
+        if normalized and normalized not in _STANDARD_POSITION_ORDER:
+            _STANDARD_POSITION_ORDER.append(normalized)
+if not _STANDARD_POSITION_ORDER:
+    _STANDARD_POSITION_ORDER = [f"CH{idx+1}" for idx in range(32)]
+_POSITION_ANGLE_LOOKUP = {label: idx for idx, label in enumerate(_STANDARD_POSITION_ORDER)}
+
+METHOD_FULL_NAMES: Dict[str, str] = {
+    "Alpha": "Alpha Relaxation",
+    "ASSR": "Auditory Steady-State Response",
+    "BCI": "SSVEP Brain-Computer Interface",
+    "BERA": "Brainstem Evoked Response Audiometry",
+    "P300": "Visual Oddball P300",
+    "SSVEP": "Steady-State Visual Evoked Potential",
+    "VEP": "Transient Visual Evoked Potential",
+}
+METHOD_DESCRIPTIONS: Dict[str, str] = {
+    "Alpha": "Eyes-closed relaxation run to monitor 8–12 Hz activity.",
+    "ASSR": "Amplitude-modulated tones to probe auditory entrainment.",
+    "BCI": "Frequency-coded checkerboards for real-time BCI control.",
+    "BERA": "Click trains capturing early brainstem responses.",
+    "P300": "Oddball stimuli evoking the P300 component.",
+    "SSVEP": "Continuous flicker to follow steady-state responses.",
+    "VEP": "Transient pattern reversal for latency tracking.",
+}
+
+PARTICIPANT_CARD_STYLE = """
+<style>
+:root {
+    --card-bg: linear-gradient(135deg, #f3f6ff 0%, #fff7f0 100%);
+    --card-border: #dbe2ef;
+    --card-shadow: rgba(15, 23, 42, 0.08);
+    --label-color: #6b7280;
+    --value-color: #111827;
+    --notes-color: #374151;
+    --divider-color: rgba(255, 255, 255, 0.6);
+}
+@media (prefers-color-scheme: dark) {
+    :root {
+        --card-bg: linear-gradient(135deg, #111827 0%, #0b1220 100%);
+        --card-border: #1f2937;
+        --card-shadow: rgba(0, 0, 0, 0.4);
+        --label-color: #9ca3af;
+        --value-color: #e5e7eb;
+        --notes-color: #cbd5e1;
+        --divider-color: rgba(255, 255, 255, 0.15);
+        --expander-bg: #0f172a;
+        --expander-border: #1f2937;
+        --expander-summary: #111827;
+        --expander-summary-hover: #152238;
+        --expander-text: #e5e7eb;
+    }
+}
+.snapshot-panel {
+    background: var(--card-bg);
+    color: var(--value-color);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 0.75rem 0.9rem;
+    box-shadow: 0 3px 10px var(--card-shadow);
+}
+.snapshot-panel .title {
+    font-weight: 700;
+    margin-bottom: 0.2rem;
+}
+.snapshot-panel .desc {
+    color: var(--label-color);
+    margin-bottom: 0.4rem;
+}
+.snapshot-panel .line {
+    margin-bottom: 0.1rem;
+}
+.snapshot-panel .stats {
+    margin-top: 0.35rem;
+    color: var(--label-color);
+}
+.participant-card {
+    background: var(--card-bg);
+    border-radius: 16px;
+    border: 1px solid var(--card-border);
+    padding: 0.85rem 1rem;
+    box-shadow: 0 4px 12px var(--card-shadow);
+    margin-bottom: 0.75rem;
+}
+.participant-card .avatar {
+    font-size: 48px;
+    text-align: center;
+    margin-bottom: 0.4rem;
+}
+.participant-card .field {
+    display: flex;
+    gap: 0.65rem;
+    margin-bottom: 0.35rem;
+    align-items: baseline;
+}
+.participant-card .field:last-child {
+    margin-bottom: 0;
+}
+.participant-card .icon {
+    font-size: 1.1rem;
+}
+.participant-card .label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--label-color);
+    margin-bottom: 0.05rem;
+}
+.participant-card .value {
+    font-size: 0.95rem;
+    color: var(--value-color);
+    font-weight: 600;
+}
+.participant-card .notes {
+    margin-top: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--notes-color);
+    padding-top: 0.4rem;
+    border-top: 1px solid var(--divider-color);
+}
+</style>
+"""
+
+
+def _load_standard_xy() -> Dict[str, np.ndarray]:
+    if mne is None:
+        return {}
+    try:
+        montage = mne.channels.make_standard_montage("standard_1020")
+    except Exception:
+        return {}
+    ch_pos = montage.get_positions().get("ch_pos", {})
+    xy: Dict[str, np.ndarray] = {}
+    for name, coords in ch_pos.items():
+        xy[_normalize_position_label(name)] = np.asarray(coords[:2], dtype=float)
+    return xy
+
+
+_STANDARD_1020_XY = _load_standard_xy()
+if _STANDARD_1020_XY:
+    _STANDARD_XY_SCALE = 0.95 / max(float(np.linalg.norm(val)) for val in _STANDARD_1020_XY.values())
+else:
+    _STANDARD_XY_SCALE = 1.0
 
 PARTICIPANT_DEFAULT = {
     "Code": "",
@@ -1688,13 +1853,159 @@ def convert_value(field: FieldSchema, value: Any) -> Any:
     return value
 
 
+def _position_angle(label: str, fallback_idx: int) -> float:
+    total = len(_STANDARD_POSITION_ORDER) or 1
+    key = _normalize_position_label(label)
+    idx = _POSITION_ANGLE_LOOKUP.get(key)
+    if idx is None:
+        idx = fallback_idx % total
+    return 2 * math.pi * (idx / total)
+
+
+def render_config_snapshot(method: str, device: str, general: Dict[str, Any]) -> None:
+    method = method or "—"
+    device = device or "—"
+    full_name = METHOD_FULL_NAMES.get(method)
+    desc = METHOD_DESCRIPTIONS.get(method)
+    params_block = general if "Parameters" not in general else general.get("Parameters", {})
+    fs_value = coerce_number(params_block.get("fs") or general.get("fs"))
+    channels = coerce_number(params_block.get("NumberEEGChannels") or general.get("NumberEEGChannels"))
+    duration = coerce_number(params_block.get("RecordingTime") or general.get("RecordingTime"))
+
+    method_label = f"{method} – {full_name}" if full_name else method
+    fs_txt = f"{fs_value} Hz" if fs_value is not None else "—"
+    ch_txt = f"{int(channels)}" if channels is not None else "—"
+    dur_txt = f"{duration} s" if duration is not None else "— s"
+
+    html_block = textwrap.dedent(
+        f"""
+        <div class="snapshot-panel">
+            <div class="title">Method: {html.escape(method_label)}</div>
+            {'<div class="desc">' + html.escape(desc) + '</div>' if desc else ''}
+            <div class="line"><strong>Device:</strong> {html.escape(device)}</div>
+            <div class="stats">fs: {fs_txt}<br>Channels: {ch_txt}<br>Recording time: {dur_txt}</div>
+        </div>
+        """
+    )
+    st.markdown(html_block, unsafe_allow_html=True)
+
+
+def _electrode_map_figure(device: str, rows: List[Dict[str, Any]]) -> plt.Figure:
+    fig, ax = plt.subplots(figsize=(6.2, 6.2))
+    ax.set_aspect("equal")
+    ax.axis("off")
+    head_radius = 1.05
+    ax.set_facecolor("#fbfbfd")
+    ax.add_patch(Circle((0, 0), head_radius, facecolor="#f8fafc", edgecolor="#90a4ae", linewidth=1.2))
+    ax.add_patch(Circle((0, 0), 0.35, fill=False, linestyle="--", linewidth=1.0, edgecolor="#b0bec5"))
+    ax.add_patch(
+        Polygon(
+            [(0.0, head_radius), (0.08, head_radius + 0.18), (-0.08, head_radius + 0.18)],
+            closed=True,
+            facecolor="#ffe0b2",
+            edgecolor="#fb8c00",
+            linewidth=1.0,
+        )
+    )
+    ax.add_patch(Rectangle((-head_radius - 0.03, -0.25), 0.12, 0.5, facecolor="#f5f5f5", edgecolor="#b0bec5", linewidth=1.0))
+    ax.add_patch(Rectangle((head_radius - 0.09, -0.25), 0.12, 0.5, facecolor="#f5f5f5", edgecolor="#b0bec5", linewidth=1.0))
+
+    extras = {name.lower() for name in DEVICE_EXTRA_LABELS.get(device, [])}
+    box_width, box_height = 0.22, 0.14
+    for idx, row in enumerate(rows):
+        position_label = row.get("Position") or row.get("Channel") or f"Ch {idx + 1}"
+        normalized = _normalize_position_label(position_label)
+        coords = _STANDARD_1020_XY.get(normalized)
+        if coords is not None:
+            x = float(coords[0]) * _STANDARD_XY_SCALE
+            y = float(coords[1]) * _STANDARD_XY_SCALE
+        else:
+            angle = _position_angle(position_label, idx)
+            radius = 0.85 if row.get("Active") else 0.65
+            x = radius * math.cos(angle)
+            y = radius * math.sin(angle)
+        ch_label = row.get("Channel") or position_label
+        lower_name = str(ch_label).lower()
+        is_active = bool(row.get("Active"))
+        is_reference = "ref" in lower_name
+        is_ground = "gnd" in lower_name or "ground" in lower_name
+        if is_reference:
+            fill_color = "#1e88e5"
+        elif is_ground:
+            fill_color = "#263238"
+        elif is_active or lower_name in extras:
+            fill_color = "#43a047"
+        else:
+            fill_color = "#ffd54f"
+        edge_color = "#0f172a" if is_reference or is_ground else "#37474f"
+        rect = FancyBboxPatch(
+            (x - box_width / 2, y - box_height / 2),
+            box_width,
+            box_height,
+            facecolor=fill_color,
+            edgecolor=edge_color,
+            linewidth=3,
+            boxstyle="round,pad=0.02,rounding_size=0.04",
+            zorder=3,
+        )
+        ax.add_patch(rect)
+        ax.text(
+            x,
+            y + box_height * 0.15,
+            position_label,
+            ha="center",
+            va="center",
+            fontsize=9,
+            color="white" if fill_color in {"#1e88e5", "#263238", "#43a047"} else "#1f2937",
+            weight="bold",
+            zorder=4,
+        )
+        ax.text(
+            x,
+            y - box_height * 0.25,
+            f"{idx + 1}",
+            ha="center",
+            va="center",
+            fontsize=7.5,
+            color="white" if fill_color in {"#1e88e5", "#263238"} else "#424242",
+            zorder=4,
+        )
+    ax.set_xlim(-1.35, 1.35)
+    ax.set_ylim(-1.35, 1.35)
+    ax.set_title(f"{device} electrode map", fontsize=12)
+    return fig
+
+
+def _render_participant_card(participant: Dict[str, Any]) -> None:
+    st.markdown(PARTICIPANT_CARD_STYLE, unsafe_allow_html=True)
+    info_rows = [
+        ("🆔", "Code", participant.get("Code") or "—"),
+        ("🔤", "Initials", participant.get("Initials") or "—"),
+        ("🎂", "Age", participant.get("Age") or "—"),
+        ("⚧", "Gender", participant.get("Gender") or "—"),
+        ("✋", "Dominant hand", participant.get("DominantHand") or "—"),
+    ]
+    info_html = "".join(
+        f"<div class='field'><div class='icon'>{icon}</div>"
+        f"<div><div class='label'>{label}</div><div class='value'>{html.escape(str(value))}</div></div></div>"
+        for icon, label, value in info_rows
+    )
+    notes_text = str(participant.get("Notes") or "").strip()
+    notes_html = ""
+    if notes_text:
+        notes_html = f"<div class='notes'>📝 {html.escape(notes_text)}</div>"
+    card_html = f"<div class='participant-card'><div class='avatar'>🧑</div>{info_html}{notes_html}</div>"
+    st.markdown(card_html, unsafe_allow_html=True)
+
+
 def render_general_form() -> Dict[str, Any]:
     general = st.session_state["general_form"]
     method_field = next(field for field in GENERAL_SCHEMA if field.name == "Method")
     device_field = next(field for field in GENERAL_SCHEMA if field.name == "Device")
 
-    with st.container():
-        left, right = st.columns(2)
+    with st.expander("Session configuration", expanded=True):
+        form_col, viz_col = st.columns((3, 2))
+        left, right = form_col.columns(2)
         method_options = method_field.options or sorted(METHOD_SCHEMAS.keys())
         method_value = resolve_choice(method_options, general.get("Method"))
         method = left.selectbox(
@@ -1711,12 +2022,19 @@ def render_general_form() -> Dict[str, Any]:
             index=device_options.index(device_value),
             help=device_field.tooltip or None,
         )
+        method_full = METHOD_FULL_NAMES.get(method)
+        description = METHOD_DESCRIPTIONS.get(method)
+        if method_full or description:
+            caption_parts = [method_full or ""]
+            if description:
+                caption_parts.append(description)
+            left.caption(" · ".join(part for part in caption_parts if part))
         general["Method"] = method
         general["Device"] = device
 
     other_fields = [field for field in GENERAL_SCHEMA if field.name not in {"Method", "Device"}]
     device_is_unicorn = device.lower() == "unicorn"
-    cols = st.columns(2)
+    cols = form_col.columns(2)
     for idx, field in enumerate(other_fields):
         target = cols[idx % 2]
         key = f"general_{field.name}"
@@ -1749,7 +2067,11 @@ def render_general_form() -> Dict[str, Any]:
         else:
             value = target.text_input(field.name, value=current or "", help=field.tooltip or None, key=key)
         general[field.name] = value
-
+    with viz_col:
+        spacer_col, snap_col = viz_col.columns([1, 5])
+        with snap_col:
+            st.caption("Configuration snapshot")
+            render_config_snapshot(general.get("Method", ""), general.get("Device", ""), general)
     previous_device = st.session_state.get("_last_device_selection")
     device_changed = device != previous_device
     if device_changed:
@@ -1771,40 +2093,39 @@ def render_device_config(device: str) -> Dict[str, Any]:
     device_forms = st.session_state.setdefault("device_forms", {})
     form_state = device_forms.setdefault(device, device_default_values(device))
 
-    st.subheader(f"{device} device settings")
-    st.caption("Configure hardware-specific parameters required to establish the live connection.")
-    cols = st.columns(2)
-    for idx, field in enumerate(schema):
-        target = cols[idx % 2]
-        key = f"device_{device}_{field['name']}"
-        current = form_state.get(field["name"], field.get("default"))
-        if device == "UNICORN" and field["name"] == "UNICORNPort":
-            value = render_unicorn_port_input(target, field, current, key)
-        elif field["kind"] == "number":
-            fallback = field.get("default", 0.0)
-            numeric = coerce_number(current)
-            value_default = float(numeric if numeric is not None else fallback or 0.0)
-            kwargs: Dict[str, Any] = {
-                "value": value_default,
-                "step": float(field.get("step", 0.5)),
-                "help": field.get("help"),
-                "key": key,
-            }
-            if field.get("min") is not None:
-                kwargs["min_value"] = float(field["min"])
-            if field.get("max") is not None:
-                kwargs["max_value"] = float(field["max"])
-            value = target.number_input(field["label"], **kwargs)
-        else:
-            value = target.text_input(
-                field["label"],
-                value=str(current or ""),
-                help=field.get("help"),
-                placeholder=field.get("placeholder"),
-                key=key,
-            )
-            value = value.strip()
-        form_state[field["name"]] = value
+    with st.expander(f"{device} device settings", expanded=True):
+        cols = st.columns(2)
+        for idx, field in enumerate(schema):
+            target = cols[idx % 2]
+            key = f"device_{device}_{field['name']}"
+            current = form_state.get(field["name"], field.get("default"))
+            if device == "UNICORN" and field["name"] == "UNICORNPort":
+                value = render_unicorn_port_input(target, field, current, key)
+            elif field["kind"] == "number":
+                fallback = field.get("default", 0.0)
+                numeric = coerce_number(current)
+                value_default = float(numeric if numeric is not None else fallback or 0.0)
+                kwargs: Dict[str, Any] = {
+                    "value": value_default,
+                    "step": float(field.get("step", 0.5)),
+                    "help": field.get("help"),
+                    "key": key,
+                }
+                if field.get("min") is not None:
+                    kwargs["min_value"] = float(field["min"])
+                if field.get("max") is not None:
+                    kwargs["max_value"] = float(field["max"])
+                value = target.number_input(field["label"], **kwargs)
+            else:
+                value = target.text_input(
+                    field["label"],
+                    value=str(current or ""),
+                    help=field.get("help"),
+                    placeholder=field.get("placeholder"),
+                    key=key,
+                )
+                value = value.strip()
+            form_state[field["name"]] = value
     return dict(form_state)
 
 
@@ -1815,21 +2136,21 @@ def render_method_form(method: str) -> Dict[str, Any]:
         st.info(f"No dedicated parameter schema found for {method}.")
         return {}
 
-    st.subheader(f"{method} parameters")
-    cols = st.columns(2)
-    for idx, field in enumerate(schema):
-        target = cols[idx % 2]
-        key = f"{method}_{field.name}"
-        current = method_state.get(field.name)
-        if field.kind == "dropdown":
-            options = field.options or [""]
-            resolved = resolve_choice(options, current)
-            value = target.selectbox(field.name, options=options, index=options.index(resolved), help=field.tooltip or None, key=key)
-        elif field.kind == "numeric":
-            value = render_numeric_input(target, field, current, key)
-        else:
-            value = target.text_input(field.name, value=current or "", help=field.tooltip or None, key=key)
-        method_state[field.name] = value
+    with st.expander(f"{method} parameters", expanded=True):
+        cols = st.columns(2)
+        for idx, field in enumerate(schema):
+            target = cols[idx % 2]
+            key = f"{method}_{field.name}"
+            current = method_state.get(field.name)
+            if field.kind == "dropdown":
+                options = field.options or [""]
+                resolved = resolve_choice(options, current)
+                value = target.selectbox(field.name, options=options, index=options.index(resolved), help=field.tooltip or None, key=key)
+            elif field.kind == "numeric":
+                value = render_numeric_input(target, field, current, key)
+            else:
+                value = target.text_input(field.name, value=current or "", help=field.tooltip or None, key=key)
+            method_state[field.name] = value
     return dict(method_state)
 
 
@@ -1880,116 +2201,119 @@ def ensure_channel_rows(device: str, existing: Optional[List[Dict[str, Any]]] = 
 def render_channel_editor(device: str) -> List[Dict[str, Any]]:
     channel_state = st.session_state["channel_tables"]
     rows = ensure_channel_rows(device, channel_state.get(device))
-    st.subheader(f"Electrodes ({device})")
-    st.caption(
-        "Toggle the channels you intend to record, set the 10-20 name (Position), adjust the topography coordinates, "
-        "and choose the electrode hardware model for documentation. Ground/Reference rows stay enabled automatically."
-    )
-    if device == "ActiCHamp":
-        fs_value = st.session_state.get("general_form", {}).get("fs")
-        status = st.session_state.get("_actichamp_impedance_status")
-        last_ts = st.session_state.get("_actichamp_impedance_timestamp")
-        cols = st.columns([1, 1, 2])
-        if cols[0].button("Read ActiCHamp impedances", key="actichamp_impedance_button"):
-            st.session_state["_actichamp_impedance_loaded"] = False
-            _fetch_actichamp_impedances(fs_value)
-            rows = st.session_state["channel_tables"].get("ActiCHamp", rows)
-        if cols[1].button("Clear impedances", key="actichamp_impedance_clear"):
-            st.session_state["_actichamp_impedance_loaded"] = False
-            st.session_state["_actichamp_impedance_timestamp"] = None
-            st.session_state["_actichamp_impedance_status"] = "Cleared previously loaded impedances."
-        with cols[2]:
-            if status:
-                st.info(status)
-            if last_ts:
-                ts_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_ts))
-                st.caption(f"Last read: {ts_str}")
-    edited = st.data_editor(
-        rows,
-        num_rows="fixed",
-        hide_index=True,
-        key=f"channels_{device}",
-        column_config={
-            "Channel": st.column_config.TextColumn("Channel", disabled=True, width="small"),
-            "Position": st.column_config.TextColumn(
-                "Electrode / Position",
-                help="10-20 label or custom montage description",
-                width="medium",
-            ),
-            "Rubrik": st.column_config.SelectboxColumn(
-                "Electrode type (Rubrik)",
-                options=ELECTRODE_RUBRICS,
-                width="medium",
-            ),
-            "Model": st.column_config.SelectboxColumn("Model", options=ELECTRODE_MODELS, width="large"),
-            "Impedance": st.column_config.NumberColumn(
-                "Impedance (kΩ)",
-                min_value=0.0,
-                step=0.5,
-                format="%.1f",
-            ),
-            "PosX": st.column_config.NumberColumn(
-                "Pos X",
-                help="Custom X coordinate for scalp plot (-1.5 to 1.5). Leave blank to use defaults.",
-                min_value=-1.5,
-                max_value=1.5,
-                step=0.05,
-                format="%.2f",
-            ),
-            "PosY": st.column_config.NumberColumn(
-                "Pos Y",
-                help="Custom Y coordinate for scalp plot (-1.5 to 1.5). Leave blank to use defaults.",
-                min_value=-1.5,
-                max_value=1.5,
-                step=0.05,
-                format="%.2f",
-            ),
-            "Active": st.column_config.CheckboxColumn("Use channel"),
-        },
-    )
-    extras = set(DEVICE_EXTRA_LABELS.get(device, []))
-    for row in edited:
-        if row["Channel"] in extras:
-            row["Active"] = True
-        if not row.get("Position"):
-            row["Position"] = row["Channel"].replace(" ", "")
-        if row.get("PosX") in ("", None) or row.get("PosY") in ("", None):
-            pos_x, pos_y = _channel_default_coords(row["Position"])
-            row["PosX"] = pos_x
-            row["PosY"] = pos_y
-    channel_state[device] = edited
-    topo_cols = st.columns([1, 1])
-    if plotly_events is not None and go is not None:
-        with topo_cols[0]:
-            channel_labels = [row.get("Channel") or f"Ch {idx+1}" for idx, row in enumerate(edited)]
-            target = st.selectbox("Channel to place", options=channel_labels, key=f"topo_target_{device}")
-            fig = _plotly_topography(edited)
-            st.caption("Pick a channel, then click on the head map to place it.")
-            events = plotly_events(
-                fig,
-                click_event=True,
-                select_event=True,
-                override_height=520,
-                override_width=520,
-                key=f"topo_events_{device}",
+    with st.expander(f"Electrodes ({device})", expanded=True):
+        st.caption(
+            "Toggle the channels you intend to record, set the 10-20 name (Position), adjust coordinates, and choose "
+            "hardware. Ground/Reference rows stay enabled automatically."
+        )
+        if device == "ActiCHamp":
+            fs_value = st.session_state.get("general_form", {}).get("fs")
+            status = st.session_state.get("_actichamp_impedance_status")
+            last_ts = st.session_state.get("_actichamp_impedance_timestamp")
+            btn_cols = st.columns([1, 1, 2])
+            if btn_cols[0].button("Read ActiCHamp impedances", key="actichamp_impedance_button"):
+                st.session_state["_actichamp_impedance_loaded"] = False
+                _fetch_actichamp_impedances(fs_value)
+                rows = st.session_state["channel_tables"].get("ActiCHamp", rows)
+            if btn_cols[1].button("Clear impedances", key="actichamp_impedance_clear"):
+                st.session_state["_actichamp_impedance_loaded"] = False
+                st.session_state["_actichamp_impedance_timestamp"] = None
+                st.session_state["_actichamp_impedance_status"] = "Cleared previously loaded impedances."
+            with btn_cols[2]:
+                if status:
+                    st.info(status)
+                if last_ts:
+                    ts_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_ts))
+                    st.caption(f"Last read: {ts_str}")
+
+        table_col, map_col = st.columns((2, 1))
+        with table_col:
+            edited = st.data_editor(
+                rows,
+                num_rows="fixed",
+                hide_index=True,
+                key=f"channels_{device}",
+                column_config={
+                    "Channel": st.column_config.TextColumn("Channel", disabled=True, width="small"),
+                    "Position": st.column_config.TextColumn(
+                        "Electrode / Position",
+                        help="10-20 label or custom montage description",
+                        width="medium",
+                    ),
+                    "Rubrik": st.column_config.SelectboxColumn(
+                        "Electrode type (Rubrik)",
+                        options=ELECTRODE_RUBRICS,
+                        width="medium",
+                    ),
+                    "Model": st.column_config.SelectboxColumn("Model", options=ELECTRODE_MODELS, width="large"),
+                    "Impedance": st.column_config.NumberColumn(
+                        "Impedance (kΩ)",
+                        min_value=0.0,
+                        step=0.5,
+                        format="%.1f",
+                    ),
+                    "PosX": st.column_config.NumberColumn(
+                        "Pos X",
+                        help="Custom X coordinate for scalp plot (-1.5 to 1.5). Leave blank to use defaults.",
+                        min_value=-1.5,
+                        max_value=1.5,
+                        step=0.05,
+                        format="%.2f",
+                    ),
+                    "PosY": st.column_config.NumberColumn(
+                        "Pos Y",
+                        help="Custom Y coordinate for scalp plot (-1.5 to 1.5). Leave blank to use defaults.",
+                        min_value=-1.5,
+                        max_value=1.5,
+                        step=0.05,
+                        format="%.2f",
+                    ),
+                    "Active": st.column_config.CheckboxColumn("Use channel"),
+                },
             )
-            if events:
-                evt = events[0]
-                x_new = evt.get("x")
-                y_new = evt.get("y")
-                if x_new is not None and y_new is not None:
-                    idx = channel_labels.index(target)
-                    edited[idx]["PosX"] = float(x_new)
-                    edited[idx]["PosY"] = float(y_new)
-                    channel_state[device] = edited
-                    st.session_state["_topo_last_message"] = f"Updated {target} to ({x_new:.2f}, {y_new:.2f})."
-                    st.rerun()
-            if msg := st.session_state.get("_topo_last_message"):
-                st.info(msg)
-    else:
-        topo_cols[0].info("Install optional deps `plotly` and `streamlit-plotly-events` for drag/drop placement.")
-    with topo_cols[1]:
-        _plot_topography(edited, topo_cols[1].empty())
+            extras = set(DEVICE_EXTRA_LABELS.get(device, []))
+            for row in edited:
+                if row["Channel"] in extras:
+                    row["Active"] = True
+                if not row.get("Position"):
+                    row["Position"] = row["Channel"].replace(" ", "")
+                if row.get("PosX") in ("", None) or row.get("PosY") in ("", None):
+                    pos_x, pos_y = _channel_default_coords(row["Position"])
+                    row["PosX"] = pos_x
+                    row["PosY"] = pos_y
+            channel_state[device] = edited
+
+        with map_col:
+            st.caption("Scalp map")
+            if plotly_events is not None and go is not None:
+                channel_labels = [row.get("Channel") or f"Ch {idx+1}" for idx, row in enumerate(edited)]
+                target = st.selectbox("Channel to place", options=channel_labels, key=f"topo_target_{device}")
+                fig = _plotly_topography(edited)
+                st.caption("Pick a channel, then click on the head map to place it.")
+                events = plotly_events(
+                    fig,
+                    click_event=True,
+                    select_event=True,
+                    override_height=520,
+                    override_width=520,
+                    key=f"topo_events_{device}",
+                )
+                if events:
+                    evt = events[0]
+                    x_new = evt.get("x")
+                    y_new = evt.get("y")
+                    if x_new is not None and y_new is not None:
+                        idx = channel_labels.index(target)
+                        edited[idx]["PosX"] = float(x_new)
+                        edited[idx]["PosY"] = float(y_new)
+                        channel_state[device] = edited
+                        st.session_state["_topo_last_message"] = f"Updated {target} to ({x_new:.2f}, {y_new:.2f})."
+                        st.rerun()
+                if msg := st.session_state.get("_topo_last_message"):
+                    st.info(msg)
+            else:
+                st.info("Install optional deps `plotly` and `streamlit-plotly-events` for click placement.")
+            _plot_topography(edited, st.empty())
     return edited
 
 
@@ -2078,20 +2402,33 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
 
 
 def render_participant_form() -> Dict[str, Any]:
-    st.subheader("Participant / proband information")
     participant = st.session_state["participant"]
-    cols = st.columns(2)
-    participant["Code"] = cols[0].text_input("Participant code", value=participant.get("Code", ""), placeholder="e.g. VEP_023")
-    participant["Initials"] = cols[1].text_input("Initials", value=participant.get("Initials", ""))
-    cols = st.columns(3)
-    age_number = coerce_number(participant.get("Age"))
-    age_default = int(age_number) if isinstance(age_number, (int, float)) and age_number > 0 else 0
-    participant["Age"] = cols[0].number_input("Age", min_value=0, max_value=110, value=age_default)
-    gender_value = resolve_choice(GENDER_OPTIONS, participant.get("Gender"))
-    hand_value = resolve_choice(HANDEDNESS_OPTIONS, participant.get("DominantHand"))
-    participant["Gender"] = cols[1].selectbox("Gender", options=GENDER_OPTIONS, index=GENDER_OPTIONS.index(gender_value))
-    participant["DominantHand"] = cols[2].selectbox("Dominant hand", options=HANDEDNESS_OPTIONS, index=HANDEDNESS_OPTIONS.index(hand_value))
-    participant["Notes"] = st.text_area("Session notes", value=participant.get("Notes", ""), height=80)
+    with st.expander("Participant / proband information", expanded=True):
+        form_col, viz_col = st.columns((4, 1))
+        with form_col:
+            cols = form_col.columns(2)
+            participant["Code"] = cols[0].text_input(
+                "Participant code", value=participant.get("Code", ""), placeholder="e.g. VEP_023"
+            )
+            participant["Initials"] = cols[1].text_input("Initials", value=participant.get("Initials", ""))
+            cols = form_col.columns(3)
+            age_number = coerce_number(participant.get("Age"))
+            age_default = int(age_number) if isinstance(age_number, (int, float)) and age_number > 0 else 0
+            participant["Age"] = cols[0].number_input("Age", min_value=0, max_value=110, value=age_default)
+            gender_value = resolve_choice(GENDER_OPTIONS, participant.get("Gender"))
+            hand_value = resolve_choice(HANDEDNESS_OPTIONS, participant.get("DominantHand"))
+            participant["Gender"] = cols[1].selectbox(
+                "Gender", options=GENDER_OPTIONS, index=GENDER_OPTIONS.index(gender_value)
+            )
+            participant["DominantHand"] = cols[2].selectbox(
+                "Dominant hand", options=HANDEDNESS_OPTIONS, index=HANDEDNESS_OPTIONS.index(hand_value)
+            )
+            participant["Notes"] = form_col.text_area("Session notes", value=participant.get("Notes", ""), height=80)
+        with viz_col:
+            spacer_col, snap_col = viz_col.columns([1, 5])
+            with snap_col:
+                st.caption("Participant snapshot")
+                _render_participant_card(participant)
     return dict(participant)
 
 
@@ -2367,6 +2704,46 @@ def handle_upload() -> None:
 
 def main() -> None:
     st.set_page_config(page_title="cortipy UI", layout="wide")
+    st.markdown(
+        """
+<style>
+:root {
+    --expander-bg: #ffffff;
+    --expander-border: #e5e7eb;
+    --expander-summary: #eef2ff;
+    --expander-summary-hover: #e0e7ff;
+    --expander-text: #111827;
+}
+@media (prefers-color-scheme: dark) {
+    :root {
+        --expander-bg: #0f172a;
+        --expander-border: #1f2937;
+        --expander-summary: #111827;
+        --expander-summary-hover: #152238;
+        --expander-text: #e5e7eb;
+    }
+}
+div[data-testid="stExpander"] > details {
+    border-radius: 12px;
+    border: 1px solid var(--expander-border);
+    background-color: var(--expander-bg);
+    color: var(--expander-text);
+}
+div[data-testid="stExpander"] > details > summary {
+    background-color: var(--expander-summary);
+    color: var(--expander-text);
+}
+div[data-testid="stExpander"] > details > summary:hover {
+    background-color: var(--expander-summary-hover);
+}
+div[data-testid="stExpander"] > details > div[role="group"] {
+    padding-top: 0.5rem;
+    color: var(--expander-text);
+}
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
     st.title("cortipy – EEG Measurement UI")
     ensure_state()
 
