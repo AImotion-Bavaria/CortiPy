@@ -4,7 +4,7 @@
 
 # TODO connect to Actichamp on device selection to get the electrodes impedances
 
-# TODO Unicorn fs only 250
+# TODO Unicorn fs only 250 / actiChamp without fs 250Hz
 
 # TODO Live Prview Unlimited until you press stop or start measurement then stop keep update interval fixed, rolling chart window
 # TODO Live Preview one chart for one channel

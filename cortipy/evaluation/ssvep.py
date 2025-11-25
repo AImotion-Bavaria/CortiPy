@@ -4,7 +4,21 @@ from __future__ import annotations
 
 from typing import Dict, Tuple
 
+import logging
+import matplotlib
 import numpy as np
+
+try:  # pragma: no cover - optional Streamlit integration
+    import streamlit as st
+except Exception:  # pragma: no cover
+    st = None
+    _STREAMLIT_RUNTIME = False
+else:
+    _STREAMLIT_RUNTIME = bool(getattr(st, "runtime", None) and st.runtime.exists())
+    if _STREAMLIT_RUNTIME:
+        matplotlib.use("Agg", force=True)
+
+import matplotlib.pyplot as plt
 
 from cortipy.evaluation.base import EvaluatorBase
 from cortipy.shared import (
@@ -17,6 +31,8 @@ from cortipy.shared import (
     ssvep_snr,
 )
 
+LOGGER = logging.getLogger("cortipy.evaluation.ssvep")
+
 
 class SsvepEvaluator(EvaluatorBase):
     """Python port of EvalSSVEPmain."""
@@ -25,8 +41,10 @@ class SsvepEvaluator(EvaluatorBase):
         self.show_plots = show_plots
 
     def evaluate(self, context) -> None:  # type: ignore[override]
+        LOGGER.debug("SsvepEvaluator.evaluate invoked")
         params = context.params
         if str(params.get("Method", "")).lower() != "ssvep":
+            LOGGER.debug("SsvepEvaluator skipped: method=%s", params.get("Method"))
             return
 
         data = params.get("data")
@@ -79,12 +97,18 @@ class SsvepEvaluator(EvaluatorBase):
 
         show_plots = self.show_plots if self.show_plots is not None else not params.get("ReportAnalyzer")
         if show_plots:
+            LOGGER.debug("Rendering SSVEP evaluation plots")
             low = param_block.get("LowestFrequency", 2)
             high = param_block.get("HighestFrequency", 45)
             avg_psd = psd_result.dBpsd.mean(axis=1)
-            plot_psd_ssvep(_get_axes(), psd_result.freq, avg_psd, low, high)
+            fig_psd, ax_psd = _get_axes("ssvep_psd")
+            plot_psd_ssvep(ax_psd, psd_result.freq, avg_psd, low, high)
+            _show_mpl(fig_psd, "ssvep_psd")
+
             avg_fft = np.abs(spectrum).mean(axis=1)
-            plot_psd_ssvep(_get_axes(), freq, avg_fft, low, high)
+            fig_fft, ax_fft = _get_axes("ssvep_fft")
+            plot_psd_ssvep(ax_fft, freq, avg_fft, low, high)
+            _show_mpl(fig_fft, "ssvep_fft")
 
         context.params = params
 
@@ -104,9 +128,35 @@ class SsvepEvaluator(EvaluatorBase):
         raise RuntimeError("SSVEP evaluation supports ActiCHamp or UNICORN data.")
 
 
-def _get_axes():
-    import matplotlib.pyplot as plt
-
+def _get_axes(key: str):
     fig = plt.figure(figsize=(10, 4))
-    return fig.gca()
+    ax = fig.gca()
+    fig.tight_layout()
+    return fig, ax
 
+
+def _show_mpl(fig: plt.Figure, key: str) -> None:
+    LOGGER.debug("_show_mpl called", extra={"key": key})
+    if not _is_streamlit_runtime():
+        LOGGER.debug("_show_mpl skipped (no streamlit runtime)", extra={"key": key})
+        return
+    placeholders = st.session_state.setdefault("_ssvep_eval_placeholders", {})
+    placeholder = placeholders.get(key)
+    if placeholder is None:
+        placeholder = st.empty()
+        placeholders[key] = placeholder
+        LOGGER.debug("_show_mpl created placeholder", extra={"key": key})
+    else:
+        LOGGER.debug("_show_mpl reused placeholder", extra={"key": key})
+    try:
+        placeholder.pyplot(fig, clear_figure=False)
+        LOGGER.debug("_show_mpl rendered figure", extra={"key": key, "fig": fig.number})
+    except Exception as exc:  # pragma: no cover
+        LOGGER.warning("_show_mpl failed to render", extra={"key": key, "error": str(exc)})
+
+
+def _is_streamlit_runtime() -> bool:
+    if st is None:
+        return False
+    runtime = getattr(st, "runtime", None)
+    return bool(runtime and runtime.exists())

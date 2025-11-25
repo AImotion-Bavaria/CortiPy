@@ -1,0 +1,17 @@
+name: cortipy
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.9
+  - numpy==1.26.4
+  - scipy>=1.13.1
+  - matplotlib==3.9.2
+  - mne>=1.6.1
+  - pandas>=2.1
+  - pyserial==3.5
+  - pylsl>=1.17.6
+  - tomli>=2.0.1
+  - streamlit>=1.26  # optional UI
+  - pip
+  - pip:
+      - .
