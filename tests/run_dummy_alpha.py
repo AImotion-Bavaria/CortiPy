@@ -1,15 +1,18 @@
 #!/usr/bin/env python
-"""Run the ALPHA pipeline on a deterministic dummy dataset."""
+"""Run the ALPHA pipeline using the bundled Dummy_Alpha MAT sample."""
 
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
+from scipy.io import loadmat
+from scipy.io.matlab._mio5_params import mat_struct
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -33,8 +36,40 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
+_DEFAULT_DUMMY_ALPHA_PATH = Path(
+    "/Users/jonasheinzmann/Downloads/EEG_Analysis_Tool-dev-merge_main_cortim/DummyData/Dummy_Alpha.mat"
+)
+
+
+def _mat_to_params(path: Path) -> dict:
+    mat = loadmat(path, squeeze_me=True, struct_as_record=False)
+    if "Params" not in mat:
+        raise ValueError(f"MAT file {path} does not contain a 'Params' struct.")
+    return _convert_mat_struct(mat["Params"])
+
+
+def _convert_mat_struct(obj: Any) -> Any:
+    if isinstance(obj, mat_struct):
+        return {name: _convert_mat_struct(getattr(obj, name)) for name in obj._fieldnames}
+    if isinstance(obj, np.ndarray) and obj.dtype == object:
+        return [_convert_mat_struct(item) for item in obj.flat]
+    return obj
+
+
+def load_dummy_alpha_params() -> dict:
+    path = Path(os.environ.get("CORTIPY_DUMMY_ALPHA_PATH", _DEFAULT_DUMMY_ALPHA_PATH))
+    if path.exists():
+        return _mat_to_params(path)
+
+    print(
+        f"Dummy Alpha MAT file not found at {path}. "
+        "Falling back to generated dummy parameters."
+    )
+    return dummy_params_alpha()
+
+
 def main() -> None:
-    params = dummy_params_alpha()
+    params = load_dummy_alpha_params()
     params['ReportAnalyzer'] = False
     ctx = ModuleContext(params)
     evaluator = AlphaEvaluator(show_plots=True)

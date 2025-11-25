@@ -160,16 +160,18 @@ class BciModule(ModuleBase):
 
     def _resolve_detection_channels(self, params_block: dict, total_columns: int) -> np.ndarray:
         num_eeg = min(total_columns, int(params_block.get("NumberEEGChannels", total_columns)))
-        channels = list(range(num_eeg))
-        excluded = set()
-        for key in ("ReferenceChannel", "TriggerChannel"):
-            idx = int(params_block.get(key, 0)) - 1
-            if 0 <= idx < num_eeg:
-                excluded.add(idx)
-        filtered = [ch for ch in channels if ch not in excluded]
-        if not filtered:
-            filtered = channels
-        return np.asarray(filtered, dtype=int)
+        exclude = set()
+        ref_idx = int(params_block.get("ReferenceChannel", 0)) - 1
+        trig_idx = int(params_block.get("TriggerChannel", 0)) - 1
+        if 0 <= ref_idx < num_eeg:
+            exclude.add(ref_idx)
+        if 0 <= trig_idx < num_eeg:
+            exclude.add(trig_idx)
+
+        channels = [idx for idx in range(num_eeg) if idx not in exclude]
+        if not channels:
+            channels = list(range(num_eeg))
+        return np.asarray(channels, dtype=int)
 
     def _aggregate_channels(self, data: np.ndarray, channel_idx: np.ndarray) -> np.ndarray:
         if channel_idx.size == 0:
