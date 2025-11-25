@@ -211,3 +211,5 @@ __marimo__/
 tests/.DS_Store
 results.json
 AGENTS.md
+/cortipy_runs
+TODO.md

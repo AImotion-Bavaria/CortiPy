@@ -1,34 +1,39 @@
 # cortipy package
 
 `cortipy` is the pure-Python implementation of the EEG Analysis Tool that used to live
-inside MATLAB. The package bundles the measurement pipeline, module implementations,
-device abstractions, evaluators, and minimal UI helpers so it can be published as its
-own installable project.
+inside MATLAB. It bundles the measurement pipeline, acquisition modules, device
+adapters, evaluators, and a Streamlit UI so the stack can be installed as a standard
+Python package.
 
 ```
 cortipy/
 ├── core/        # MeasurementPipeline, ModuleContext, params helpers
-├── devices/     # LSL, ActiCHamp-compatible, UNICORN, offline + dummy adapters
+├── devices/     # UNICORN, ActiCHamp (Win), LSL, offline + dummy adapters
 ├── modules/     # Alpha, VEP, SSVEP, BERA, ASSR, P300, BCI acquisition loops
 ├── evaluation/  # Module-specific analysis and plotting code
 ├── shared/      # FFT, filters, plotting, report helpers, etc.
-└── ui/          # Config loaders, save manager, and session runner
+└── ui/          # Config loaders, Streamlit UI, session runner, save helpers
 ```
 
 ## Installation
 
-From the repository root:
+Install in editable mode with optional UI extras:
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate   # PowerShell: .venv\Scripts\Activate.ps1
 pip install --upgrade pip
-pip install -e .
+pip install -e .            # core toolkit
+pip install -e .[ui]        # adds Streamlit dependencies
 ```
 
-This installs `cortipy` in editable mode together with its runtime dependencies
-(`numpy`, `scipy`, `pylsl`, `matplotlib`). Optional UI extras such as Streamlit can be
-installed via `pip install streamlit`.
+For conda users, an environment spec is provided. It pins the same runtime
+dependencies and installs `cortipy` from the local checkout via pip:
+
+```bash
+conda env create -f environment.yml
+conda activate cortipy
+```
 
 ## Running measurements from Python
 
@@ -61,33 +66,40 @@ MeasurementPipeline(hooks=hooks).run()
   `Params` structure) and executes the pipeline once.
 - `cortipy.ui.SessionOptions` + `SaveManager` reproduce MATLAB’s `saveDatamain`
   behaviour, including timestamped run folders containing `params.json` + `data.npz`.
-- `apps/streamlit_app.py` provides the Streamlit UI that recreates the MATLAB
-  configuration dialog (method/device params, proband metadata, electrode naming) and
-  gives you start/stop controls, a live-preview tab for real-time charts, and saved-session
-  browsing.
+- `apps/streamlit_app.py` provides a Streamlit interface for configuring params,
+  naming electrodes, selecting devices, and launching/monitoring measurements with live
+  previews. Saved runs appear in the sidebar so you can browse and reload them.
 
-### UNICORN hardware specifics
+### Running the Streamlit UI
 
-- Provide the UNICORN virtual COM port (for example `"COM7"` on Windows or
+```bash
+pip install -e .[ui]          # once per environment
+streamlit run apps/streamlit_app.py
+```
+
+Open `http://localhost:8501` (default Streamlit port) and configure a run:
+- Pick a method and device, fill in participant metadata, and assign electrodes before starting.
+- Set the sidebar “Save directory” (defaults to `./cortipy_runs`); each run gets its own timestamped folder.
+- Use “Simulate run” to exercise the UI without hardware, or “Use imported data” to replay `.npz` exports offline.
+- The “Preview” tab shows the assembled params and lets you download `params.json` for later scripting.
+- Finished runs appear under “Saved sessions” so you can reload params and browse results.
+- App logs live in `streamlit_app.log` next to the repo; keep it handy when debugging device connections.
+
+### Device specifics
+
+- **UNICORN**: Provide the virtual COM port (for example `"COM7"` on Windows or
   `"/dev/tty.Unicorn-DevB"` on macOS) via `Params["Parameters"]["UNICORNPort"]`
-  (aliases `UNICORNAddress` / `UnicornPort` are accepted for compatibility).
-- Optional extras: `UNICORNDeviceName` (for logging) and `UnicornTimeout`
-  (seconds). The adapter mirrors the MATLAB helpers, returning 16-column packets
-  `[EEG(8), accel(3), gyro(3), battery, counter]`; modules continue to slice the
-  EEG subset just like `data(:, 1:8)` in the original code.
-- The serial protocol relies on `pyserial`, which ships with the package
-  dependencies—no additional install steps required.
-
-### ActiCHamp hardware specifics
-
-- Requires Windows because the vendor SDK uses Win32 shared memory and DLLs.
-- The shared-memory producer and DLLs are bundled in `cortipy/devices/actichamp`;
-  set `Params["ActiChampPath"]` to override the location if needed.
-- Provide `Params["Parameters"]["fs"]` (sampling rate), `NumberEEGChannels`, and
-  optional `NumberAUXChannels`; triggers are appended after the EEG/AUX channels.
-- The adapter launches `EEG_SharedMemoryProducer.exe`, writes the target sampling
-  rate, waits for the `acquisitionReady` flag, and reads from the ring buffer
-  without altering the vendor math or DLLs.
+  (aliases `UNICORNAddress` / `UnicornPort` are accepted). Optional extras:
+  `UNICORNDeviceName` for logging and `UnicornTimeout` (seconds). The adapter returns
+  16-column packets `[EEG(8), accel(3), gyro(3), battery, counter]`.
+- **ActiCHamp**: Windows-only because the vendor SDK uses Win32 shared memory and DLLs.
+  Binaries ship in `cortipy/devices/actichamp`; override with
+  `Params["ActiChampPath"]` if needed. Supply `fs`, `NumberEEGChannels`, and optional
+  `NumberAUXChannels`; triggers follow EEG/AUX data.
+- **LSL / Dummy / Offline**: Use `Device` = `"LSL"` for any LabStreamingLayer EEG
+  stream, `"Dummy"` (or `"Sim"`) for synthetic data, or `"Offline"` to replay
+  `.npz/.mat` files. All are selectable from the Streamlit UI for testing without
+  hardware.
 
 ## Testing and validation
 
