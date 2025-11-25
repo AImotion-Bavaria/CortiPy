@@ -73,7 +73,14 @@ class ModuleBase(ABC):
         return context.device
 
     def create_device(self, context: ModuleContext):
-        return DeviceFactory.create(context.params)
+        device = DeviceFactory.create(context.params)
+        live_view = context.get_service("live_view")
+        if live_view is not None:
+            try:
+                device = live_view.wrap_device(device, context.params)
+            except Exception:
+                pass
+        return device
 
     def post_collect(self, context: ModuleContext) -> None:
         if self.evaluator is not None:
@@ -83,4 +90,3 @@ class ModuleBase(ABC):
     @abstractmethod
     def collect_measurements(self, context: ModuleContext) -> None:
         """Collect data for the current module and update ``context``."""
-

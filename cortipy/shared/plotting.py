@@ -5,8 +5,21 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, Iterable, Sequence
 
-import matplotlib.pyplot as plt
+import matplotlib
 import numpy as np
+
+try:  # pragma: no cover - optional Streamlit support
+    import streamlit as st
+
+    _STREAMLIT_RUNTIME = bool(getattr(st, "runtime", None) and st.runtime.exists())
+except Exception:  # pragma: no cover - Streamlit may not be installed
+    st = None
+    _STREAMLIT_RUNTIME = False
+
+if _STREAMLIT_RUNTIME:
+    matplotlib.use("Agg", force=True)
+
+import matplotlib.pyplot as plt
 
 from cortipy.shared.signal import time_vector
 
@@ -14,6 +27,23 @@ from cortipy.shared.signal import time_vector
 _fft_fig_cache: Dict[str, plt.Figure] = {}
 _vep_fig_cache: Dict[str, plt.Figure] = {}
 _bera_fig_cache: Dict[str, plt.Figure] = {}
+
+
+def _streamlit_placeholder(key: str):
+    if not _STREAMLIT_RUNTIME or st is None:
+        return None
+    placeholders = st.session_state.setdefault("_mpl_placeholders", {})
+    placeholder = placeholders.get(key)
+    if placeholder is None:
+        placeholder = st.empty()
+        placeholders[key] = placeholder
+    return placeholder
+
+
+def _show_in_streamlit(fig: plt.Figure, key: str) -> None:
+    placeholder = _streamlit_placeholder(key)
+    if placeholder is not None:
+        placeholder.pyplot(fig, clear_figure=False)
 
 
 @dataclass
@@ -125,6 +155,7 @@ def plot_fft_live(freq: np.ndarray, data: np.ndarray, ylabel: str, title: str, p
     ax.legend(loc="upper right", fontsize=8)
     fig.tight_layout()
     fig.canvas.draw_idle()
+    _show_in_streamlit(fig, figure_key)
 
 
 def plot_live_avg_vep(avg_signal: np.ndarray, params: dict, max_time: float) -> None:
@@ -171,6 +202,8 @@ def plot_live_avg_vep(avg_signal: np.ndarray, params: dict, max_time: float) -> 
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
     fig.canvas.draw_idle()
+    _show_in_streamlit(fig, figure_key)
+    _show_in_streamlit(fig, figure_key)
 
 
 def plot_live_avg_bera(
@@ -228,6 +261,7 @@ def plot_live_avg_bera(
 
     fig.tight_layout()
     fig.canvas.draw_idle()
+    _show_in_streamlit(fig, figure_key)
 
 
 def plot_bera_results(
@@ -238,6 +272,7 @@ def plot_bera_results(
 ) -> None:
     param_block = params.get("Parameters", {})
     evaluation = params.get("Evaluation", {})
+    figure_key = f"bera-results-{param_block.get('Filename', 'cortipy')}"
     avg = np.asarray(average_data, dtype=float)
     if avg.ndim != 3:
         return
@@ -296,6 +331,7 @@ def plot_bera_results(
 
     fig.tight_layout()
     fig.canvas.draw_idle()
+    _show_in_streamlit(fig, figure_key)
 
 
 def plot_live_erp(avg_signal: np.ndarray, params: dict, max_time: float) -> None:
@@ -351,6 +387,7 @@ def plot_p300_results(avg_signal: np.ndarray, params: dict, max_time: float) -> 
 
     for ch in range(avg_signal.shape[1]):
         fig, ax = plt.subplots(figsize=(8, 4))
+        figure_key = f"p300-results-{param_block.get('Filename', 'cortipy')}-ch{ch+1}"
         ax.plot(t_ms[: idx_max or None], avg_signal[: idx_max or None, ch], color="tab:blue")
         if device == "ActiCHamp":
             ref_idx = int(param_block.get("ReferenceChannel", 1))
@@ -368,6 +405,8 @@ def plot_p300_results(avg_signal: np.ndarray, params: dict, max_time: float) -> 
         ax.set_ylabel("Amplitude (uV)")
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
+        fig.canvas.draw_idle()
+        _show_in_streamlit(fig, figure_key)
 
 
 def plot_assr_spectrum(
@@ -388,3 +427,5 @@ def plot_assr_spectrum(
     ax.set_title(title)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
+    fig.canvas.draw_idle()
+    _show_in_streamlit(fig, f"assr-{title}")

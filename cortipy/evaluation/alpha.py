@@ -4,13 +4,58 @@ from __future__ import annotations
 
 from typing import Any, Dict, Iterable, List, MutableMapping, Optional, Sequence, Tuple
 
+import logging
+import matplotlib
 import numpy as np
 from scipy.signal import resample, spectrogram
+
+try:  # pragma: no cover - optional Streamlit integration
+    import streamlit as st
+except Exception:  # pragma: no cover
+    st = None
+    _STREAMLIT_RUNTIME = False
+else:
+    _STREAMLIT_RUNTIME = bool(getattr(st, "runtime", None) and st.runtime.exists())
+    if _STREAMLIT_RUNTIME:
+        matplotlib.use("Agg", force=True)
+    # Note: runtime detection is refreshed inside _is_streamlit_runtime.
+
+import matplotlib.pyplot as plt
 
 from cortipy.evaluation.base import EvaluatorBase
 from cortipy.shared.signal import hann_window, time_vector
 
 EPS = np.finfo(np.float64).eps
+LOGGER = logging.getLogger("cortipy.evaluation.alpha")
+
+
+def _show_mpl(fig: plt.Figure, key: str) -> None:
+    if not _is_streamlit_runtime():
+        LOGGER.debug("_show_mpl skipped (no streamlit runtime)", extra={"key": key})
+        return
+    placeholders = st.session_state.setdefault("_alpha_eval_placeholders", {})
+    placeholder = placeholders.get(key)
+    if placeholder is None:
+        placeholder = st.empty()
+        placeholders[key] = placeholder
+        LOGGER.debug("_show_mpl created placeholder", extra={"key": key})
+    else:
+        LOGGER.debug("_show_mpl reused placeholder", extra={"key": key})
+    try:
+        placeholder.pyplot(fig, clear_figure=False)
+        LOGGER.debug("_show_mpl rendered figure", extra={"key": key, "fig": fig.number})
+    except Exception as exc:  # pragma: no cover
+        LOGGER.warning("_show_mpl failed to render", extra={"key": key, "error": str(exc)})
+
+
+def _is_streamlit_runtime() -> bool:
+    if st is None:
+        LOGGER.debug("_is_streamlit_runtime: st is None")
+        return False
+    runtime = getattr(st, "runtime", None)
+    exists = bool(runtime and runtime.exists())
+    LOGGER.debug("_is_streamlit_runtime", extra={"exists": exists})
+    return exists
 
 
 class AlphaEvaluator(EvaluatorBase):
@@ -20,8 +65,10 @@ class AlphaEvaluator(EvaluatorBase):
         self.show_plots = show_plots
 
     def evaluate(self, context) -> None:  # type: ignore[override]
+        LOGGER.debug("AlphaEvaluator.evaluate invoked")
         params = context.params
         if str(params.get("Method", "")).lower() != "alpha":
+            LOGGER.debug("AlphaEvaluator skipped: method=%s", params.get("Method"))
             context.params = params
             return
 
@@ -44,6 +91,7 @@ class AlphaEvaluator(EvaluatorBase):
             data_ref, trigger_idx = _append_synthetic_trigger(data_ref, time_seconds, trigger_time, period, params)
 
         show_plots = self.show_plots if self.show_plots is not None else not params.get("ReportAnalyzer")
+        LOGGER.debug("AlphaEvaluator show_plots=%s", show_plots)
 
         trigger_channel = trigger_idx if trigger_idx is not None else data_ref.shape[1] - 1
         trigger_times = trigger_timestamp(data_ref, trigger_channel, without_first_seconds=1, fs=fs)
@@ -80,9 +128,11 @@ class AlphaEvaluator(EvaluatorBase):
             freq_axis = F if freq_axis is None else freq_axis
 
             if show_plots:
+                LOGGER.debug("Calling plot_psd_time for channel %s", ch + 1)
                 plot_psd_time(T, band_power, ch + 1)
 
             if show_plots and trigger_times.size:
+                LOGGER.debug("Calling plot_spectrogram for channel %s", ch + 1)
                 plot_spectrogram(F, power_spectrogram, T, trigger_times, ch + 1)
 
             indices = nearest_indices(T, trigger_times) if trigger_times.size else np.array([])
@@ -214,13 +264,22 @@ def calc_psd_power_time(
     overlap_sec: float,
     fs: float,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    data_arr = np.asarray(data, dtype=float)
+    if data_arr.size == 0:
+        raise ValueError("Input signal is empty for PSD calculation.")
+
     nperseg = len(window)
     if nperseg <= 0:
         raise ValueError("Window length must be positive for PSD calculation.")
+
+    if data_arr.shape[-1] < nperseg:
+        nperseg = data_arr.shape[-1]
+        window = hann_window(nperseg, periodic=True)
+
     noverlap = max(0, min(nperseg - 1, int(round(overlap_sec * fs))))
 
     freq, time_axis, power = spectrogram(
-        data,
+        data_arr,
         fs=fs,
         window=window,
         nperseg=nperseg,
@@ -237,16 +296,18 @@ def calc_psd_power_time(
 
 
 def plot_psd_time(time_axis: np.ndarray, band_power: np.ndarray, channel_number: int) -> None:
+    LOGGER.debug("plot_psd_time called", extra={"channel": channel_number, "points": band_power.size})
     if time_axis.size < 2:
         return
     import matplotlib.pyplot as plt
-    plt.figure()
+    fig = plt.figure()
     plt.plot(time_axis[1:], band_power[1:], color="k")
     plt.xlabel("Time (s)")
     plt.ylabel("Power (dB) [rel. to 1 uV/√Hz]")
     plt.title(f"Channel {channel_number}")
     plt.grid(True, alpha=0.3)
     plt.tight_layout()
+    _show_mpl(fig, f"alpha_psd_time_{channel_number}")
 
 
 def plot_spectrogram(
@@ -256,11 +317,16 @@ def plot_spectrogram(
     trigger_times: np.ndarray,
     channel_number: int,
 ) -> None:
+    LOGGER.debug(
+        "plot_spectrogram called",
+        extra={"channel": channel_number, "freq_points": freq_axis.size, "time_points": time_axis.size},
+    )
     freq_mask = (freq_axis >= 7.0) & (freq_axis <= 20.0)
     if not freq_mask.any():
         return
     import matplotlib.pyplot as plt
-    plt.figure()
+    fig = plt.figure()
+    print("plot_spectrogram")
     plt.pcolormesh(
         time_axis[1:],
         freq_axis[freq_mask],
@@ -276,6 +342,7 @@ def plot_spectrogram(
     for trig in trigger_times:
         plt.axvline(trig, color="w", linestyle="-", linewidth=1.2)
     plt.tight_layout()
+    _show_mpl(fig, f"alpha_spectrogram_{channel_number}")
 
 
 def trigger_timestamp(
@@ -501,6 +568,7 @@ def plot_alpha_matrix(
     reference_channel: int,
     channel_labels: Sequence[str],
 ) -> None:
+    LOGGER.debug("plot_alpha_matrix called", extra={"channels": len(channel_labels)})
     metrics_source = evaluation.get("R_AM")
     if metrics_source is None or len(metrics_source) == 0:
         return
@@ -559,3 +627,4 @@ def plot_alpha_matrix(
     ax.set_ylabel("Channel")
     fig.colorbar(im, ax=ax, label="Value")
     fig.tight_layout()
+    _show_mpl(fig, "alpha_matrix")

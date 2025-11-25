@@ -5,7 +5,8 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from cortipy.evaluation.alpha import AlphaEvaluator
+from cortipy.evaluation.alpha import AlphaEvaluator, calc_psd_power_time
+from cortipy.shared.signal import hann_window
 
 
 def test_alpha_evaluator_ignores_non_alpha_methods(module_context_factory):
@@ -25,6 +26,22 @@ def test_alpha_evaluator_requires_data(module_context_factory):
 
     with pytest.raises(ValueError):
         evaluator.evaluate(context)
+
+
+def test_calc_psd_power_time_handles_short_signal():
+    """Recordings shorter than the analysis window should still compute PSD/SNR without SciPy errors."""
+    fs = 250
+    short_signal = np.ones(fs)
+    long_window = hann_window(int(round(2.0 * fs)), periodic=True)
+
+    band_power, power_density, time_axis, freq_axis, power_matrix = calc_psd_power_time(
+        short_signal, long_window, overlap_sec=0.5, fs=fs
+    )
+
+    assert time_axis.size > 0
+    assert band_power.size == time_axis.size
+    assert power_matrix.shape[0] == freq_axis.size
+    assert power_density.shape == power_matrix.shape
 
 
 def test_alpha_evaluator_populates_evaluation_payload(module_context_factory, monkeypatch):
