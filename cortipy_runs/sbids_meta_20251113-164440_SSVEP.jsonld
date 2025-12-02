@@ -1,0 +1,393 @@
+{
+  "@context": {
+    "schema": "https://schema.org/",
+    "prov": "http://www.w3.org/ns/prov#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "nemo": "http://purl.bioontology.org/ontology/NEMO/",
+    "sbids": "urn:sbids:",
+    "EEGChannel": "sbids:EEGChannel",
+    "AUXChannel": "sbids:AUXChannel",
+    "columnName": {
+      "@id": "sbids:columnName",
+      "@type": "xsd:string"
+    },
+    "impedance": {
+      "@id": "sbids:impedance",
+      "@type": "xsd:float"
+    },
+    "signalUnit": {
+      "@id": "sbids:signalUnit",
+      "@type": "xsd:string"
+    },
+    "impedanceUnit": {
+      "@id": "sbids:impedanceUnit",
+      "@type": "xsd:string"
+    }
+  },
+  "@id": "urn:dataset:20251113-164440_SSVEP",
+  "@graph": [
+    {
+      "@id": "urn:dataset:20251113-164440_SSVEP",
+      "@type": "schema:Dataset",
+      "schema:name": "20251113-164440_SSVEP"
+    },
+    {
+      "@id": "urn:subject:1",
+      "@type": "schema:Patient",
+      "schema:identifier": "1",
+      "schema:gender": "Unspecified",
+      "schema:description": "DominantHand: Right"
+    },
+    {
+      "@id": "urn:device:UNICORN",
+      "@type": [
+        "schema:MedicalDevice",
+        "prov:Agent"
+      ],
+      "schema:name": "UNICORN"
+    },
+    {
+      "@id": "urn:recording:1_Test_SSVEP",
+      "@type": [
+        "schema:CreateAction",
+        "prov:Activity"
+      ],
+      "schema:name": "EEG Recording Session (SSVEP)",
+      "schema:instrument": {
+        "@id": "urn:device:UNICORN"
+      },
+      "schema:object": {
+        "@id": "urn:subject:1"
+      },
+      "schema:result": {
+        "@id": "urn:file:1_Test_SSVEP"
+      },
+      "signalUnit": "microvolt",
+      "impedanceUnit": "KOHM",
+      "schema:additionalProperty": [
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "Environment",
+          "schema:value": "J001"
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "SamplingRate",
+          "schema:value": 250,
+          "schema:unitCode": "HZ"
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "NumberEEGChannels",
+          "schema:value": 8
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "NumberAUXChannels",
+          "schema:value": 0
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "ReferenceChannel",
+          "schema:value": 0
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "LowestFrequency",
+          "schema:value": 3
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "HighestFrequency",
+          "schema:value": 45
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "Stimulus",
+          "schema:value": "Checkerboard"
+        }
+      ],
+      "schema:startTime": "2025-11-13T16:44:40Z",
+      "schema:endTime": "2025-11-13T16:45:10Z",
+      "schema:duration": "PT30S",
+      "schema:measurementTechnique": "SSVEP",
+      "schema:variableMeasured": [
+        {
+          "@id": "urn:channel:1_Test_SSVEP_GND",
+          "@type": [
+            "schema:PropertyValue",
+            "AUXChannel"
+          ],
+          "schema:name": "GND",
+          "columnName": "GND",
+          "impedance": 0,
+          "schema:additionalProperty": [
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "Rubrik",
+              "schema:value": "Wet Electrodes"
+            },
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "ElectrodeModel",
+              "schema:value": "Datwyler SoftPulse Brush Medium"
+            }
+          ]
+        },
+        {
+          "@id": "urn:channel:1_Test_SSVEP_Ref",
+          "@type": [
+            "schema:PropertyValue",
+            "AUXChannel"
+          ],
+          "schema:name": "Ref",
+          "columnName": "Ref",
+          "impedance": 0,
+          "schema:additionalProperty": [
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "Rubrik",
+              "schema:value": "Dry Electrodes"
+            },
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "ElectrodeModel",
+              "schema:value": "Datwyler SoftPulse Brush Medium"
+            }
+          ]
+        },
+        {
+          "@id": "urn:channel:1_Test_SSVEP_Ch1",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "Fp1",
+          "columnName": "Ch 1",
+          "impedance": 0,
+          "schema:additionalProperty": [
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "Active",
+              "schema:value": false
+            },
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "Rubrik",
+              "schema:value": "Dry Electrodes"
+            },
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "ElectrodeModel",
+              "schema:value": "Datwyler SoftPulse Brush Medium"
+            }
+          ]
+        },
+        {
+          "@id": "urn:channel:1_Test_SSVEP_Ch2",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "Fp2",
+          "columnName": "Ch 2",
+          "impedance": 0,
+          "schema:additionalProperty": [
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "Active",
+              "schema:value": false
+            },
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "Rubrik",
+              "schema:value": "Dry Electrodes"
+            },
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "ElectrodeModel",
+              "schema:value": "Datwyler SoftPulse Brush Medium"
+            }
+          ]
+        },
+        {
+          "@id": "urn:channel:1_Test_SSVEP_Ch3",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "C3",
+          "columnName": "Ch 3",
+          "impedance": 0,
+          "schema:additionalProperty": [
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "Active",
+              "schema:value": false
+            },
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "Rubrik",
+              "schema:value": "Dry Electrodes"
+            },
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "ElectrodeModel",
+              "schema:value": "Datwyler SoftPulse Brush Medium"
+            }
+          ]
+        },
+        {
+          "@id": "urn:channel:1_Test_SSVEP_Ch4",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "C4",
+          "columnName": "Ch 4",
+          "impedance": 0,
+          "schema:additionalProperty": [
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "Active",
+              "schema:value": false
+            },
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "Rubrik",
+              "schema:value": "Dry Electrodes"
+            },
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "ElectrodeModel",
+              "schema:value": "Datwyler SoftPulse Brush Medium"
+            }
+          ]
+        },
+        {
+          "@id": "urn:channel:1_Test_SSVEP_Ch5",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "P3",
+          "columnName": "Ch 5",
+          "impedance": 0,
+          "schema:additionalProperty": [
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "Active",
+              "schema:value": false
+            },
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "Rubrik",
+              "schema:value": "Dry Electrodes"
+            },
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "ElectrodeModel",
+              "schema:value": "Datwyler SoftPulse Brush Medium"
+            }
+          ]
+        },
+        {
+          "@id": "urn:channel:1_Test_SSVEP_Ch6",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "P4",
+          "columnName": "Ch 6",
+          "impedance": 0,
+          "schema:additionalProperty": [
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "Active",
+              "schema:value": false
+            },
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "Rubrik",
+              "schema:value": "Dry Electrodes"
+            },
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "ElectrodeModel",
+              "schema:value": "Datwyler SoftPulse Brush Medium"
+            }
+          ]
+        },
+        {
+          "@id": "urn:channel:1_Test_SSVEP_Ch7",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "O1",
+          "columnName": "Ch 7",
+          "impedance": 0,
+          "schema:additionalProperty": [
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "Active",
+              "schema:value": false
+            },
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "Rubrik",
+              "schema:value": "Dry Electrodes"
+            },
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "ElectrodeModel",
+              "schema:value": "Datwyler SoftPulse Brush Medium"
+            }
+          ]
+        },
+        {
+          "@id": "urn:channel:1_Test_SSVEP_Ch8",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "O2",
+          "columnName": "Ch 8",
+          "impedance": 0,
+          "schema:additionalProperty": [
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "Active",
+              "schema:value": false
+            },
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "Rubrik",
+              "schema:value": "Dry Electrodes"
+            },
+            {
+              "@type": "schema:PropertyValue",
+              "schema:name": "ElectrodeModel",
+              "schema:value": "Datwyler SoftPulse Brush Medium"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "@id": "urn:file:1_Test_SSVEP",
+      "@type": [
+        "schema:DigitalDocument",
+        "prov:Entity"
+      ],
+      "schema:name": "data.npz",
+      "schema:encodingFormat": "application/octet-stream",
+      "schema:contentUrl": "dataset/raw/data.npz",
+      "prov:wasGeneratedBy": {
+        "@id": "urn:recording:1_Test_SSVEP"
+      },
+      "schema:fileSize": 437491
+    }
+  ]
+}

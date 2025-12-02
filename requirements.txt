@@ -9,3 +9,7 @@ tomli==2.3.0
 
 # Optional UI extras
 streamlit>=1.26
+
+# Validation extras for SBIDS export/tests
+jsonschema>=4.22.0
+pyld>=2.0.4
