@@ -1,5 +1,5 @@
 {
-  "Method": "VEP",
+  "Method": "ABR",
   "Device": "Simulated",
   "Parameters": {
     "Filename": "ABR_scalpdata",
