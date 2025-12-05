@@ -1,1 +1,1 @@
-{"method":"ContinuousSine","srate":1000,"duration_s":120,"freq_hz":10,"amplitude_uV":0.01,"trigger_interval_s":1,"epoch_window_s":[-0.2,0.8]}
+{"method":"ContinuousSine","srate":1000,"duration_s":120,"freq_hz":10,"amplitude_uV":1,"trigger_interval_s":1,"epoch_window_s":[-0.2,0.8]}
