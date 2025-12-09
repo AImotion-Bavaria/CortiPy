@@ -15,7 +15,9 @@ dependencies:
   - pyarrow>=10             # Parquet BIDS files
   - h5py>=3.9               # HDF5 BIDS files
   - zarr>=2.15              # Zarr BIDS files
-  - streamlit>=1.26  # optional UI
+  - streamlit>=1.26         # optional UI
+  - plotly>=5.24            # optional UI
   - pip
   - pip:
       - .
+      - streamlit-plotly-events>=0.0.6
