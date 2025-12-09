@@ -564,18 +564,26 @@ def serial_port_options() -> List[tuple[str, str]]:
         device = getattr(info, "device", None) or getattr(info, "name", None)
         if not device or device in seen:
             continue
-        description = getattr(info, "description", "")
+        description = getattr(info, "description", "") or getattr(info, "product", "")
         manufacturer = getattr(info, "manufacturer", "")
+        serial_no = getattr(info, "serial_number", "") or getattr(info, "serial", "")
+        vid = getattr(info, "vid", None)
+        pid = getattr(info, "pid", None)
+        usb_id = f"{vid:04X}:{pid:04X}" if isinstance(vid, int) and isinstance(pid, int) else ""
         details_parts = []
         if description and description != device:
             details_parts.append(description)
         if manufacturer:
             details_parts.append(manufacturer)
+        if usb_id:
+            details_parts.append(usb_id)
+        if serial_no:
+            details_parts.append(f"SN {serial_no}")
         details = ", ".join(details_parts)
         label = f"{device} – {details}" if details else device
         options.append((device, label))
         seen.add(device)
-    return options
+    return sorted(options, key=lambda item: item[0])
 
 
 def render_unicorn_port_input(target, field: Dict[str, Any], current: Any, key: str) -> str:
@@ -1082,29 +1090,26 @@ def _plot_live_buffer(
     fs: float,
     placeholder: "st.delta_generator.DeltaGenerator",
     channel_indices: Optional[List[int]] = None,
+    interactive: bool = False,
+    window_seconds: Optional[float] = None,
 ) -> None:
     if buffer.size == 0:
         return
 
-    time_axis = np.arange(buffer.shape[0]) / fs if fs > 0 else np.arange(buffer.shape[0])
+    samples = buffer.shape[0]
+    time_axis = np.arange(samples) / fs if fs > 0 else np.arange(samples)
+    if fs > 0:
+        time_axis = time_axis - time_axis[-1]  # align so 0 is "now" on the right
+        time_axis = np.round(time_axis, 3)
+    if window_seconds is not None and fs > 0:
+        time_axis_min = -float(window_seconds)
+        time_axis_max = 0.0
+    else:
+        time_axis_min = time_axis[0]
+        time_axis_max = time_axis[-1]
     total_channels = buffer.shape[1]
     indices = _normalize_channel_indices(channel_indices, total_channels)
-    if go is None:
-        fig, ax = plt.subplots(figsize=(10, 4))
-        colors = plt.cm.tab10.colors
-        for plot_idx, ch in enumerate(indices):
-            color = colors[plot_idx % len(colors)]
-            ax.plot(time_axis, buffer[:, ch], label=f"Ch {ch + 1}", color=color)
-        ax.set_xlabel("Time (s)" if fs > 0 else "Samples")
-        ax.set_ylabel("Amplitude (uV)")
-        label_part = "All channels" if len(indices) == total_channels else ", ".join(f"{ch + 1}" for ch in indices)
-        ax.set_title(f"Live preview – {label_part}")
-        ax.legend(loc="upper right", fontsize=8)
-        ax.grid(True, alpha=0.3)
-        fig.tight_layout()
-        placeholder.pyplot(fig)
-        plt.close(fig)
-    else:
+    if interactive and go is not None:
         palette = list(getattr(plt.cm, "tab10").colors) if hasattr(plt.cm, "tab10") else []
         traces = []
         for plot_idx, ch in enumerate(indices):
@@ -1123,13 +1128,32 @@ def _plot_live_buffer(
         layout = go.Layout(
             height=320,
             margin=dict(l=50, r=10, t=40, b=50),
-            xaxis=dict(title="Time (s)" if fs > 0 else "Samples"),
+            xaxis=dict(
+                title="Time (s)" if fs > 0 else "Samples",
+                range=[time_axis_min, time_axis_max],
+            ),
             yaxis=dict(title="Amplitude (uV)"),
             title=f"Live preview – {label_part}",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             template="plotly_dark" if st.get_option("theme.base") == "dark" else "plotly_white",
         )
-        placeholder.plotly_chart(go.Figure(data=traces, layout=layout), use_container_width=True)
+        placeholder.plotly_chart(go.Figure(data=traces, layout=layout), width="stretch")
+    else:
+        fig, ax = plt.subplots(figsize=(10, 4))
+        colors = plt.cm.tab10.colors
+        for plot_idx, ch in enumerate(indices):
+            color = colors[plot_idx % len(colors)]
+            ax.plot(time_axis, buffer[:, ch], label=f"Ch {ch + 1}", color=color)
+        ax.set_xlim(time_axis_min, time_axis_max)
+        ax.set_xlabel("Time (s, left = -window, right = 0)" if fs > 0 else "Samples")
+        ax.set_ylabel("Amplitude (uV)")
+        label_part = "All channels" if len(indices) == total_channels else ", ".join(f"{ch + 1}" for ch in indices)
+        ax.set_title(f"Live preview – {label_part}")
+        ax.legend(loc="upper right", fontsize=8)
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        placeholder.pyplot(fig)
+        plt.close(fig)
 
 
 def _plot_fft_spectrum(
@@ -1137,6 +1161,7 @@ def _plot_fft_spectrum(
     fs: float,
     placeholder: Optional["st.delta_generator.DeltaGenerator"],
     channel_indices: Optional[List[int]] = None,
+    interactive: bool = False,
 ) -> None:
     if placeholder is None or buffer.size == 0 or fs <= 0:
         return
@@ -1149,51 +1174,7 @@ def _plot_fft_spectrum(
         ("Beta", 13.0, 30.0, "#FF6F61"),
         ("Gamma", 30.0, 50.0, "#9B59B6"),
     ]
-    if go is None:
-        colors = plt.cm.tab10.colors
-        fig, ax = plt.subplots(figsize=(10, 4))
-        max_freq = None
-        filled = False
-        for plot_idx, ch in enumerate(indices):
-            data = buffer[:, ch]
-            if data.size < 4:
-                continue
-            detrended = data - np.mean(data)
-            window = np.hanning(detrended.size)
-            windowed = detrended * window
-            spectrum = np.fft.rfft(windowed)
-            freq = np.fft.rfftfreq(detrended.size, d=1.0 / fs)
-            power = (np.abs(spectrum) ** 2) / (np.sum(window**2) * fs)
-            power_db = 10 * np.log10(power + 1e-12)
-
-            if max_freq is None:
-                max_freq = min(60.0, freq.max())
-            freq_mask = freq <= max_freq
-            color = colors[plot_idx % len(colors)]
-            ax.plot(freq[freq_mask], power_db[freq_mask], linewidth=1.0, color=color, label=f"Ch {ch + 1}")
-
-            if not filled:
-                for name, low, high, band_color in bands:
-                    band_mask = (freq >= low) & (freq <= high)
-                    if not np.any(band_mask):
-                        continue
-                    ax.fill_between(freq[band_mask], power_db[band_mask], color=band_color, alpha=0.15, label=name)
-                filled = True
-
-        if max_freq is None:
-            plt.close(fig)
-            return
-        ax.set_xlim(0, max_freq)
-        ax.set_xlabel("Frequency (Hz)")
-        ax.set_ylabel("Power (dB/Hz)")
-        label_part = "All channels" if len(indices) == total_channels else ", ".join(f"{ch + 1}" for ch in indices)
-        ax.set_title(f"FFT – {label_part}")
-        ax.legend(loc="upper right", fontsize=8, ncol=2)
-        ax.grid(True, alpha=0.3)
-        fig.tight_layout()
-        placeholder.pyplot(fig)
-        plt.close(fig)
-    else:
+    if interactive and go is not None:
         palette = list(getattr(plt.cm, "tab10").colors) if hasattr(plt.cm, "tab10") else []
         traces = []
         shapes = []
@@ -1248,7 +1229,51 @@ def _plot_fft_spectrum(
             template="plotly_dark" if st.get_option("theme.base") == "dark" else "plotly_white",
             shapes=shapes,
         )
-        placeholder.plotly_chart(go.Figure(data=traces, layout=layout), use_container_width=True)
+        placeholder.plotly_chart(go.Figure(data=traces, layout=layout), width="stretch")
+    else:
+        colors = plt.cm.tab10.colors
+        fig, ax = plt.subplots(figsize=(10, 4))
+        max_freq = None
+        filled = False
+        for plot_idx, ch in enumerate(indices):
+            data = buffer[:, ch]
+            if data.size < 4:
+                continue
+            detrended = data - np.mean(data)
+            window = np.hanning(detrended.size)
+            windowed = detrended * window
+            spectrum = np.fft.rfft(windowed)
+            freq = np.fft.rfftfreq(detrended.size, d=1.0 / fs)
+            power = (np.abs(spectrum) ** 2) / (np.sum(window**2) * fs)
+            power_db = 10 * np.log10(power + 1e-12)
+
+            if max_freq is None:
+                max_freq = min(60.0, freq.max())
+            freq_mask = freq <= max_freq
+            color = colors[plot_idx % len(colors)]
+            ax.plot(freq[freq_mask], power_db[freq_mask], linewidth=1.0, color=color, label=f"Ch {ch + 1}")
+
+            if not filled:
+                for name, low, high, band_color in bands:
+                    band_mask = (freq >= low) & (freq <= high)
+                    if not np.any(band_mask):
+                        continue
+                    ax.fill_between(freq[band_mask], power_db[band_mask], color=band_color, alpha=0.15, label=name)
+                filled = True
+
+        if max_freq is None:
+            plt.close(fig)
+            return
+        ax.set_xlim(0, max_freq)
+        ax.set_xlabel("Frequency (Hz)")
+        ax.set_ylabel("Power (dB/Hz)")
+        label_part = "All channels" if len(indices) == total_channels else ", ".join(f"{ch + 1}" for ch in indices)
+        ax.set_title(f"FFT – {label_part}")
+        ax.legend(loc="upper right", fontsize=8, ncol=2)
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+        placeholder.pyplot(fig)
+        plt.close(fig)
 
 
 def _plot_individual_channels(
@@ -1256,10 +1281,17 @@ def _plot_individual_channels(
     fs: float,
     placeholders: List["st.delta_generator.DeltaGenerator"],
     indices: List[int],
+    interactive: bool = True,
+    window_seconds: Optional[float] = None,
 ) -> None:
     if not placeholders or buffer.size == 0:
         return
     time_axis = np.arange(buffer.shape[0]) / fs if fs > 0 else np.arange(buffer.shape[0])
+    if fs > 0:
+        time_axis = time_axis - time_axis[-1]
+        time_axis = np.round(time_axis, 3)
+    time_axis_min = -float(window_seconds) if window_seconds is not None and fs > 0 else time_axis[0]
+    time_axis_max = 0.0 if window_seconds is not None and fs > 0 else time_axis[-1]
     palette = list(getattr(plt.cm, "tab10").colors) if hasattr(plt.cm, "tab10") else []
     default_color = (0.2, 0.4, 0.8)
     for plot_idx, ch in enumerate(indices):
@@ -1269,10 +1301,11 @@ def _plot_individual_channels(
         color = palette[plot_idx % len(palette)] if palette else default_color
         base_color = color if len(color) >= 3 else (list(color) + list(default_color))[:3]
         rgb = tuple(int(max(0, min(255, round(float(val) * 255)))) for val in base_color)
-        if go is None:
+        if go is None or not interactive:
             fig, ax = plt.subplots(figsize=(14, 3))
             ax.plot(time_axis, buffer[:, ch], color=color, linewidth=1.0)
-            ax.set_xlabel("Time (s)" if fs > 0 else "Samples")
+            ax.set_xlim(time_axis_min, time_axis_max)
+            ax.set_xlabel("Time (s, left = -window, right = 0)" if fs > 0 else "Samples")
             ax.set_ylabel("Amplitude (uV)")
             ax.set_title(f"Channel {ch + 1}")
             ax.grid(True, alpha=0.25)
@@ -1290,11 +1323,14 @@ def _plot_individual_channels(
             layout = go.Layout(
                 height=280,
                 margin=dict(l=40, r=10, t=30, b=40),
-                xaxis=dict(title="Time (s)" if fs > 0 else "Samples"),
+                xaxis=dict(
+                    title="Time (s)" if fs > 0 else "Samples",
+                    range=[time_axis_min, time_axis_max],
+                ),
                 yaxis=dict(title="Amplitude (uV)"),
                 template="plotly_dark" if st.get_option("theme.base") == "dark" else "plotly_white",
             )
-            placeholder.plotly_chart(go.Figure(data=[trace], layout=layout), use_container_width=True)
+            placeholder.plotly_chart(go.Figure(data=[trace], layout=layout), width="stretch")
 
 
 def _plot_topography(rows: List[Dict[str, Any]], placeholder: "st.delta_generator.DeltaGenerator") -> None:
@@ -1539,9 +1575,11 @@ def run_live_preview(
     fft_placeholder: Optional["st.delta_generator.DeltaGenerator"],
     channel_indices: Optional[List[int]],
     channel_placeholders: Optional[List["st.delta_generator.DeltaGenerator"]] = None,
+    initial_buffer: Optional[np.ndarray] = None,
     duration: float = 10.0,
     window: float = 5.0,
     update_interval: float = 0.25,
+    final_interactive: bool = True,
 ) -> np.ndarray:
     params = dict(params)
     params.pop("data", None)
@@ -1567,13 +1605,25 @@ def run_live_preview(
     device.connect()
 
     try:
-        buffer = np.asarray(device.prime(min(update_interval, duration), aux_channels), dtype=float)
-        if buffer.ndim == 1:
+        buffer = np.asarray(initial_buffer, dtype=float) if initial_buffer is not None else np.empty((0, 0))
+        if buffer.size and buffer.ndim == 1:
             buffer = buffer[:, np.newaxis]
-        _plot_live_buffer(buffer, fs, placeholder, channel_indices=indices)
-        _plot_fft_spectrum(buffer, fs, fft_placeholder, channel_indices=indices)
-        if channels_enabled:
-            _plot_individual_channels(buffer, fs, channel_placeholders or [], indices)
+        max_window = int(math.ceil(fs * window)) if fs > 0 else None
+        if buffer.size and max_window:
+            buffer = buffer[-max_window:]
+        prime_chunk = np.asarray(device.prime(min(update_interval, duration), aux_channels), dtype=float)
+        if prime_chunk.ndim == 1:
+            prime_chunk = prime_chunk[:, np.newaxis]
+        if buffer.size == 0:
+            buffer = prime_chunk
+        else:
+            buffer = np.vstack([buffer, prime_chunk])
+        if max_window and buffer.shape[0] > max_window:
+            buffer = buffer[-max_window:]
+        # Live view uses lightweight (matplotlib) rendering to avoid flicker; interactive Plotly drawn after loop.
+        _plot_live_buffer(buffer, fs, placeholder, channel_indices=indices, interactive=False, window_seconds=window)
+        _plot_fft_spectrum(buffer, fs, fft_placeholder, channel_indices=indices, interactive=False)
+        # To keep UI smooth, only show the aggregated view + FFT during streaming.
         start = time.time()
         while (time.time() - start) < duration:
             remaining = duration - (time.time() - start)
@@ -1585,15 +1635,19 @@ def run_live_preview(
                     buffer = chunk
                 else:
                     buffer = np.vstack([buffer, chunk])
-                max_window = int(fs * window) if fs > 0 else buffer.shape[0]
+                max_window = int(math.ceil(fs * window)) if fs > 0 else buffer.shape[0]
                 if buffer.shape[0] > max_window:
                     buffer = buffer[-max_window:]
-                _plot_live_buffer(buffer, fs, placeholder, channel_indices=indices)
-                _plot_fft_spectrum(buffer, fs, fft_placeholder, channel_indices=indices)
-                if channels_enabled:
-                    _plot_individual_channels(buffer, fs, channel_placeholders or [], indices)
+                _plot_live_buffer(buffer, fs, placeholder, channel_indices=indices, interactive=False, window_seconds=window)
+                _plot_fft_spectrum(buffer, fs, fft_placeholder, channel_indices=indices, interactive=False)
             else:
                 time.sleep(update_interval)
+        # After capture, replace with interactive Plotly charts if available.
+        if final_interactive:
+            _plot_live_buffer(buffer, fs, placeholder, channel_indices=indices, interactive=True, window_seconds=window)
+            _plot_fft_spectrum(buffer, fs, fft_placeholder, channel_indices=indices, interactive=True)
+            if channels_enabled:
+                _plot_individual_channels(buffer, fs, channel_placeholders or [], indices, interactive=True, window_seconds=window)
         return buffer
     finally:
         device.disconnect()
@@ -2519,6 +2573,8 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
         return
 
     parameters = params.get("Parameters", {})
+    fs_value = coerce_number(parameters.get("fs"))
+    fs = float(fs_value) if fs_value else 0.0
     channel_count = len(params.get("Channels", [])) or int(
         parameters.get("NumberEEGChannels") or DEVICE_DEFAULT_CHANNELS.get(params.get("Device"), 8)
     )
@@ -2551,23 +2607,64 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
     st.caption("Per-channel views")
     per_channel_container = st.container()
     per_channel_placeholders = [per_channel_container.empty() for _ in selected_indices]
-    if st.button("Start live preview", type="primary"):
-        if unlimited:
-            st.info("Running indefinitely; stop by interrupting the app or refreshing the page.")
+    state = st.session_state
+    active = state.get("_live_preview_active", False)
+    start_clicked = st.button("Start live preview", type="primary", disabled=active)
+    stop_clicked = st.button("Stop live preview", type="secondary", disabled=not active)
+
+    if start_clicked:
+        state["_live_preview_active"] = True
+        state["_live_preview_unlimited"] = bool(unlimited)
+        state["_live_preview_args"] = {
+            "selected_indices": selected_indices,
+            "duration": float(duration),
+            "window": float(window),
+            "interval": float(interval),
+        }
+        state["_live_preview_last_buffer"] = None
+        st.rerun()
+
+    if stop_clicked:
+        state["_live_preview_active"] = False
+        st.rerun()
+
+    if state.get("_live_preview_active") and state.get("_live_preview_args"):
+        args = state["_live_preview_args"]
+        chunk_duration = args["duration"] if math.isfinite(args["duration"]) else args["window"]
         try:
             buffer = run_live_preview(
                 params,
                 placeholder,
                 fft_placeholder,
-                selected_indices,
+                args["selected_indices"],
                 per_channel_placeholders,
-                duration=float(duration),
-                window=float(window),
-                update_interval=float(interval),
+                initial_buffer=state.get("_live_preview_last_buffer"),
+                duration=float(chunk_duration),
+                window=float(args["window"]),
+                update_interval=float(args["interval"]),
+                final_interactive=not state.get("_live_preview_unlimited", False),
             )
-            st.success(f"Captured {buffer.shape[0]} samples over {duration} seconds.")
+            state["_live_preview_last_buffer"] = buffer
+            if state.get("_live_preview_unlimited", False) and state.get("_live_preview_active", False):
+                st.rerun()
+            else:
+                state["_live_preview_active"] = False
+                st.success(f"Captured {buffer.shape[0]} samples over {args['duration']} seconds.")
         except Exception as exc:  # pragma: no cover
+            state["_live_preview_active"] = False
             st.error(f"Live preview failed: {exc}")
+    if (
+        not state.get("_live_preview_active")
+        and state.get("_live_preview_last_buffer") is not None
+        and state.get("_live_preview_unlimited", False)
+        and state.get("_live_preview_args")
+    ):
+        buffer = state["_live_preview_last_buffer"]
+        indices = _normalize_channel_indices(state["_live_preview_args"].get("selected_indices"), channel_count)
+        _plot_live_buffer(buffer, fs, placeholder, channel_indices=indices, interactive=True)
+        _plot_fft_spectrum(buffer, fs, fft_placeholder, channel_indices=indices, interactive=True)
+        _plot_individual_channels(buffer, fs, per_channel_placeholders, indices, interactive=True)
+        st.success(f"Stopped live preview after capturing {buffer.shape[0]} samples.")
 
 
 def render_participant_form() -> Dict[str, Any]:
