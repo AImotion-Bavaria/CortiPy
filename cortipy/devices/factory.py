@@ -89,8 +89,9 @@ class DeviceFactory:
             )
 
         if device_name in {"dummy", "sim", "simulation"}:
-            channel_count = int(device_params.get("NumberEEGChannels", 8))
-            fs = float(device_params.get("fs", 250))
+            channel_count = int(device_params.get("NumberEEGChannels") or params.get("NumberEEGChannels") or 8)
+            channel_count = max(1, channel_count)
+            fs = float(device_params.get("fs", params.get("fs", 250)))
             noise = float(device_params.get("Noise", 0.1))
             return DummyDevice(channel_count=channel_count, sampling_rate=fs, noise=noise)
 

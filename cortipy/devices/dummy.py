@@ -11,7 +11,7 @@ class DummyDevice(DeviceInterface):
     """Generates random Gaussian noise at the configured sampling rate."""
 
     def __init__(self, channel_count: int = 8, sampling_rate: float = 250.0, noise: float = 0.1) -> None:
-        self.channel_count = channel_count
+        self.channel_count = max(1, int(channel_count))
         self.sampling_rate = sampling_rate
         self.noise = noise
         self._connected = False
@@ -26,6 +26,10 @@ class DummyDevice(DeviceInterface):
         samples = max(1, int(round(duration_seconds * self.sampling_rate)))
         rng = np.random.default_rng()
         return self.noise * rng.standard_normal((samples, total_channels))
+
+    def prime(self, duration_seconds: float, aux_channels: int = 0) -> np.ndarray:
+        """Warm-up call mirrors acquire to feed live-preview windows."""
+        return self.acquire(duration_seconds, aux_channels)
 
     def disconnect(self) -> None:
         self._connected = False

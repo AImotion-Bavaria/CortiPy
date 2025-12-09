@@ -7,6 +7,7 @@ from typing import Any, Dict, MutableMapping, Optional, Sequence, Tuple
 import logging
 import matplotlib
 import numpy as np
+import mne
 from scipy import stats
 from scipy.ndimage import uniform_filter1d
 
@@ -33,7 +34,7 @@ LOGGER = logging.getLogger("cortipy.evaluation.vep")
 
 def _show_mpl(fig: plt.Figure, key: str) -> None:
     if not _is_streamlit_runtime():
-        LOGGER.debug("_show_mpl skipped (no streamlit runtime)", extra={"key": key})
+        # Non-streamlit: defer to a single blocking plt.show later.
         return
     placeholders = st.session_state.setdefault("_vep_eval_placeholders", {})
     placeholder = placeholders.get(key)
@@ -128,8 +129,28 @@ class VepEvaluator(EvaluatorBase):
 
         if show_plots:
             LOGGER.debug("Rendering VEP evaluation plots")
+            _ensure_interactive_backend()
+            plt.rcParams["figure.max_open_warning"] = 0
+            plt.rcParams["figure.raise_window"] = True
             plot_vep(average_signals, params, peak_stats)
             plot_vep_matrix(evaluation, param_block.get("ReferenceChannel", 1), params.get("Channels"), average_signals)
+            _plot_vep_all_channels(average_signals, evaluation["average_signals"]["time"], params, peak_stats)
+            if not _is_streamlit_runtime():
+                try:
+                    fig_nums = plt.get_fignums()
+                    LOGGER.info(
+                        "VEP: displaying %d figures (backend=%s); close windows to continue",
+                        len(fig_nums),
+                        plt.get_backend(),
+                    )
+                    was_interactive = plt.isinteractive()
+                    plt.ioff()
+                    plt.show(block=True)
+                    if was_interactive:
+                        plt.ion()
+                    LOGGER.info("VEP: figures closed by user")
+                except Exception as exc:  # pragma: no cover
+                    LOGGER.debug("plt.show failed", extra={"error": str(exc)})
 
         context.params = params
 
@@ -293,7 +314,7 @@ def plot_vep(avg_signal: np.ndarray, params: dict, peaks: Dict[str, Dict[str, np
     idx_max = np.argmin(np.abs(t_ms - MAX_TIME * 1000.0))
     channels = params.get("Channels")
     for ch in range(avg_signal.shape[1]):
-        LOGGER.debug("plot_vep called", extra={"channel": ch + 1, "samples": avg_signal.shape[0]})
+        #LOGGER.debug("plot_vep called", extra={"channel": ch + 1, "samples": avg_signal.shape[0]})
         fig = plt.figure()
         plt.plot(t_ms[: idx_max or None], avg_signal[: idx_max or None, ch], color="b")
         for name in ("P100", "N75", "N135"):
@@ -365,6 +386,7 @@ def plot_vep_matrix(
     ax2.grid(True, alpha=0.3)
     fig2.tight_layout()
     _show_mpl(fig2, "vep_amplitudes")
+    _plot_vep_topomaps(evaluation, amplitude, channel_labels)
 
 
 # ---------------------------------------------------------------------------
@@ -442,3 +464,121 @@ def _channel_labels(channels: Optional[Sequence[Any]], count: int) -> list[str]:
     while len(result) < count:
         result.append(f"Ch{len(result)+1}")
     return result
+
+
+def _ensure_interactive_backend() -> None:
+    """Switch to an interactive backend when possible to display pop-up windows."""
+    try:
+        current = plt.get_backend()
+    except Exception:
+        return
+    lower = str(current).lower()
+    non_gui_backends = {"agg", "pdf", "pgf", "svg", "cairo", "template", "ps"}
+    if lower not in non_gui_backends:
+        return
+
+    for candidate in ("TkAgg", "Qt5Agg", "MacOSX"):
+        try:
+            plt.switch_backend(candidate)
+            LOGGER.info("VEP: switched matplotlib backend to %s", candidate)
+            return
+        except Exception:
+            continue
+
+
+def _plot_vep_topomaps(
+    evaluation: MutableMapping[str, Any], amplitude: np.ndarray, channel_labels: Sequence[str]
+) -> None:
+    """Render head topographies for key peak metrics."""
+    maps = [
+        ("P100", np.asarray(evaluation["P100"]["peak_values"], dtype=float)),
+        ("N75", np.asarray(evaluation["N75"]["peak_values"], dtype=float)),
+        ("N135", np.asarray(evaluation["N135"]["peak_values"], dtype=float)),
+        ("P100 - N135", np.asarray(amplitude, dtype=float)),
+    ]
+    info, kept_idx = _topomap_info(channel_labels)
+    kept_idx = np.asarray(kept_idx, dtype=int)
+    for name, values in maps:
+        fig, ax = plt.subplots()
+        data = values[kept_idx] if kept_idx.size and kept_idx.size == values.shape[0] else values
+        mne.viz.plot_topomap(
+            data,
+            info,
+            axes=ax,
+            show=False,
+            cmap="RdBu_r",
+            contours=4,
+            names=channel_labels,
+            sphere=(0.0, -0.01, 0.0, 0.11),
+            outlines="head",
+        )
+        ax.set_title(f"{name} topography")
+        fig.tight_layout()
+        _show_mpl(fig, f"vep_topomap_{name.replace(' ', '_').lower()}")
+
+
+def _topomap_info(channel_labels: Sequence[str]):
+    """Build an MNE Info using only channels with known standard positions."""
+    montage = None
+    for candidate in ("standard_1005", "standard_1020"):
+        try:
+            montage = mne.channels.make_standard_montage(candidate)
+            break
+        except Exception:
+            continue
+
+    known = montage.get_positions().get("ch_pos", {}) if montage is not None else {}
+
+    kept_idx: list[int] = []
+    ch_pos: dict[str, tuple[float, float, float]] = {}
+    for idx, label in enumerate(channel_labels):
+        pos = known.get(label)
+        if pos is None:
+            continue
+        ch_pos[label] = pos
+        kept_idx.append(idx)
+
+    # If nothing matched, fall back to a small circle with all channels.
+    if not ch_pos:
+        total = max(1, len(channel_labels))
+        for idx, label in enumerate(channel_labels):
+            angle = 2 * np.pi * idx / total + 0.1 * idx  # deterministic jitter
+            radius = 0.06 + 0.01 * (idx % total) / max(1, total)
+            ch_pos[label] = (radius * np.cos(angle), radius * np.sin(angle), 0.0)
+            kept_idx.append(idx)
+
+    info = mne.create_info(list(ch_pos.keys()), sfreq=1.0, ch_types="eeg")
+    try:
+        custom_montage = mne.channels.make_dig_montage(ch_pos=ch_pos, coord_frame="head")
+        info.set_montage(custom_montage)
+    except Exception:
+        pass
+    if len(kept_idx) != len(channel_labels):
+        LOGGER.info("VEP: topomap using %d/%d channels with known positions", len(kept_idx), len(channel_labels))
+    return info, kept_idx
+
+
+def _plot_vep_all_channels(avg_signal: np.ndarray, time_ms: np.ndarray, params: dict, peaks: Dict[str, Dict[str, np.ndarray]]) -> None:
+    """Plot all channel waveforms with the grand average highlighted."""
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for ch in range(avg_signal.shape[1]):
+        ax.plot(time_ms, avg_signal[:, ch], color="gray", alpha=0.4, linewidth=1)
+    grand_avg = np.nanmean(avg_signal, axis=1)
+    ax.plot(time_ms, grand_avg, color="tab:blue", linewidth=2.5, label="Average")
+
+    for name, color in (("P100", "red"), ("N75", "green"), ("N135", "purple")):
+        values = peaks[name]["peak_values"]
+        times = peaks[name]["peak_times"]
+        if np.isfinite(values).any():
+            avg_val = np.nanmean(values)
+            avg_time = np.nanmean(times)
+            if np.isfinite(avg_val) and np.isfinite(avg_time):
+                ax.plot(avg_time, avg_val, marker="o", color=color, markersize=6, label=f"{name} avg")
+
+    ax.set_xlabel("Time (ms)")
+    ax.set_ylabel("Amplitude (uV)")
+    ax.set_title("VEP waveforms (all channels + average)")
+    ax.grid(True, alpha=0.3)
+    ax.legend(loc="upper right")
+    fig.tight_layout()
+    _show_mpl(fig, "vep_all_channels")

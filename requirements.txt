@@ -9,3 +9,9 @@ tomli==2.3.0
 
 # Optional UI extras
 streamlit>=1.26
+
+# Optional BIDS export/import extras
+pyedflib>=0.1.36
+pyarrow>=10
+h5py>=3.9
+zarr>=2.15
