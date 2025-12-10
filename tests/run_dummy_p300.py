@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -16,6 +17,17 @@ if str(ROOT) not in sys.path:
 from cortipy.core.context import ModuleContext
 from cortipy.evaluation.p300 import P300Evaluator
 from tests.regression.dummy_params import dummy_params_p300
+
+
+def _json_default(obj):
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    if hasattr(obj, "item"):
+        try:
+            return obj.item()
+        except Exception:
+            pass
+    raise TypeError(f"Object of type {obj.__class__.__name__} is not JSON serializable")
 
 
 def main() -> None:
@@ -27,7 +39,7 @@ def main() -> None:
     evaluation = ctx.params['Evaluation']
     summary = {k: v for k, v in list(evaluation.items())[:5]}
     print('P300 evaluation completed. Key metrics:')
-    print(json.dumps(summary, indent=2))
+    print(json.dumps(summary, indent=2, default=_json_default))
     print('Close plot windows to exit.')
     plt.show()
 

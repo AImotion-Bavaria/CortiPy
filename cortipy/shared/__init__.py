@@ -1,6 +1,7 @@
 """Shared helpers exposed by cortipy."""
 
 from .assr import assr_f_test, calc_snr as assr_calc_snr, compute_psd as assr_compute_psd
+from .bids import BIDSLoader, BIDSLoadResult, ExperimentBinLoader
 from .bera import (
     avg_seg_avg,
     block_weighted,
@@ -38,6 +39,9 @@ from .ssvep import (
 from .triggers import trigger_adc
 
 __all__ = [
+    "BIDSLoader",
+    "BIDSLoadResult",
+    "ExperimentBinLoader",
     "calc_fft",
     "hann_window",
     "time_vector",
