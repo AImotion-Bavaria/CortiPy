@@ -7,6 +7,7 @@ from typing import Dict, Iterable, Sequence
 
 import matplotlib
 import numpy as np
+import mne
 
 try:  # pragma: no cover - optional Streamlit support
     import streamlit as st
@@ -67,6 +68,40 @@ def _resolve_channels(params: dict, count: int) -> Sequence[ChannelInfo]:
         if len(result) >= count:
             return result[:count]
     return [ChannelInfo(label=f"CH {idx+1}") for idx in range(count)]
+
+
+def _topomap_info_from_labels(labels: Sequence[str]):
+    """Best-effort Info + kept indices for scalp plots."""
+    try:
+        montage = mne.channels.make_standard_montage("standard_1005")
+        known = montage.get_positions().get("ch_pos", {})
+    except Exception:
+        known = {}
+
+    kept_idx: list[int] = []
+    ch_pos: dict[str, tuple[float, float, float]] = {}
+    for idx, label in enumerate(labels):
+        pos = known.get(label)
+        if pos is None:
+            continue
+        ch_pos[label] = pos
+        kept_idx.append(idx)
+
+    if not ch_pos:
+        total = max(1, len(labels))
+        for idx, label in enumerate(labels):
+            angle = 2 * np.pi * idx / total + 0.1 * idx
+            radius = 0.06 + 0.01 * (idx % total) / max(1, total)
+            ch_pos[label] = (radius * np.cos(angle), radius * np.sin(angle), 0.0)
+            kept_idx.append(idx)
+
+    info = mne.create_info(list(ch_pos.keys()), sfreq=1.0, ch_types="eeg")
+    try:
+        montage = mne.channels.make_dig_montage(ch_pos=ch_pos, coord_frame="head")
+        info.set_montage(montage)
+    except Exception:
+        pass
+    return info, kept_idx
 
 
 def plot_fft_live(freq: np.ndarray, data: np.ndarray, ylabel: str, title: str, params: dict) -> None:
@@ -279,34 +314,43 @@ def plot_bera_results(
     t = np.asarray(time_ms, dtype=float)
     ipsi = int(param_block.get("ChannelIpsi", 1)) - 1
     contra = int(param_block.get("ChannelContra", ipsi + 1)) - 1
-    fig, ax = plt.subplots(figsize=(11, 6))
+    fig, axes = plt.subplots(2, 1, figsize=(11, 8), sharex=False, gridspec_kw={"height_ratios": [2, 1]})
+    full_ax, zoom_ax = axes
 
-    for idx in range(avg.shape[0]):
-        style = "-" if idx == 0 else "--"
-        alpha = 1.0 if idx == 0 else 0.4
-        width = 2.5 if idx == 0 else 1.0
-        color = "tab:blue" if idx == 0 else "gray"
-        ax.plot(t, avg[idx, :, max(min(ipsi, avg.shape[2] - 1), 0)], style, color=color, alpha=alpha, linewidth=width)
-        if contra < avg.shape[2]:
-            ax.plot(
-                t,
-                avg[idx, :, contra],
-                "--",
-                color="tab:orange",
-                alpha=alpha,
-                linewidth=width,
-            )
+    def _plot_traces(ax, xlim: tuple[float, float]) -> None:
+        ax.set_xlim(*xlim)
+        for idx in range(avg.shape[0]):
+            style = "-" if idx == 0 else "--"
+            alpha = 1.0 if idx == 0 else 0.4
+            width = 2.5 if idx == 0 else 1.0
+            color = "tab:blue" if idx == 0 else "gray"
+            ax.plot(t, avg[idx, :, max(min(ipsi, avg.shape[2] - 1), 0)], style, color=color, alpha=alpha, linewidth=width)
+            if contra < avg.shape[2]:
+                ax.plot(t, avg[idx, :, contra], "--", color="tab:orange", alpha=alpha, linewidth=width)
+        for center, half, label in [(1.69, 0.26, "Wave I"), (3.82, 0.32, "Wave III"), (5.60, 0.42, "Wave V")]:
+            ax.axvspan(center - half, center + half, color="red", alpha=0.05)
+            ax.text(center, ax.get_ylim()[1] * 0.9, label, ha="center", color="red")
+        ax.set_ylabel("Amplitude (µV)")
+        ax.grid(True, alpha=0.3)
 
-    for center, half, label in [(1.69, 0.26, "Wave I"), (3.82, 0.32, "Wave III"), (5.60, 0.42, "Wave V")]:
-        ax.axvspan(center - half, center + half, color="red", alpha=0.05)
-        ax.text(center, ax.get_ylim()[1] * 0.9, label, ha="center", color="red")
+    _plot_traces(full_ax, (0, 15))
+    # Auto-scale y around the plotted data with a small margin to emphasize the waveform.
+    y_min, y_max = np.inf, -np.inf
+    for line in full_ax.get_lines():
+        if line.get_ydata().size:
+            y_min = min(y_min, np.nanmin(line.get_ydata()))
+            y_max = max(y_max, np.nanmax(line.get_ydata()))
+    if y_min == np.inf or y_max == -np.inf:
+        y_min, y_max = -5, 5
+    span = y_max - y_min
+    margin = 0.2 * span if span > 0 else 1.0
+    full_ax.set_ylim(y_min - margin, y_max + margin)
+    full_ax.set_title(f"BERA — {param_block.get('Filename', '')}")
 
-    ax.set_xlabel("Time (ms)")
-    ax.set_ylabel("Amplitude (nV)")
-    ax.set_xlim(0, 15)
-    ax.set_ylim(-1000, 1000)
-    ax.grid(True, alpha=0.3)
-    ax.set_title(f"BERA — {param_block.get('Filename', '')}")
+    # Zoomed early-latency view to focus on Waves I–V.
+    _plot_traces(zoom_ax, (0, 7))
+    zoom_ax.set_ylim(full_ax.get_ylim())
+    zoom_ax.set_xlabel("Time (ms)")
 
     stats_lines = []
     if evaluation.get("Fsp") is not None and len(evaluation["Fsp"]) > 0:
@@ -314,9 +358,9 @@ def plot_bera_results(
     if evaluation.get("Fmp") is not None and len(evaluation["Fmp"]) > 0:
         stats_lines.append(f"Fmp: {evaluation['Fmp'][0]:.2f} (p={evaluation['p_mp'][0]:.2f})")
     if evaluation.get("RN_elberlingDon") is not None and len(evaluation["RN_elberlingDon"]) > 0:
-        stats_lines.append(f"RN_E-D: {evaluation['RN_elberlingDon'][0]:.1f} nV")
+        stats_lines.append(f"RN_E-D: {evaluation['RN_elberlingDon'][0]:.3f} µV")
     if evaluation.get("RN_eclipse") is not None and len(evaluation["RN_eclipse"]) > 0:
-        stats_lines.append(f"RN_Eclipse: {evaluation['RN_eclipse'][0]:.1f} nV")
+        stats_lines.append(f"RN_Eclipse: {evaluation['RN_eclipse'][0]:.3f} µV")
     stats_lines.append(f"Cycles: {num_cycles}")
     ax.text(
         0.98,
@@ -385,6 +429,26 @@ def plot_p300_results(avg_signal: np.ndarray, params: dict, max_time: float) -> 
     channels = _resolve_channels(params, avg_signal.shape[1])
     device = params.get("Device", "")
 
+    # Overview plot with all channels plus a grand average for quick quality inspection.
+    fig_all, ax_all = plt.subplots(figsize=(10, 5))
+    window_mask = slice(0, idx_max or None)
+    ax_all.plot(t_ms[window_mask], avg_signal[window_mask], color="tab:gray", alpha=0.35, linewidth=1)
+    grand_avg = avg_signal.mean(axis=1)
+    ax_all.plot(t_ms[window_mask], grand_avg[window_mask], color="tab:blue", linewidth=2.5, label="Grand average")
+    ax_all.axvspan(250, 500, color="orange", alpha=0.08, label="Typical P300 window")
+    ax_all.axhline(0.0, color="black", linewidth=0.8, alpha=0.5)
+    ax_all.set_title("P300 grand average and butterfly")
+    ax_all.set_xlabel("Time (ms)")
+    ax_all.set_ylabel("Amplitude (uV)")
+    ax_all.grid(True, alpha=0.3)
+    ax_all.legend(loc="upper right")
+    fig_all.tight_layout()
+    fig_all.canvas.draw_idle()
+    _show_in_streamlit(fig_all, f"p300-results-{param_block.get('Filename', 'cortipy')}-overview")
+
+    # Topomap of mean amplitude in the P300 window.
+    _plot_p300_topomap(avg_signal, t_ms, channels, filename=param_block.get("Filename", "p300"))
+
     for ch in range(avg_signal.shape[1]):
         fig, ax = plt.subplots(figsize=(8, 4))
         figure_key = f"p300-results-{param_block.get('Filename', 'cortipy')}-ch{ch+1}"
@@ -429,3 +493,35 @@ def plot_assr_spectrum(
     fig.tight_layout()
     fig.canvas.draw_idle()
     _show_in_streamlit(fig, f"assr-{title}")
+
+
+def _plot_p300_topomap(avg_signal: np.ndarray, t_ms: np.ndarray, channels: Sequence[ChannelInfo], filename: str) -> None:
+    if avg_signal.ndim != 2 or avg_signal.size == 0 or t_ms.size == 0:
+        return
+    window = (t_ms >= 250) & (t_ms <= 500)
+    if not window.any():
+        return
+    data = np.nanmean(avg_signal[window], axis=0)
+    labels = [ch.label for ch in channels]
+    info, kept_idx = _topomap_info_from_labels(labels)
+    kept_idx = np.asarray(kept_idx, dtype=int)
+    plot_data = data[kept_idx] if kept_idx.size == data.shape[0] else data
+    try:
+        fig, ax = plt.subplots()
+        mne.viz.plot_topomap(
+            plot_data,
+            info,
+            axes=ax,
+            show=False,
+            cmap="RdBu_r",
+            contours=4,
+            names=labels,
+            sphere=(0.0, -0.01, 0.0, 0.11),
+            outlines="head",
+        )
+        ax.set_title("P300 mean amplitude (250-500 ms)")
+        fig.tight_layout()
+        fig.canvas.draw_idle()
+        _show_in_streamlit(fig, f"p300-results-{filename}-topomap")
+    except Exception:
+        return

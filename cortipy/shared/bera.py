@@ -43,12 +43,10 @@ def filter_bera(
 
 
 def prepro(signal_in: np.ndarray, voltage: float) -> np.ndarray:
-    """Convert to nV using MATLAB's `prepro` behaviour."""
+    """Convert raw volts to microvolts for plotting/metrics."""
     data = np.asarray(signal_in, dtype=float)
-    if voltage == 1e-3:
-        return data * 1e6
-    if voltage == 1e-6:
-        return (data / 100.0) * 1e3
+    if voltage in {1e-3, 1e-6}:
+        return data * 1e6  # volts -> microvolts
     raise ValueError("Unsupported voltage level; expected 1e-3 or 1e-6.")
 
 

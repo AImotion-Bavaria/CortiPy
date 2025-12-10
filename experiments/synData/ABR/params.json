@@ -1,0 +1,556 @@
+{
+  "Method": "ABR",
+  "Device": "Simulated",
+  "Parameters": {
+    "Filename": "ABR_scalpdata",
+    "AddInfos": "Yes",
+    "RepeatMeas": "Yes",
+    "fs": 25000,
+    "TestSubjectNo": 1,
+    "RecordingTime": 15,
+    "Environment": "LabSim",
+    "NumberEEGChannels": 64,
+    "NumberAUXChannels": 0,
+    "ReferenceChannel": "Ref",
+    "Epochs": 200,
+    "EpochLength": 15,
+    "PreStim": 0,
+    "Marker": "stimulus"
+  },
+  "Channels": [
+    {
+      "Channel": "Fp1",
+      "Position": "Fp1",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "Fp2",
+      "Position": "Fp2",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "AF7",
+      "Position": "AF7",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "AF3",
+      "Position": "AF3",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "AFz",
+      "Position": "AFz",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "AF4",
+      "Position": "AF4",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "AF8",
+      "Position": "AF8",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "F7",
+      "Position": "F7",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "F5",
+      "Position": "F5",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "F3",
+      "Position": "F3",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "F1",
+      "Position": "F1",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "Fz",
+      "Position": "Fz",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "F2",
+      "Position": "F2",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "F4",
+      "Position": "F4",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "F6",
+      "Position": "F6",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "F8",
+      "Position": "F8",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "FT7",
+      "Position": "FT7",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "FC5",
+      "Position": "FC5",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "FC3",
+      "Position": "FC3",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "FC1",
+      "Position": "FC1",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "FCz",
+      "Position": "FCz",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "FC2",
+      "Position": "FC2",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "FC4",
+      "Position": "FC4",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "FC6",
+      "Position": "FC6",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "FT8",
+      "Position": "FT8",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "T7",
+      "Position": "T7",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "C5",
+      "Position": "C5",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "C3",
+      "Position": "C3",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "C1",
+      "Position": "C1",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "Cz",
+      "Position": "Cz",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "C2",
+      "Position": "C2",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "C4",
+      "Position": "C4",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "C6",
+      "Position": "C6",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "T8",
+      "Position": "T8",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "P9",
+      "Position": "P9",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "TP7",
+      "Position": "TP7",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "CP5",
+      "Position": "CP5",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "CP3",
+      "Position": "CP3",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "CP1",
+      "Position": "CP1",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "CPz",
+      "Position": "CPz",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "CP2",
+      "Position": "CP2",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "CP4",
+      "Position": "CP4",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "CP6",
+      "Position": "CP6",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "TP8",
+      "Position": "TP8",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "P10",
+      "Position": "P10",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "P7",
+      "Position": "P7",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "P5",
+      "Position": "P5",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "P3",
+      "Position": "P3",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "P1",
+      "Position": "P1",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "Pz",
+      "Position": "Pz",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "P2",
+      "Position": "P2",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "P4",
+      "Position": "P4",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "P6",
+      "Position": "P6",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "P8",
+      "Position": "P8",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "PO9",
+      "Position": "PO9",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "PO7",
+      "Position": "PO7",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "PO3",
+      "Position": "PO3",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "POz",
+      "Position": "POz",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "PO4",
+      "Position": "PO4",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "PO8",
+      "Position": "PO8",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "PO10",
+      "Position": "PO10",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "O1",
+      "Position": "O1",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "Oz",
+      "Position": "Oz",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "O2",
+      "Position": "O2",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "Ref",
+      "Position": "Ref",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    },
+    {
+      "Channel": "GND",
+      "Position": "GND",
+      "Rubrik": "Simulated",
+      "Model": "SimEEG",
+      "Impedance": 0,
+      "Active": true
+    }
+  ],
+  "ERPComponents": [],
+  "Noise": {
+    "Type": "Brown",
+    "Amplitude": 1
+  },
+  "OutputFile": "ABR_scalpdata.bin"
+}

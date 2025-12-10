@@ -11,7 +11,13 @@ dependencies:
   - pyserial==3.5
   - pylsl>=1.17.6
   - tomli>=2.0.1
-  - streamlit>=1.26  # optional UI
+  - pyedflib>=0.1.36        # BIDS EDF/BDF export
+  - pyarrow>=10             # Parquet BIDS files
+  - h5py>=3.9               # HDF5 BIDS files
+  - zarr>=2.15              # Zarr BIDS files
+  - streamlit>=1.26         # optional UI
+  - plotly>=5.24            # optional UI
   - pip
   - pip:
       - .
+      - streamlit-plotly-events>=0.0.6

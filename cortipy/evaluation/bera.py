@@ -47,14 +47,14 @@ class BeraEvaluator(EvaluatorBase):
         if fs <= 0:
             raise ValueError("BERA evaluation requires Params.Parameters.fs.")
 
-        device = params.get("Device")
+        device = (params.get("Device") or "").lower()
         data_array = np.asarray(data, dtype=float)
-        if device == "ActiCHamp":
+        if device in {"actichamp", "simulated"}:
             data_ref = self._apply_reference_actichamp(param_block, data_array)
             device_voltage = 1e-6
             timestamp_idx = data_array.shape[1] - 1
             exclude = {timestamp_idx, int(param_block.get("ReferenceChannel", 1)) - 1, int(param_block.get("TriggerChannel", data_array.shape[1])) - 1}
-        elif device == "BIOPACK":
+        elif device in {"biopac", "biopack"}:
             data_ref = data_array
             device_voltage = 1e-3
             exclude = {
@@ -153,7 +153,8 @@ class BeraEvaluator(EvaluatorBase):
         return referenced
 
     def _channels_to_analyze(self, device: Optional[str], param_block: dict, total_channels: int) -> List[int]:
-        if device == "ActiCHamp":
+        device = (device or "").lower()
+        if device in {"actichamp", "simulated"}:
             trigger_idx = int(param_block.get("TriggerChannel", total_channels)) - 1
             reference_idx = int(param_block.get("ReferenceChannel", 1)) - 1
             timestamp_idx = total_channels - 1
@@ -162,7 +163,7 @@ class BeraEvaluator(EvaluatorBase):
                 for idx in range(total_channels)
                 if idx not in {trigger_idx, reference_idx, timestamp_idx}
             ]
-        if device == "BIOPACK":
+        if device in {"biopac", "biopack"}:
             idx_list = []
             ipsi = int(param_block.get("ChannelIpsi", 1)) - 1
             contra = int(param_block.get("ChannelContra", ipsi + 1)) - 1
