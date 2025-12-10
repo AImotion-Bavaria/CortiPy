@@ -2,6 +2,7 @@
 
 from .assr import assr_f_test, calc_snr as assr_calc_snr, compute_psd as assr_compute_psd
 from .bids import BIDSLoader, BIDSLoadResult, ExperimentBinLoader
+from .dataset import CortiDataset
 from .bera import (
     avg_seg_avg,
     block_weighted,
@@ -36,12 +37,29 @@ from .ssvep import (
     ssvep_f_test,
     ssvep_snr,
 )
+from .sbids import (
+    SBIDSLoader,
+    SbidsExporter,
+    build_sbids_document_for_dataset,
+    default_output_path as sbids_default_output_path,
+    export_dataset as export_sbids_dataset,
+    read_sbids,
+    to_sbids,
+)
 from .triggers import trigger_adc
 
 __all__ = [
     "BIDSLoader",
     "BIDSLoadResult",
     "ExperimentBinLoader",
+    "CortiDataset",
+    "SBIDSLoader",
+    "SbidsExporter",
+    "build_sbids_document_for_dataset",
+    "sbids_default_output_path",
+    "export_sbids_dataset",
+    "read_sbids",
+    "to_sbids",
     "calc_fft",
     "hann_window",
     "time_vector",
