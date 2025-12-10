@@ -216,3 +216,5 @@ TODO.md
 /datasets
 /experiments/synData_binrt
 /sbids
+/experiments/format_benchmark/results_exp2/Synth256ch_2000Hz_1h
+/experiments/format_benchmark/results_exp2

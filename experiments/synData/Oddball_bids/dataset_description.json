@@ -1,9 +1,0 @@
-{
-  "Name": "Oddball synthetic export",
-  "BIDSVersion": "1.8.0",
-  "GeneratedBy": [
-    {
-      "Name": "cortipy bin_to_bids_edf.py"
-    }
-  ]
-}

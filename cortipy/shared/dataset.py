@@ -127,11 +127,13 @@ class CortiDataset:
         drift: float = 0.5,
         seed: int | None = None,
         dataset_name: str = "synthetic_eeg",
+        dtype: str | np.dtype | None = None,
     ) -> CortiDataset:
         """Generate synthetic EEG-like data and return it wrapped in a CortiDataset."""
         names = _resolve_channel_names(channel_names, channel_count)
         types = _resolve_channel_types(channel_types, len(names))
         base_freqs = [float(f) for f in (base_frequencies or (2.5, 6.0, 10.0, 18.0, 35.0))]
+        dtype_resolved = np.dtype(dtype) if dtype is not None else np.float64
 
         data = _synthesize_eeg_data(
             sampling_rate=float(sampling_rate),
@@ -142,6 +144,7 @@ class CortiDataset:
             drift_level=float(drift),
             line_freq=line_noise,
             seed=seed,
+            dtype=dtype_resolved,
         )
 
         info = mne.create_info(ch_names=names, sfreq=float(sampling_rate), ch_types=types)
@@ -174,6 +177,7 @@ class CortiDataset:
                 "drift": float(drift),
                 "line_noise": line_noise,
                 "seed": seed,
+                "dtype": str(dtype_resolved),
             },
         }
 
@@ -188,6 +192,38 @@ class CortiDataset:
             ancillary_files=[],
         )
         return cls(result)
+
+    @classmethod
+    def from_synthetic(
+        cls,
+        sampling_rate: float = 250.0,
+        duration_s: float = 10.0,
+        channel_names: Sequence[str] | None = None,
+        channel_types: str | Sequence[str] | None = "eeg",
+        channel_count: int = 8,
+        base_frequencies: Sequence[float] | None = None,
+        line_noise: float | None = 50.0,
+        noise: float = 5.0,
+        drift: float = 0.5,
+        seed: int | None = None,
+        dataset_name: str = "synthetic_eeg",
+        dtype: str | np.dtype | None = None,
+    ) -> CortiDataset:
+        """Alias for generate_eeg_samples for backward compatibility."""
+        return cls.generate_eeg_samples(
+            sampling_rate=sampling_rate,
+            duration_s=duration_s,
+            channel_names=channel_names,
+            channel_types=channel_types,
+            channel_count=channel_count,
+            base_frequencies=base_frequencies,
+            line_noise=line_noise,
+            noise=noise,
+            drift=drift,
+            seed=seed,
+            dataset_name=dataset_name,
+            dtype=dtype,
+        )
 
     # ---- conversions (to_*) ----
     def to_bids(
@@ -448,14 +484,19 @@ def _meta_from_result(result: BIDSLoadResult, source_rel: str) -> dict[str, Any]
         params = result.metadata["params"]
     participant = params.get("Metadata", {}).get("Participant", {}) if isinstance(params, dict) else {}
     subject = participant.get("Code") if isinstance(participant, dict) else None
-    if isinstance(params, dict) and params.get("Channels"):
-        channels = params.get("Channels")
-    else:
-        channels = [{"Channel": name, "Position": name, "Active": True} for name in result.raw.ch_names]
+    # Force channel list to match the actual raw channels to avoid mismatches on import
+    channels = [{"Channel": name, "Position": name, "Active": True} for name in result.raw.ch_names]
+    # Ensure Parameters contains sampling rate for tabular exports
+    parameters_block = params.get("Parameters", {}) if isinstance(params, dict) else {}
+    if "fs" not in parameters_block and getattr(result, "sampling_rate", None):
+        try:
+            parameters_block["fs"] = float(result.sampling_rate)
+        except Exception:
+            parameters_block.setdefault("fs", float(result.raw.info.get("sfreq", 0.0)))
     return {
         "Method": params.get("Method", "Import") if isinstance(params, dict) else "Import",
         "Device": params.get("Device", "Unknown") if isinstance(params, dict) else "Unknown",
-        "Parameters": params.get("Parameters", {}) if isinstance(params, dict) else {},
+        "Parameters": parameters_block,
         "Channels": channels,
         "Metadata": {"Participant": {"Code": subject}} if subject else {},
         "DataFile": source_rel,
@@ -532,14 +573,16 @@ def _synthesize_eeg_data(
     drift_level: float,
     line_freq: float | None,
     seed: int | None,
+    dtype: np.dtype,
 ) -> np.ndarray:
     samples = max(1, int(round(sampling_rate * duration_s)))
-    t = np.arange(samples, dtype=float) / float(sampling_rate)
+    dtype = np.dtype(dtype)
+    t = np.arange(samples, dtype=dtype) / float(sampling_rate)
     rng = np.random.default_rng(seed)
     base_freqs = list(base_freqs) if base_freqs else [10.0]
 
     def synth_channel() -> np.ndarray:
-        sig = np.zeros(samples, dtype=float)
+        sig = np.zeros(samples, dtype=dtype)
         dominant = rng.choice(base_freqs)
         for freq in base_freqs:
             amp = rng.uniform(5.0, 20.0)
@@ -552,7 +595,7 @@ def _synthesize_eeg_data(
         drift_phase = rng.uniform(0, 2 * np.pi)
         sig += drift_level * np.sin(2 * np.pi * 0.2 * t + drift_phase)
 
-        colored = _colored_noise(rng, samples, alpha=1.0)
+        colored = _colored_noise(rng, samples, alpha=1.0, dtype=dtype)
         sig += noise_level * colored
 
         if line_freq is not None:
@@ -561,15 +604,22 @@ def _synthesize_eeg_data(
         gain = 1.0 + 0.1 * (rng.random() - 0.5)
         return gain * sig
 
-    return np.column_stack([synth_channel() for _ in range(ch_count)])
+    data = np.empty((samples, ch_count), dtype=dtype)
+    for idx in range(ch_count):
+        data[:, idx] = synth_channel()
+    return data
 
 
-def _colored_noise(rng: np.random.Generator, samples: int, alpha: float = 1.0) -> np.ndarray:
+def _colored_noise(
+    rng: np.random.Generator, samples: int, alpha: float = 1.0, dtype: np.dtype = np.float64
+) -> np.ndarray:
     """Generate approximate 1/f^alpha noise using frequency-domain shaping."""
+    dtype = np.dtype(dtype)
     freqs = np.fft.rfftfreq(samples)
     spectrum = rng.standard_normal(freqs.shape) + 1j * rng.standard_normal(freqs.shape)
     freqs[0] = freqs[1] if freqs.size > 1 else 1.0
     spectrum /= np.maximum(freqs, 1e-6) ** (alpha / 2.0)
     noise = np.fft.irfft(spectrum, n=samples)
     std = noise.std()
-    return noise / std if std > 0 else noise
+    result = noise / std if std > 0 else noise
+    return np.asarray(result, dtype=dtype)

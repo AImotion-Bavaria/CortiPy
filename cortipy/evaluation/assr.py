@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Dict, Optional, Tuple
 
 import numpy as np
+import matplotlib.pyplot as plt
+import mne
 
 from cortipy.evaluation.base import EvaluatorBase
 from cortipy.shared import (
@@ -137,6 +139,21 @@ class AssrEvaluator(EvaluatorBase):
             ylabel_fft = "Amplitude (uV)"
             title_fft = f"{title_prefix} FFT (fm={stim_freq} Hz, fc={carrier_freq} Hz)"
             plot_assr_spectrum(freq, np.abs(fft_vals), view_low, view_high, ylabel_fft, title_fft)
+            # Full-band PSD (EEGLAB-style) 0-500 Hz for comparison
+            _plot_assr_full_psd(
+                psd_result.freq,
+                psd_result.dBpsd,
+                title=f"{title_prefix} PSD @ T8",
+                xlim=(0, 500),
+                ylim=(-100, -20),
+                smooth_hz=5.0,
+            )
+            _plot_assr_topomap(
+                context,
+                stim_freq=stim_freq,
+                vlim_db=(-80, -20),
+                contours=8,
+            )
 
         metrics: Dict[str, Dict[str, np.ndarray] | float] = {
             "fft": {"xdft": np.asarray(fft_vals), "xdftUnit": "Amplitude (uV)", "freq": freq, "freqUnit": "Frequency (Hz)"},
@@ -155,3 +172,81 @@ class AssrEvaluator(EvaluatorBase):
         }
 
         return metrics
+
+
+def _plot_assr_full_psd(
+    freq: np.ndarray,
+    power_db: np.ndarray,
+    title: str,
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
+    smooth_hz: float | None = None,
+) -> None:
+    """EEGLAB-like PSD plot: dB/Hz with optional smoothing and limits."""
+    freqs = np.asarray(freq)
+    power = np.asarray(power_db)
+    if freqs.size > 1 and power.shape[-1] == freqs.size + 1:
+        freqs = freqs[:-1]
+        power = power[:-1]
+    if freqs.size > 1 and smooth_hz:
+        step = freqs[1] - freqs[0]
+        k = max(3, int(round(smooth_hz / step)))
+        k = k + (k + 1) % 2  # make odd
+        kernel = np.ones(k) / k
+        power = np.convolve(power, kernel, mode="same")
+    fig = plt.figure(figsize=(10, 4))
+    ax = fig.gca()
+    ax.plot(freqs, power, color="blue", linewidth=1.25)
+    ax.set_xlabel("Frequency (Hz)")
+    ax.set_ylabel("Power (µV^2/Hz)")
+    if xlim:
+        ax.set_xlim(*xlim)
+    if ylim:
+    ax.set_ylim(*ylim)
+    ax.grid(True, alpha=0.3)
+    ax.set_title(title)
+    fig.tight_layout()
+
+
+def _plot_assr_topomap(context, stim_freq: float, vlim_db: Tuple[float, float], contours: int = 8) -> None:
+    """Optional ASSR topomap at stim frequency; quietly skips if info/data missing."""
+    try:
+        raw = getattr(context, "raw", None)
+        if raw is None or not isinstance(raw, mne.io.BaseRaw):
+            return
+        data = raw.get_data(picks="eeg")
+        sfreq = raw.info["sfreq"]
+        n_times = data.shape[1]
+        psd, freqs = mne.time_frequency.psd_array_welch(
+            data,
+            sfreq=sfreq,
+            fmin=max(1.0, stim_freq - 2),
+            fmax=stim_freq + 2,
+            average="mean",
+            n_fft=min(1024, n_times),
+            n_per_seg=min(1024, n_times),
+        )
+        if psd.ndim != 2 or freqs.size == 0:
+            return
+        freq_idx = int(np.argmin(np.abs(freqs - stim_freq)))
+        values = 10 * np.log10(psd[:, freq_idx] + np.finfo(float).eps)
+        fig, ax = plt.subplots(figsize=(8, 8), dpi=200)
+        ax.set_axis_off()
+        im, _ = mne.viz.plot_topomap(
+            values,
+            raw.info,
+            axes=ax,
+            show=False,
+            contours=contours,
+            cmap="turbo",
+            outlines="head",
+            extrapolate="head",
+        )
+        im.set_clim(vmin=vlim_db[0], vmax=vlim_db[1])
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label("Power (µV²/Hz)", fontsize=12)
+        fig.suptitle(f"ASSR Topomap @ {stim_freq:.1f} Hz", fontsize=14)
+        fig.tight_layout()
+    except Exception:
+        # fail silently if topo cannot be rendered
+        return

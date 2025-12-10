@@ -7,6 +7,7 @@ from typing import Dict, Tuple
 import logging
 import matplotlib
 import numpy as np
+import mne
 
 try:  # pragma: no cover - optional Streamlit integration
     import streamlit as st
@@ -21,15 +22,7 @@ else:
 import matplotlib.pyplot as plt
 
 from cortipy.evaluation.base import EvaluatorBase
-from cortipy.shared import (
-    assr_compute_psd,
-    calc_fft,
-    cca_correlations,
-    compute_t2circ,
-    plot_psd_ssvep,
-    ssvep_f_test,
-    ssvep_snr,
-)
+from cortipy.shared import assr_compute_psd, calc_fft, cca_correlations, compute_t2circ, ssvep_f_test, ssvep_snr
 
 LOGGER = logging.getLogger("cortipy.evaluation.ssvep")
 
@@ -112,17 +105,23 @@ class SsvepEvaluator(EvaluatorBase):
         show_plots = self.show_plots if self.show_plots is not None else not params.get("ReportAnalyzer")
         if show_plots:
             LOGGER.debug("Rendering SSVEP evaluation plots")
-            low = param_block.get("LowestFrequency", 2)
-            high = param_block.get("HighestFrequency", 45)
-            avg_psd = psd_result.dBpsd.mean(axis=1)
             fig_psd, ax_psd = _get_axes("ssvep_psd")
-            plot_psd_ssvep(ax_psd, psd_result.freq, avg_psd, low, high)
+            plot_ssvep_power_db(
+                ax_psd,
+                psd_result.freq,
+                psd_result.dBpsd.mean(axis=1),
+                smooth=1.0,
+                xlim=(0, 500),
+                ylim=(-100, -20),
+                title="SSVEP PSD @ Oz",
+            )
             _show_mpl(fig_psd, "ssvep_psd")
-
-            avg_fft = np.abs(spectrum).mean(axis=1)
-            fig_fft, ax_fft = _get_axes("ssvep_fft")
-            plot_psd_ssvep(ax_fft, freq, avg_fft, low, high)
-            _show_mpl(fig_fft, "ssvep_fft")
+            _plot_ssvep_topomap(
+                context,
+                stim_freq=float(stim_freqs[0]),
+                vlim_db=(-80, -20),
+                contours=8,
+            )
 
         context.params = params
 
@@ -177,3 +176,86 @@ def _is_streamlit_runtime() -> bool:
         return False
     runtime = getattr(st, "runtime", None)
     return bool(runtime and runtime.exists())
+
+
+def _plot_ssvep_topomap(
+    context,
+    stim_freq: float,
+    vlim_db: tuple[float, float],
+    contours: int = 8,
+) -> None:
+    """Optional SSVEP topomap at stim frequency; quietly skips if info/data missing."""
+    try:
+        raw = getattr(context, "raw", None)
+        if raw is None or not isinstance(raw, mne.io.BaseRaw):
+            return
+        data = raw.get_data(picks="eeg")
+        sfreq = raw.info["sfreq"]
+        n_times = data.shape[1]
+        psd, freqs = mne.time_frequency.psd_array_welch(
+            data,
+            sfreq=sfreq,
+            fmin=max(1.0, stim_freq - 2),
+            fmax=stim_freq + 2,
+            average="mean",
+            n_fft=min(1024, n_times),
+            n_per_seg=min(1024, n_times),
+        )
+        if psd.ndim != 2 or freqs.size == 0:
+            return
+        freq_idx = int(np.argmin(np.abs(freqs - stim_freq)))
+        values = 10 * np.log10(psd[:, freq_idx] + np.finfo(float).eps)
+        fig, ax = plt.subplots(figsize=(8, 8), dpi=200)
+        ax.set_axis_off()
+        im, _ = mne.viz.plot_topomap(
+            values,
+            raw.info,
+            axes=ax,
+            show=False,
+            contours=contours,
+            cmap="turbo",
+            outlines="head",
+            extrapolate="head",
+        )
+        im.set_clim(vmin=vlim_db[0], vmax=vlim_db[1])
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label("Power (µV²/Hz)", fontsize=12)
+        fig.suptitle(f"SSVEP Topomap @ {stim_freq:.1f} Hz", fontsize=14)
+        fig.tight_layout()
+    except Exception:
+        return
+
+
+def plot_ssvep_power_db(
+    ax: plt.Axes,
+    freqs: np.ndarray,
+    power_db: np.ndarray,
+    window_hz: float = 1.0,
+    xlim: tuple[float, float] = (0, 500),
+    ylim: tuple[float, float] = (-100, -20),
+    title: str | None = None,
+    smooth: float | None = None,
+) -> plt.Axes:
+    """Plot SSVEP power (dB/Hz) with optional light smoothing to mirror EEGLAB-style PSD."""
+    freqs = np.asarray(freqs)
+    power_db = np.asarray(power_db)
+    # choose smoothing window: prefer `smooth` if provided, else window_hz
+    smooth_win = smooth if smooth is not None else window_hz
+    if freqs.size > 1 and smooth_win and smooth_win > 0:
+        step = freqs[1] - freqs[0]
+        k = max(3, int(round(smooth_win / step)))
+        k = k + (k + 1) % 2  # enforce odd length
+        kernel = np.ones(k) / k
+        power_db = np.convolve(power_db, kernel, mode="same")
+    if power_db.size == freqs.size + 1:
+        freqs = freqs[:-1]
+        power_db = power_db[:-1]
+    ax.plot(freqs, power_db, color="blue", linewidth=1.25)
+    ax.set_xlabel("Frequency (Hz)")
+    ax.set_ylabel("Power (µV^2/Hz)")
+    if title:
+        ax.set_title(title)
+    ax.set_xlim(*xlim)
+    ax.set_ylim(*ylim)
+    ax.grid(True, alpha=0.3)
+    return ax

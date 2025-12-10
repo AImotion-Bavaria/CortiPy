@@ -1,5 +1,0 @@
-{
-  "method": "SSVEP",
-  "status": "failed",
-  "error": "SSVEP evaluation supports ActiCHamp or UNICORN data."
-}

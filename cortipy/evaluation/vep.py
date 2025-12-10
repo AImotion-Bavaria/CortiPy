@@ -501,7 +501,7 @@ def _plot_vep_topomaps(
     for name, values in maps:
         fig, ax = plt.subplots()
         data = values[kept_idx] if kept_idx.size and kept_idx.size == values.shape[0] else values
-        mne.viz.plot_topomap(
+        im, _ = mne.viz.plot_topomap(
             data,
             info,
             axes=ax,
@@ -513,6 +513,8 @@ def _plot_vep_topomaps(
             outlines="head",
         )
         ax.set_title(f"{name} topography")
+        cbar = fig.colorbar(im, ax=ax, orientation="vertical", fraction=0.046, pad=0.04)
+        cbar.ax.tick_params(labelsize=9)
         fig.tight_layout()
         _show_mpl(fig, f"vep_topomap_{name.replace(' ', '_').lower()}")
 

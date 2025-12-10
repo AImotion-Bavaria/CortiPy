@@ -272,8 +272,12 @@ class BIDSLoader:
                 continue
             if not resolved.exists():
                 continue
-            if not resolved.is_file():
-                continue
+            if ext == ".zarr":
+                if not (resolved.is_file() or resolved.is_dir()):
+                    continue
+            else:
+                if not resolved.is_file():
+                    continue
             if "derivatives" in resolved.parts:
                 continue
             if resolved in seen_resolved:
@@ -666,8 +670,15 @@ class BIDSLoader:
                 import zarr
             except ImportError as exc:
                 raise RuntimeError("Exporting to zarr requires the optional dependency 'zarr'.") from exc
-            store = zarr.open(str(path), mode="w")
-            dataset = store.create_dataset("data", data=data, compressor="default")
+            store = zarr.open_group(str(path), mode="w")
+            chunk_shape = (min(4096, data.shape[0]), min(data.shape[1], 64))
+            dataset = store.create_dataset(
+                "data",
+                data=data,
+                shape=data.shape,
+                chunks=chunk_shape,
+                compressor=None,
+            )
             if hasattr(dataset, "attrs"):
                 dataset.attrs["ch_names"] = ch_names
                 dataset.attrs["sfreq"] = float(raw.info["sfreq"])
