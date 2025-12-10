@@ -12,6 +12,10 @@ streamlit>=1.26
 plotly>=5.24
 streamlit-plotly-events>=0.0.6
 
+# Validation extras for SBIDS export/tests
+jsonschema>=4.22.0
+pyld>=2.0.4
+
 # Optional BIDS export/import extras
 pyedflib>=0.1.36
 pyarrow>=10
