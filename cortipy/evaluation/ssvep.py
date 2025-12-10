@@ -52,9 +52,18 @@ class SsvepEvaluator(EvaluatorBase):
             raise ValueError("SsvepEvaluator requires `params['data']`.")
 
         param_block = params.setdefault("Parameters", {})
-        fs = float(param_block.get("fs", 0))
+        fs = float(np.nan_to_num(param_block.get("fs", 0), nan=0.0))
         if fs <= 0:
-            raise ValueError("SSVEP evaluation requires Params.Parameters.fs.")
+            # try to infer from RecordingTime and data length
+            rec_time = param_block.get("RecordingTime")
+            try:
+                rec_time_f = float(rec_time)
+            except (TypeError, ValueError):
+                rec_time_f = None
+            if rec_time_f and rec_time_f > 0:
+                fs = float(data.shape[0]) / rec_time_f
+        if fs <= 0 or not np.isfinite(fs):
+            raise ValueError("SSVEP evaluation requires a positive sampling rate (fs).")
 
         data_ref = self._apply_reference(params, np.asarray(data, dtype=float))
         spectrum, freq = calc_fft(data_ref, fs)
@@ -76,7 +85,12 @@ class SsvepEvaluator(EvaluatorBase):
             "dBpsdxUnit": "Power Spectral Density (dB/Hz)",
         }
 
-        stim_freqs = np.atleast_1d(np.asarray(param_block.get("StimFreq"), dtype=float))
+        stim_freqs_raw = param_block.get("StimFreq")
+        stim_freqs = np.atleast_1d(np.asarray(stim_freqs_raw, dtype=float))
+        stim_freqs = stim_freqs[np.isfinite(stim_freqs) & (stim_freqs > 0)]
+        if stim_freqs.size == 0:
+            stim_freqs = np.array([10.0], dtype=float)
+            param_block["StimFreq"] = stim_freqs.tolist()
         freq_spacing = freq[1] - freq[0] if freq.size > 1 else 1.0
         snr_2_45 = ssvep_snr(spectrum, freq, stim_freqs, 2.0, 45.0, freq_spacing)
         snr_max = ssvep_snr(spectrum, freq, stim_freqs, 2.0, fs / 2.0, freq_spacing)
@@ -125,7 +139,10 @@ class SsvepEvaluator(EvaluatorBase):
             return referenced
         if device == "unicorn":
             return data[:, :8]
-        raise RuntimeError("SSVEP evaluation supports ActiCHamp or UNICORN data.")
+        # Generic fallback: keep the first `num_channels` channels without re-referencing.
+        if data.shape[1] > num_channels:
+            return data[:, :num_channels]
+        return data
 
 
 def _get_axes(key: str):

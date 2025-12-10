@@ -83,3 +83,57 @@ The `tests/regression` fixtures mirror deterministic MATLAB exports. Run `pytest
 Python-only checks or `tests/run_parity_tests.m` inside MATLAB to generate fresh dummy
 data and compare the legacy stack vs. the Python port. Continuous integration should
 exercise at least the regression scripts before cutting releases.
+
+## SBIDS import/export
+
+- `SBIDSLoader` resolves an SBIDS `sbids_meta_<dataset>.jsonld` document plus its raw
+  data into a `BIDSLoadResult` (e.g., `SBIDSLoader("sbids").read_sbids(...)`).
+- `SbidsExporter` / `export_dataset` convert a CortiPy run folder containing
+  `params.json` + data into SBIDS JSON-LD that can be validated with `sbids/test.py`.
+
+```python
+from cortipy.shared import SBIDSLoader, export_sbids_dataset
+
+# Load an existing SBIDS export
+result = SBIDSLoader("sbids", data_roots=["cortipy_runs"]).read_sbids(
+    meta_path="sbids/sbids_meta_20251113-164440_SSVEP.jsonld"
+)
+
+# Export a run directory to SBIDS metadata
+export_sbids_dataset(
+    dataset_dir="cortipy_runs/20251113-164440_SSVEP",
+    dataset_id="20251113-164440_SSVEP",
+    dataset_name="20251113-164440_SSVEP",
+    output="sbids/sbids_meta_20251113-164440_SSVEP.jsonld",
+    indent=2,
+)
+```
+
+## Performance experiments (BIDS)
+
+`experiments/bids_performance.py` benchmarks loading a BIDS dataset and reports
+wall-clock, CPU, and memory usage (psutil recommended). Example:
+
+```bash
+python experiments/bids_performance.py /path/to/bids_root --subject 01 --task rest --output /tmp/bids_perf.json
+```
+
+- Add `--pdf-output /tmp/report.pdf` for a chart-based PDF report (requires matplotlib).
+- The script now prints a structured terminal summary; JSON is still written when `--output` is used.
+- Use `--all-recordings` to load/benchmark every recording matching the filters (instead of only the first).
+
+## Performance experiments (SBIDS)
+
+`experiments/sbids_performance.py` benchmarks loading recordings referenced by an SBIDS
+JSON-LD via `SBIDSLoader`. Examples:
+
+```bash
+# Single recording (first in the doc)
+PYTHONPATH=. python experiments/sbids_performance.py /path/to/sbids_meta.jsonld \
+  --output /tmp/sbids_perf.json --pdf-output /tmp/sbids_perf.pdf
+
+# All recordings in the SBIDS document
+PYTHONPATH=. python experiments/sbids_performance.py /path/to/sbids_meta.jsonld \
+  --all-recordings --data-root /path/to/raw_root \
+  --output /tmp/sbids_all_perf.json --pdf-output /tmp/sbids_all_perf.pdf
+```

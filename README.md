@@ -25,6 +25,9 @@ source .venv/bin/activate   # PowerShell: .venv\Scripts\Activate.ps1
 pip install --upgrade pip
 pip install -e .            # core toolkit
 pip install -e .[ui]        # adds Streamlit dependencies
+# Add `[bids]` to enable the BIDS loader/exporter extras (EDF/BDF, Parquet, HDF5, Zarr)
+pip install -e .[bids]
+pip install -e .[ui,bids]   # UI plus BIDS extras
 ```
 
 For conda users, an environment spec is provided. It pins the same runtime
@@ -100,6 +103,26 @@ Open `http://localhost:8501` (default Streamlit port) and configure a run:
   stream, `"Dummy"` (or `"Sim"`) for synthetic data, or `"Offline"` to replay
   `.npz/.mat` files. All are selectable from the Streamlit UI for testing without
   hardware.
+
+### BIDS import/export
+
+- `cortipy.shared.BIDSLoader` can read/write BIDS datasets. Supported inputs include EDF/BDF, BrainVision (`.vhdr/.eeg`), EEGLAB (`.set`), FIF, Parquet, HDF5, and Zarr.
+- `cortipy.shared.ExperimentBinLoader` reads/writes the `.bin` + `params.json` pairs used in `experiments/synData`, returning a `BIDSLoadResult` so you can analyse or re-export them.
+- Extra dependencies for non-default formats: `pyedflib` (EDF/BDF export), `pyarrow` (Parquet), `h5py` (HDF5), `zarr` (Zarr); BrainVision/EEGLAB exports still rely on `pybv` / `eeglabio`.
+- Install them via `pip install -e .[bids]` (or combine with `[ui]`) to enable all BIDS I/O features.
+
+```python
+from cortipy.shared import BIDSLoader, ExperimentBinLoader
+
+bin_loader = ExperimentBinLoader("experiments/synData")
+result = bin_loader.read_bin("Oddball")  # loads params.json + Oddball_scalpdata.bin
+
+# Convert to BIDS
+BIDSLoader("exports/oddball_bids").to_bids(result.raw, subject="01", task="oddball", overwrite=True)
+
+# Convert any Raw/numpy data back into the bin layout
+bin_loader.write_bin(result.raw, "exports/oddball_bin", params=result.metadata["params"], overwrite=True)
+```
 
 ## Testing and validation
 

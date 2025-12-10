@@ -1,0 +1,5 @@
+{
+  "method": "VEP",
+  "status": "failed",
+  "error": "sphere must be float or 1D array of shape (4,), got array-like of shape (3,)"
+}

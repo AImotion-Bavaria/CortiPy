@@ -2,16 +2,35 @@
 
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 import numpy as np
-try:
-    from pylsl import StreamInlet, resolve_stream
-except ImportError:  # pragma: no cover
-    StreamInlet = None
-    resolve_stream = None
 
 from .base import DeviceInterface
+
+# These globals are populated lazily to avoid importing pylsl (and its native
+# liblsl dependency) unless an LSL device is actually used.
+StreamInlet = None
+resolve_stream = None
+
+if TYPE_CHECKING:  # pragma: no cover
+    from pylsl import StreamInlet as PylslStreamInlet  # noqa: F401
+
+
+def _ensure_pylsl_loaded() -> None:
+    """Load pylsl only when needed so non-LSL flows don't trigger native loads."""
+    global StreamInlet, resolve_stream
+    if StreamInlet is not None and resolve_stream is not None:
+        return
+    try:
+        from pylsl import StreamInlet as _StreamInlet, resolve_stream as _resolve_stream
+    except Exception as exc:  # pragma: no cover - exercised when pylsl unavailable
+        raise RuntimeError(
+            "pylsl is not available or failed to load. "
+            "Install pylsl>=1.16 to use LSLDevice."
+        ) from exc
+    StreamInlet = _StreamInlet
+    resolve_stream = _resolve_stream
 
 
 class LSLDevice(DeviceInterface):
@@ -30,14 +49,10 @@ class LSLDevice(DeviceInterface):
         self.sampling_rate = sampling_rate
         self.timeout = timeout
         self.chunk_size = chunk_size
-        self._inlet: Optional[StreamInlet] = None
+        self._inlet: Optional["PylslStreamInlet"] = None
 
     def connect(self) -> None:
-        if StreamInlet is None or resolve_stream is None:
-            raise RuntimeError(
-                "pylsl is not available or missing resolve_stream. "
-                "Install pylsl>=1.16 to use LSLDevice."
-            )
+        _ensure_pylsl_loaded()
         streams = resolve_stream("name", self.stream_name, timeout=self.timeout)
         if not streams:
             raise RuntimeError(f"Unable to resolve LSL stream named '{self.stream_name}'.")

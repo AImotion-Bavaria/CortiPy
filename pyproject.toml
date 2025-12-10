@@ -30,7 +30,15 @@ dependencies = [
     "pyserial==3.5",
     "tomli>=2.0.1; python_version < \"3.11\"",
 ]
-optional-dependencies = { ui = ["streamlit>=1.26"] }
+
+[project.optional-dependencies]
+ui = ["streamlit>=1.26"]
+bids = [
+    "pyedflib>=0.1.36",
+    "pyarrow>=10",
+    "h5py>=3.9",
+    "zarr>=2.15",
+]
 dynamic = ["version"]
 
 [project.urls]
