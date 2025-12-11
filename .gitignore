@@ -208,7 +208,7 @@ __marimo__/
 
 
 /.idea
-tests/.DS_Store
+.DS_Store
 /cortipy_runs
 results.json
 AGENTS.md

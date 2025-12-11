@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import List, Optional
 
 import numpy as np
+import matplotlib.pyplot as plt
+import mne
 
 from cortipy.evaluation.base import EvaluatorBase
 from cortipy.shared import (
@@ -136,6 +138,8 @@ class BeraEvaluator(EvaluatorBase):
         show_plots = self.show_plots if self.show_plots is not None else not params.get("ReportAnalyzer")
         if show_plots:
             plot_bera_results(prepro_average, params, num_cycles, time_ms)
+            _plot_abr_trace(prepro_average, time_ms, params)
+            _plot_abr_topomap(context, t_ms=7.0)
 
         context.params = params
 
@@ -172,3 +176,57 @@ class BeraEvaluator(EvaluatorBase):
                 idx_list.append(max(0, min(contra, total_channels - 1)))
             return idx_list
         return list(range(total_channels))
+
+
+def _plot_abr_trace(prepro_average: np.ndarray, time_ms: np.ndarray, params: dict) -> None:
+    """Plot ABR single-channel trace similar to Experiment 1; skips on error."""
+    try:
+        # prepro_average shape: (1, samples, channels)
+        data = prepro_average.squeeze()  # samples x channels
+        if data.ndim != 2:
+            return
+        ch_idx = int(params.get("Parameters", {}).get("ChannelIpsi", 1)) - 1
+        ch_idx = max(0, min(ch_idx, data.shape[1] - 1))
+        trace = data[:, ch_idx]
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(time_ms, trace, color="blue", linewidth=1.25, label=f"Ch {ch_idx+1}")
+        ax.set_xlim(0.0, 15.0)
+        ax.set_ylim(-0.3, 0.4)
+        ax.set_xlabel("Time (ms)")
+        ax.set_ylabel("Amplitude (µV)")
+        ax.set_title("ABR trace")
+        ax.grid(True, alpha=0.3)
+        fig.tight_layout()
+    except Exception:
+        return
+
+
+def _plot_abr_topomap(context, t_ms: float = 7.0) -> None:
+    """Optional ABR topomap at a given latency; quietly skips if raw/info missing."""
+    try:
+        raw = getattr(context, "raw", None)
+        if raw is None or not isinstance(raw, mne.io.BaseRaw):
+            return
+        sample = int(round((t_ms / 1000.0) * raw.info["sfreq"]))
+        if sample < 0 or sample >= raw.n_times:
+            return
+        data = raw.get_data(picks="eeg")[:, sample]
+        fig, ax = plt.subplots(figsize=(8, 8), dpi=200)
+        ax.set_axis_off()
+        im, _ = mne.viz.plot_topomap(
+            data,
+            raw.info,
+            axes=ax,
+            show=False,
+            contours=6,
+            cmap="RdBu_r",
+            outlines="head",
+            sphere=(0.0, -0.01, 0.0, 0.105),
+            extrapolate="head",
+        )
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label("Amplitude (µV)", fontsize=12)
+        fig.suptitle(f"ABR Topomap @ {t_ms:.1f} ms", fontsize=14)
+        fig.tight_layout()
+    except Exception:
+        return

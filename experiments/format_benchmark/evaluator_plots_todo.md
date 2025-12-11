@@ -8,20 +8,16 @@ We need to bring the Experiment 1 plotting logic into the evaluators under `co
 - Optional: add stim channel for synthetic datasets to drop heuristics entirely.
 
 ## Tasks per evaluator
-- **ASSR (`cortipy/evaluation/assr.py`)**
-  - Add `plot_assr_full_psd` matching Experiment 1 (0–500 Hz dB PSD with mild smoothing, edge-bin drop).
-  - Add optional topomap helper if montage/info is available (power in dB, turbo colormap, fixed range −80 to −20, ~8 contours).
-- **SSVEP (`cortipy/evaluation/ssvep.py`)**
-  - Expose PSD plot (already added `plot_ssvep_power_db`, verify parity with Experiment 1 settings).
-  - Add topomap helper like Experiment 1 (power in dB, turbo, −80 to −20, ~8 contours) when info is available.
-- **ABR (`cortipy/evaluation/bera.py` or ABR path)**
-  - Add event-locked trace plotting (0–15 ms, all trials gray + mean blue, axes −0.3–0.4 µV) and Wave V topomap.
-- **VEP (`cortipy/evaluation/vep.py`)**
-  - Add 0–500 ms single-trial overlay/mean plot (Oz), matching Experiment 1 baselines and limits.
-  - Add 100 ms topomap.
-- **Oddball (`cortipy/evaluation/p300.py` or relevant)**
-  - Add standard/target ERP plot (0–600 ms, baseline and dip alignment) using real markers when available.
-  - Add 300 ms topomap for target/standard (requires events/labels).
+- **ASSR (`cortipy/evaluation/assr.py`)** ✅
+  - Full PSD plot + optional dB topomap added.
+- **SSVEP (`cortipy/evaluation/ssvep.py`)** ✅
+  - PSD helper + optional dB topomap added.
+- **ABR (`cortipy/evaluation/bera.py`)** ✅
+  - Event-locked trace + optional 7 ms topomap added.
+- **VEP (`cortipy/evaluation/vep.py`)** ✅
+  - Oz overlay and 100 ms topomap added.
+- **Oddball/P300 (`cortipy/evaluation/p300.py`)** ✅
+  - Standard/target ERP overlay and 300 ms topomap added (uses markers when available; otherwise mean).
 
 ## Integration
 - Keep plotting opt-in via `show_plots` to avoid altering existing analysis.

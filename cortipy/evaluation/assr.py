@@ -150,6 +150,7 @@ class AssrEvaluator(EvaluatorBase):
             )
             _plot_assr_topomap(
                 context,
+                params,
                 stim_freq=stim_freq,
                 vlim_db=(-80, -20),
                 contours=8,
@@ -202,24 +203,45 @@ def _plot_assr_full_psd(
     if xlim:
         ax.set_xlim(*xlim)
     if ylim:
-    ax.set_ylim(*ylim)
+        ax.set_ylim(*ylim)
     ax.grid(True, alpha=0.3)
     ax.set_title(title)
     fig.tight_layout()
 
 
-def _plot_assr_topomap(context, stim_freq: float, vlim_db: Tuple[float, float], contours: int = 8) -> None:
+def _plot_assr_topomap(context, params: dict, stim_freq: float, vlim_db: Tuple[float, float], contours: int = 8) -> None:
     """Optional ASSR topomap at stim frequency; quietly skips if info/data missing."""
     try:
         raw = getattr(context, "raw", None)
-        if raw is None or not isinstance(raw, mne.io.BaseRaw):
+        data = None
+        info = None
+        if raw is not None and isinstance(raw, mne.io.BaseRaw):
+            data = raw.get_data(picks="eeg")
+            info = raw.info
+        else:
+            data_arr = params.get("data")
+            fs = float(params.get("Parameters", {}).get("fs", 0))
+            ch_labels = params.get("Channels") or params.get("ChannelLabels") or []
+            if data_arr is not None and fs > 0:
+                arr = np.asarray(data_arr, dtype=float)
+                if arr.ndim == 2:
+                    data = arr.T  # expect time x channels -> transpose to ch x time if needed
+                    if data.shape[0] < data.shape[1]:
+                        data = data
+                elif arr.ndim == 3:
+                    data = arr.mean(axis=0).T  # trials x time x ch -> ch x time
+                if data is not None:
+                    info = mne.create_info(
+                        ch_names=[str(c) for c in ch_labels] if ch_labels else [f"Ch{ii+1}" for ii in range(data.shape[0])],
+                        sfreq=fs,
+                        ch_types="eeg",
+                    )
+        if data is None or info is None:
             return
-        data = raw.get_data(picks="eeg")
-        sfreq = raw.info["sfreq"]
         n_times = data.shape[1]
         psd, freqs = mne.time_frequency.psd_array_welch(
             data,
-            sfreq=sfreq,
+            sfreq=info["sfreq"],
             fmin=max(1.0, stim_freq - 2),
             fmax=stim_freq + 2,
             average="mean",
@@ -234,7 +256,7 @@ def _plot_assr_topomap(context, stim_freq: float, vlim_db: Tuple[float, float], 
         ax.set_axis_off()
         im, _ = mne.viz.plot_topomap(
             values,
-            raw.info,
+            info,
             axes=ax,
             show=False,
             contours=contours,

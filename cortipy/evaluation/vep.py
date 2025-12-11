@@ -135,6 +135,8 @@ class VepEvaluator(EvaluatorBase):
             plot_vep(average_signals, params, peak_stats)
             plot_vep_matrix(evaluation, param_block.get("ReferenceChannel", 1), params.get("Channels"), average_signals)
             _plot_vep_all_channels(average_signals, evaluation["average_signals"]["time"], params, peak_stats)
+            _plot_vep_trace_overlay(segments, fs, params)
+            _plot_vep_topomap(context, params, t_ms=100.0)
             if not _is_streamlit_runtime():
                 try:
                     fig_nums = plt.get_fignums()
@@ -584,3 +586,88 @@ def _plot_vep_all_channels(avg_signal: np.ndarray, time_ms: np.ndarray, params: 
     ax.legend(loc="upper right")
     fig.tight_layout()
     _show_mpl(fig, "vep_all_channels")
+
+
+def _plot_vep_trace_overlay(segments: np.ndarray, fs: float, params: dict) -> None:
+    """Plot VEP single trials + mean (Experiment 1 style)."""
+    try:
+        # segments shape: (n_trials, n_times, n_channels)
+        if segments.ndim != 3:
+            return
+        times_ms = np.arange(segments.shape[1]) / fs * 1000.0
+        ch_labels = params.get("Channels") or params.get("ChannelLabels") or []
+        if ch_labels and "Oz" in ch_labels:
+            idx = ch_labels.index("Oz")
+        else:
+            idx = 0
+        data = segments[:, :, idx]
+        # Baseline first 50 ms
+        b_len = np.searchsorted(times_ms, 50.0)
+        if b_len > 0:
+            data = data - data[:, :b_len].mean(axis=1, keepdims=True)
+        mean_wave = data.mean(axis=0)
+        fig, ax = plt.subplots(figsize=(10, 4))
+        ax.plot(times_ms, data.T, color="gray", alpha=0.15, linewidth=0.6)
+        ax.plot(times_ms, mean_wave, color="blue", linewidth=1.5, label="Mean")
+        ax.set_xlabel("Time (ms)")
+        ax.set_ylabel("Amplitude (uV)")
+        ax.set_title("VEP trace (Oz)")
+        ax.set_xlim(0, 500)
+        ax.set_ylim(-0.6, 0.7)
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        fig.tight_layout()
+        _show_mpl(fig, "vep_trace_overlay")
+    except Exception:
+        return
+
+
+def _plot_vep_topomap(context, params: dict, t_ms: float = 100.0) -> None:
+    """Optional VEP topomap at given latency; skips if raw/info missing."""
+    try:
+        raw = getattr(context, "raw", None)
+        data = None
+        info = None
+        if raw is not None and isinstance(raw, mne.io.BaseRaw):
+            data = raw.get_data(picks="eeg")
+            info = raw.info
+        else:
+            eval_avg = params.get("Evaluation", {}).get("average_signals", {}).get("voltage")
+            fs = float(params.get("Parameters", {}).get("fs", 0))
+            ch_labels = params.get("Channels") or params.get("ChannelLabels") or []
+            if eval_avg is not None and fs > 0:
+                arr = np.asarray(eval_avg, dtype=float)
+                if arr.ndim == 2:
+                    data = arr.T  # samples x ch -> ch x samples
+                if data is not None:
+                    info = mne.create_info(
+                        ch_names=[str(c) for c in ch_labels] if ch_labels else [f"Ch{ii+1}" for ii in range(data.shape[0])],
+                        sfreq=fs,
+                        ch_types="eeg",
+                    )
+        if data is None or info is None:
+            return
+        sample = int(round((t_ms / 1000.0) * info["sfreq"]))
+        if sample < 0 or sample >= data.shape[1]:
+            return
+        topo_vals = data[:, sample]
+        fig, ax = plt.subplots(figsize=(8, 8), dpi=200)
+        ax.set_axis_off()
+        im, _ = mne.viz.plot_topomap(
+            topo_vals,
+            info,
+            axes=ax,
+            show=False,
+            contours=6,
+            cmap="RdBu_r",
+            outlines="head",
+            sphere=(0.0, -0.01, 0.0, 0.105),
+            extrapolate="head",
+        )
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        cbar.set_label("Amplitude (uV)", fontsize=12)
+        fig.suptitle(f"VEP Topomap @ {t_ms:.0f} ms", fontsize=14)
+        fig.tight_layout()
+        _show_mpl(fig, "vep_topomap")
+    except Exception:
+        return
