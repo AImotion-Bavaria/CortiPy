@@ -240,6 +240,7 @@ def run(
         _plot_efficiency_bars(results, out_root)
         _plot_synth_multistrip(results, out_root)
         _plot_rw_throughput(results, out_root)
+        _plot_extension_box(results, out_root)
         return
 
     containers = [c.lower() for c in containers]
@@ -510,6 +511,7 @@ def run(
     _plot_efficiency_bars(results, out_root)
     _plot_synth_multistrip(results, out_root)
     _plot_rw_throughput(results, out_root)
+    _plot_extension_box(results, out_root)
 
 
 def _plot_metrics(results: List[Dict[str, Any]], out_root: Path) -> None:
@@ -1153,6 +1155,39 @@ def _plot_rw_throughput(results: List[Dict[str, Any]], out_root: Path) -> None:
     plt.legend()
     plt.tight_layout()
     out_file = out_root / f"throughput_rw{suffix}.png"
+    plt.savefig(out_file, dpi=150)
+    plt.savefig(out_file.with_suffix(".pdf"))
+    plt.close()
+    print(f"Wrote plot: {out_file}")
+
+
+def _plot_extension_box(results: List[Dict[str, Any]], out_root: Path) -> None:
+    """Box plot of throughput by file extension (collapsed across BIDS/SBIDS)."""
+    entries = [
+        r
+        for r in results
+        if r.get("container") in {"bids", "sbids"}
+        and isinstance(r.get("read_throughput"), (int, float))
+    ]
+    if not entries:
+        return
+    buckets: Dict[str, List[float]] = {}
+    for r in entries:
+        fmt = r.get("format")
+        if not fmt:
+            continue
+        buckets.setdefault(fmt, []).append(r["read_throughput"] / (1024 * 1024))
+    if not buckets:
+        return
+    labels = list(buckets.keys())
+    data = [buckets[k] for k in labels]
+
+    plt.figure(figsize=(max(6, len(labels) * 1.2), 5))
+    plt.boxplot(data, tick_labels=labels, showfliers=False)
+    plt.ylabel("Read throughput (MB/s)")
+    plt.title("Experiment 2 – Read throughput by extension")
+    plt.tight_layout()
+    out_file = out_root / "extension_throughput_box.png"
     plt.savefig(out_file, dpi=150)
     plt.savefig(out_file.with_suffix(".pdf"))
     plt.close()

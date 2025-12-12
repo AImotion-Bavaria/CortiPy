@@ -894,6 +894,68 @@ def _plot_read_write_boxpairs(results: List[Dict[str, Any]], out_root: Path) -> 
         print(f"Wrote plot: {out_file}")
 
 
+def _plot_subset_read_box_bar(results: List[Dict[str, Any]], out_root: Path) -> None:
+    """Custom comparison for Exp 3: SBIDS+parquet, SBIDS+edf, BIDS+edf read latency (single channel full)."""
+    entries = _stream_entries(results)
+    if not entries:
+        return
+    combos = [("sbids", "parquet"), ("sbids", "edf"), ("bids", "edf")]
+    labels = [f"{c.upper()}+{f}" for c, f in combos]
+    data = []
+    means = []
+    valid_labels = []
+    for container, fmt in combos:
+        vals: list[float] = []
+        mean_val = None
+        for e in entries:
+            if e.get("container") == container and e.get("format") == fmt:
+                vals = _get_metric_values(e, "single_channel_full", "times")
+                mean_val = _get_metric_mean(e, "single_channel_full")
+                break
+        if vals:
+            data.append(vals)
+            means.append(mean_val if mean_val is not None else float(np.mean(vals)))
+            valid_labels.append(f"{container.upper()}+{fmt}")
+    if not data:
+        return
+    # Boxplot
+    plt.figure(figsize=(6, 4))
+    plt.boxplot(data, tick_labels=valid_labels, showfliers=False)
+    plt.ylabel("Read latency (s)")
+    plt.title("Streaming latency – full single channel")
+    plt.tight_layout()
+    out_box = out_root / "stream_subset_box_single_channel_full.png"
+    plt.savefig(out_box, dpi=150)
+    plt.savefig(out_box.with_suffix(".pdf"))
+    plt.close()
+    print(f"Wrote plot: {out_box}")
+    # Bar plot of means
+    plt.figure(figsize=(6, 4))
+    plt.bar(range(len(valid_labels)), means, color="steelblue", alpha=0.85)
+    plt.xticks(range(len(valid_labels)), valid_labels, rotation=20)
+    plt.ylabel("Read latency (s)")
+    plt.title("Streaming latency – full single channel (means)")
+    plt.tight_layout()
+    out_bar = out_root / "stream_subset_bar_single_channel_full.png"
+    plt.savefig(out_bar, dpi=150)
+    plt.savefig(out_bar.with_suffix(".pdf"))
+    plt.close()
+    print(f"Wrote plot: {out_bar}")
+
+
+def _emit_plots(results: List[Dict[str, Any]], out_root: Path) -> None:
+    out_root.mkdir(parents=True, exist_ok=True)
+    _plot_stream_latency_bars(results, out_root)
+    _plot_stream_latency_boxplots(results, out_root)
+    _plot_stream_throughput_bars(results, out_root)
+    _plot_stream_differences(results, out_root)
+    _plot_stream_resource_boxplots(results, out_root)
+    _plot_export_latency_boxplots(results, out_root)
+    _plot_read_write_pairs(results, out_root)
+    _plot_read_write_boxpairs(results, out_root)
+    _plot_subset_read_box_bar(results, out_root)
+
+
 def run(
     *,
     containers: Sequence[str] = ALLOWED_CONTAINERS,
@@ -1048,14 +1110,7 @@ def run(
     out_path = out_root / "experiment3_results.json"
     out_path.write_text(json.dumps(results, indent=2, default=_json_default))
     print(f"Wrote streaming benchmark results to {out_path}")
-    _plot_stream_latency_bars(results, out_root)
-    _plot_stream_latency_boxplots(results, out_root)
-    _plot_stream_throughput_bars(results, out_root)
-    _plot_stream_differences(results, out_root)
-    _plot_stream_resource_boxplots(results, out_root)
-    _plot_export_latency_boxplots(results, out_root)
-    _plot_read_write_pairs(results, out_root)
-    _plot_read_write_boxpairs(results, out_root)
+    _emit_plots(results, out_root)
 
 
 if __name__ == "__main__":
@@ -1106,17 +1161,41 @@ if __name__ == "__main__":
         default=0,
         help="Channel index to probe for single-channel benchmarks (0-based).",
     )
-    args = parser.parse_args()
-    containers = [c.strip() for c in args.containers.split(",") if c.strip()]
-    formats = [f.strip() for f in args.formats.split(",") if f.strip()]
-    datasets = [d.strip() for d in args.datasets.split(",") if d.strip()]
-    run(
-        containers=containers,
-        formats=formats,
-        datasets=datasets,
-        runs_override=args.runs,
-        keep_artifacts=args.keep_artifacts,
-        purge_outputs=not args.no_purge,
-        window_s=args.window_s,
-        channel_idx=args.channel_idx,
+    parser.add_argument(
+        "--results-json",
+        type=str,
+        default=None,
+        help="Path to an existing experiment3_results.json to plot without rerunning benchmarks.",
     )
+    parser.add_argument(
+        "--plots-only",
+        action="store_true",
+        help="Skip benchmarking and only emit plots from an existing results JSON (default location if not provided).",
+    )
+    args = parser.parse_args()
+    # Reuse existing results without rerunning benchmarks
+    if args.results_json or args.plots_only:
+        if args.results_json:
+            res_path = Path(args.results_json).expanduser().resolve()
+        else:
+            res_path = Path(__file__).resolve().parent / "results_exp3" / "experiment3_results.json"
+        if not res_path.exists():
+            raise FileNotFoundError(f"results JSON not found at {res_path}. Provide --results-json or rerun experiment.")
+        results_loaded = json.loads(res_path.read_text())
+        out_dir = res_path.parent
+        print(f"[PLOTS ONLY] Using existing results from {res_path}")
+        _emit_plots(results_loaded, out_dir)
+    else:
+        containers = [c.strip() for c in args.containers.split(",") if c.strip()]
+        formats = [f.strip() for f in args.formats.split(",") if f.strip()]
+        datasets = [d.strip() for d in args.datasets.split(",") if d.strip()]
+        run(
+            containers=containers,
+            formats=formats,
+            datasets=datasets,
+            runs_override=args.runs,
+            keep_artifacts=args.keep_artifacts,
+            purge_outputs=not args.no_purge,
+            window_s=args.window_s,
+            channel_idx=args.channel_idx,
+        )
