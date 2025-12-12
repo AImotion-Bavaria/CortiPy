@@ -11,6 +11,8 @@ dependencies:
   - pyserial==3.5
   - pylsl>=1.17.6
   - tomli>=2.0.1
+  - jsonschema>=4.22.0       # SBIDS validation
+  - pyld>=2.0.4              # SBIDS JSON-LD support
   - pyedflib>=0.1.36        # BIDS EDF/BDF export
   - pyarrow>=10             # Parquet BIDS files
   - h5py>=3.9               # HDF5 BIDS files
@@ -19,5 +21,4 @@ dependencies:
   - plotly>=5.24            # optional UI
   - pip
   - pip:
-      - .
-      - streamlit-plotly-events>=0.0.6
+      - ".[ui,bids,sbids]"

@@ -1,0 +1,23 @@
+cff-version: 1.2.0
+message: "If you use CortiPy in research or clinical evaluation, please cite this project."
+title: "CortiPy: Python EEG acquisition and analysis toolkit"
+version: "0.1.0"
+authors:
+  - family-names: "CortiPy"
+    given-names: "Developers"
+    affiliation: "CortiPy Project"
+keywords:
+  - EEG
+  - BCI
+  - neurophysiology
+  - bioinformatics
+  - medical-informatics
+license: "Apache-2.0"
+repository-code: "https://github.com/CortiPy/CortiPy"
+contact:
+  - email: "joh1391@thi.de"
+    name: "CortiPy Maintainers (J. Heinzmann)"
+  - email: "Rahul.Mondal@thi.de"
+    name: "CortiPy Maintainers (R. Mondal)"
+  - email: "Laurens.Kreilinger@thi.de"
+    name: "CortiPy Maintainers (L. Kreilinger)"

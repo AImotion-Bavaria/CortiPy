@@ -3013,6 +3013,15 @@ div[data-testid="stExpander"] > details > div[role="group"] {
         unsafe_allow_html=True,
     )
     st.title("cortipy – EEG Measurement UI")
+    st.warning(
+        "Research use only: CortiPy is not a medical device and must not be used for diagnosis or patient care. "
+        "Validate latency/trigger behavior and device compatibility in your lab before clinical evaluation."
+    )
+    st.info(
+        "Protect privacy: avoid uploading or storing identifiable participant data. "
+        "Keep run folders on secured systems and use anonymized or synthetic data when sharing. "
+        "Contacts: joh1391@thi.de, Rahul.Mondal@thi.de, Laurens.Kreilinger@thi.de."
+    )
     ensure_state()
 
     sidebar = st.sidebar

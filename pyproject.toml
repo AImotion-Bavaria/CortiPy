@@ -8,7 +8,7 @@ description = "Python EEG acquisition and analysis toolkit"
 readme = "README.md"
 requires-python = ">=3.9"
 authors = [{ name = "CortiPy developers" }]
-license = { text = "Proprietary" }
+license = { text = "Apache-2.0" }
 classifiers = [
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
@@ -19,6 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Intended Audience :: Science/Research",
     "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "License :: OSI Approved :: Apache Software License",
 ]
 dependencies = [
     "numpy==1.26.4",
@@ -32,12 +33,20 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ui = ["streamlit>=1.26"]
+ui = [
+    "streamlit>=1.26",
+    "plotly>=5.24",
+    "streamlit-plotly-events>=0.0.6",
+]
 bids = [
     "pyedflib>=0.1.36",
     "pyarrow>=10",
     "h5py>=3.9",
     "zarr>=2.15",
+]
+sbids = [
+    "jsonschema>=4.22.0",
+    "pyld>=2.0.4",
 ]
 dynamic = ["version"]
 

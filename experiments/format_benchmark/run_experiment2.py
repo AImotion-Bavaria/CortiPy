@@ -209,6 +209,8 @@ def run(
     keep_artifacts: bool = False,
     purge_outputs: bool = True,
     plot_scope: str = "all",
+    plots_only: bool = False,
+    results_path: str | Path | None = None,
 ) -> None:
     # Avoid HDF5 file locking issues on shared filesystems.
     os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
@@ -218,6 +220,27 @@ def run(
 
     out_root = Path(__file__).resolve().parent / "results_exp2"
     out_root.mkdir(parents=True, exist_ok=True)
+    res_path = Path(results_path) if results_path else out_root / "experiment2_results.json"
+
+    if plots_only:
+        if not res_path.exists():
+            raise FileNotFoundError(f"Results JSON not found: {res_path}")
+        results = json.loads(res_path.read_text())
+        filtered_results = _filter_by_scope(results, plot_scope)
+        _plot_metrics(filtered_results, out_root)
+        _plot_latency_boxplots(filtered_results, out_root)
+        _plot_differences(filtered_results, out_root)
+        _plot_latency_pairs(filtered_results, out_root)
+        _plot_size_trend(filtered_results, out_root)
+        _plot_latency_size_trend(results, out_root)
+        _plot_synth_breakdowns(results, out_root)
+        _plot_speedup_heatmap(results, out_root)
+        _plot_resource_correlation(results, out_root)
+        _plot_failure_summary(results, out_root)
+        _plot_efficiency_bars(results, out_root)
+        _plot_synth_multistrip(results, out_root)
+        _plot_rw_throughput(results, out_root)
+        return
 
     containers = [c.lower() for c in containers]
     formats = [f.lower() for f in formats]
@@ -469,7 +492,7 @@ def run(
             1.0 - (size / base) if base and base and size is not None and size > 0 else None
         )
 
-    out_path = out_root / "experiment2_results.json"
+    out_path = res_path
     out_path.write_text(json.dumps(results, indent=2, default=_json_default))
     print(f"Wrote results to {out_path}")
 
@@ -625,6 +648,32 @@ def _plot_latency_boxplots(results: List[Dict[str, Any]], out_root: Path) -> Non
         ("read_times", lambda r: r.get("read_times"), "Read latency (s)", "latency_box_read.png", 1.0),
         ("write_times_total", lambda r: [sum(r.get("write_times", []))] if r.get("write_times") else None, "Write total (s)", "latency_box_write_total.png", 1.0),
         ("read_times_total", lambda r: [sum(r.get("read_times", []))] if r.get("read_times") else None, "Read total (s)", "latency_box_read_total.png", 1.0),
+        (
+            "write_thr_runs_mb",
+            lambda r: [
+                (r.get("size_bytes") / t) / (1024 * 1024)
+                for t in r.get("write_times", [])
+                if t and r.get("size_bytes")
+            ]
+            if r.get("write_times")
+            else None,
+            "Write throughput (MB/s)",
+            "latency_box_write_thr_mb.png",
+            1.0,
+        ),
+        (
+            "read_thr_runs_mb",
+            lambda r: [
+                (r.get("size_bytes") / t) / (1024 * 1024)
+                for t in r.get("read_times", [])
+                if t and r.get("size_bytes")
+            ]
+            if r.get("read_times")
+            else None,
+            "Read throughput (MB/s)",
+            "latency_box_read_thr_mb.png",
+            1.0,
+        ),
         (
             "write_thr_mb",
             lambda r: [(r.get("size_bytes") / t) / (1024 * 1024) for t in r.get("write_times", []) if t and r.get("size_bytes")]
@@ -1208,6 +1257,17 @@ if __name__ == "__main__":
         default=None,
         help="Override run count per dataset (default uses dataset config / RUNS).",
     )
+    parser.add_argument(
+        "--plots-only",
+        action="store_true",
+        help="Skip running conversions; just read results JSON and regenerate plots.",
+    )
+    parser.add_argument(
+        "--results-json",
+        type=str,
+        default=None,
+        help="Path to experiment2_results.json to use when plots-only.",
+    )
     args = parser.parse_args()
     containers = [c.strip() for c in args.containers.split(",") if c.strip()]
     formats = [f.strip() for f in args.formats.split(",") if f.strip()]
@@ -1220,4 +1280,6 @@ if __name__ == "__main__":
         keep_artifacts=args.keep_artifacts,
         purge_outputs=not args.no_purge,
         plot_scope=args.plot_scope,
+        plots_only=args.plots_only,
+        results_path=args.results_json,
     )
