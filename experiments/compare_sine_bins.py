@@ -21,6 +21,31 @@ def load_axis_data(bin_path: Path, split: str = "interleaved"):
     return raw[:half], raw[half:]
 
 
+def summarize(name: str, axis_ref, data_ref, axis_new, data_new):
+    l = min(len(data_ref), len(data_new))
+    data_ref_c = data_ref[:l]
+    data_new_c = data_new[:l]
+    diff = data_new_c - data_ref_c
+
+    def stats(label, arr):
+        return f"{label}: min={arr.min():.6g}, max={arr.max():.6g}, mean={arr.mean():.6g}, std={arr.std():.6g}"
+
+    print(f"\n== {name} ==")
+    print(stats("EEGLAB data", data_ref_c))
+    print(stats("CortiPy data", data_new_c))
+    print(stats("Diff (new-ref)", diff))
+    # relative scale at peak absolute of reference
+    ref_peak_idx = np.argmax(np.abs(data_ref_c))
+    ref_peak = data_ref_c[ref_peak_idx]
+    new_at_peak = data_new_c[ref_peak_idx]
+    ratio = new_at_peak / ref_peak if ref_peak != 0 else np.nan
+    print(f"Ratio at ref peak idx {ref_peak_idx}: new/ref = {ratio:.6g}")
+    # axis sanity
+    ax_len = min(len(axis_ref), len(axis_new))
+    ax_diff = np.abs(axis_ref[:ax_len] - axis_new[:ax_len])
+    print(f"Axis diff: max={ax_diff.max():.6g}, mean={ax_diff.mean():.6g}")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -53,12 +78,19 @@ def main():
         default="interleaved",
         help="Axis/data split mode (default: interleaved t0,a0,...).",
     )
+    parser.add_argument("--no-plot", action="store_true", help="Only print statistics, do not show plots.")
     args = parser.parse_args()
 
     t_eeg, erp_eeg = load_axis_data(args.eeglab_erp, split=args.split)
     f_eeg, psd_eeg = load_axis_data(args.eeglab_psd, split=args.split)
     t_new, erp_new = load_axis_data(args.new_erp, split=args.split)
     f_new, psd_new = load_axis_data(args.new_psd, split=args.split)
+
+    summarize("ERP", t_eeg, erp_eeg, t_new, erp_new)
+    summarize("PSD (dB)", f_eeg, psd_eeg, f_new, psd_new)
+
+    if args.no_plot:
+        return
 
     fig, axes = plt.subplots(2, 2, figsize=(12, 6), sharex="col")
 

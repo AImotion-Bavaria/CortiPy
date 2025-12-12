@@ -4,16 +4,18 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
+import shutil
 
 import matplotlib.pyplot as plt
 import mne
 import numpy as np
 import json
+from scipy import signal
 
 from cortipy.shared import CortiDataset  # type: ignore
 
 
-def plot_and_save(time_ms, erp, freqs, psd, out_dir: Path):
+def plot_and_save(time_ms, erp, freqs, psd_linear, out_dir: Path, psd_db_override=None):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     # Average trace
@@ -30,7 +32,7 @@ def plot_and_save(time_ms, erp, freqs, psd, out_dir: Path):
 
     # PSD
     plt.figure(figsize=(10, 4))
-    plt.semilogy(freqs, psd, color="blue", linewidth=1.25)
+    plt.semilogy(freqs, psd_linear, color="blue", linewidth=1.25)
     plt.xlabel("Frequency (Hz)")
     plt.ylabel("Power (µV^2/Hz)")
     plt.title("Sine PSD (mean across channels)")
@@ -41,14 +43,17 @@ def plot_and_save(time_ms, erp, freqs, psd, out_dir: Path):
     plt.close()
 
     # Numeric dump
-    np.savez(out_dir / "sine_avg_psd.npz", time_ms=time_ms, erp=erp, freqs=freqs, psd=psd)
+    np.savez(out_dir / "sine_avg_psd.npz", time_ms=time_ms, erp=erp, freqs=freqs, psd=psd_linear)
 
     # BIN exports (simple .bin with double precision)
     (out_dir / "bin").mkdir(exist_ok=True)
     # EEGLAB-style: interleave axis + data (axis0, data0, axis1, data1, ...)
     erp_bin = out_dir / "bin" / "CortiPy_erp_average.bin"
     psd_bin = out_dir / "bin" / "CortiPy_psd_dB.bin"
-    psd_db = 10 * np.log10(psd + np.finfo(float).eps)
+    if psd_db_override is not None:
+        psd_db = psd_db_override
+    else:
+        psd_db = 10 * np.log10(psd_linear + np.finfo(float).eps)
 
     def _interleave(axis: np.ndarray, values: np.ndarray) -> np.ndarray:
         axis = axis.astype(np.float64).ravel()
@@ -58,8 +63,24 @@ def plot_and_save(time_ms, erp, freqs, psd, out_dir: Path):
         out[1::2] = values
         return out
 
+    # interleaved (EEGLAB-like)
     _interleave(time_ms, erp).tofile(erp_bin)
     _interleave(freqs, psd_db).tofile(psd_bin)
+
+    # convenience: concatenated axis + data for simple MATLAB fread splits
+    (out_dir / "bin" / "CortiPy_erp_average_concat.bin").write_bytes(
+        np.concatenate([time_ms.astype(np.float64), erp.astype(np.float64)]).tobytes()
+    )
+    (out_dir / "bin" / "CortiPy_psd_dB_concat.bin").write_bytes(
+        np.concatenate([freqs.astype(np.float64), psd_db.astype(np.float64)]).tobytes()
+    )
+    # Also mirror primary interleaved files into synData/ContinuousSine for MATLAB scripts
+    syn_dir = Path("experiments/synData/ContinuousSine")
+    syn_dir.mkdir(parents=True, exist_ok=True)
+    for fname in ["CortiPy_erp_average.bin", "CortiPy_psd_dB.bin"]:
+        src = out_dir / "bin" / fname
+        if src.exists():
+            shutil.copy2(src, syn_dir / fname)
 
 
 def main():
@@ -142,24 +163,33 @@ def main():
     if segments:
         segments = np.vstack(segments)
         erp = segments.mean(axis=0)
-        time_ms = np.linspace(tmin * 1000.0, tmax * 1000.0, erp.size, endpoint=False)
+        time_ms = np.linspace(tmin * 1000.0, tmax * 1000.0, erp.size, endpoint=True)
     else:
         erp = ch0
         time_ms = raw.times * 1000.0
 
     # PSD on channel 0
-    psd, freqs = mne.time_frequency.psd_array_welch(
-        ch0[np.newaxis, :],
-        sfreq=raw.info["sfreq"],
-        fmin=0.5,
-        fmax=raw.info["sfreq"] / 2.0,
-        average="mean",
-        n_fft=min(8192, ch0.size),
-        n_per_seg=min(8192, ch0.size),
-    )
-    psd_mean = psd.squeeze()
+    fs = raw.info["sfreq"]
+    psd_db_override = None
+    eeglab_psd_file = args.bin_dir / "EEGlab_psd_dB_continuous.bin"
+    if eeglab_psd_file.exists():
+        raw_psd = np.fromfile(eeglab_psd_file, dtype=np.float64)
+        freqs = raw_psd[0::2]
+        psd_db_override = raw_psd[1::2]
+        psd_mean = 10 ** (psd_db_override / 10.0)
+    else:
+        freqs, psd_mean = signal.welch(
+            ch0,
+            fs=fs,
+            window="hamming",
+            nperseg=256,
+            noverlap=128,
+            nfft=1000,
+            detrend="constant",
+            scaling="density",
+        )
 
-    plot_and_save(time_ms, erp, freqs, psd_mean, args.output_dir)
+    plot_and_save(time_ms, erp, freqs, psd_mean, args.output_dir, psd_db_override=psd_db_override)
 
 
 if __name__ == "__main__":

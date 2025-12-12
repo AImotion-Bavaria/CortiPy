@@ -1,7 +1,8 @@
 """Experiment 2 – File Format Storage & Latency Benchmark.
 
 Loads optionally generated synthetic variations, exports to BIDS or SBIDS in a single chosen container/format,
-and measures size + read/write latency (mean/std over runs). Synthetic datasets can
+and measures size + read/write latency (mean/std over runs). Select datasets via --datasets.
+Synthetic datasets can
 be generated one at a time to conserve disk space; pass --keep-artifacts to retain
 exports. Run with no arguments (defaults to BIDS EDF):
 `PYTHONPATH=. python experiments/format_benchmark/run_experiment2.py`
@@ -72,7 +73,15 @@ ALLOWED_CONTAINERS = ("bids", "sbids")
 
 
 def _size_bytes(path: Path) -> int:
-    return path.stat().st_size if path.exists() else 0
+    if not path.exists():
+        return 0
+    if path.is_dir():
+        total = 0
+        for p in path.rglob("*"):
+            if p.is_file():
+                total += p.stat().st_size
+        return total
+    return path.stat().st_size
 
 
 def _mean_std(samples: List[float]) -> tuple[float, float]:
@@ -156,7 +165,26 @@ def _sanitize_task_name(name: str) -> str:
     return "".join(ch for ch in name.lower() if ch.isalnum())
 
 
-def _load_dataset(cfg: dict[str, Any]) -> Tuple[CortiDataset, Dict[str, Any], int, str]:
+def _find_sbids_raw(sbids_dir: Path, fmt: str, stem: str) -> Path | None:
+    raw_dir = sbids_dir / "raw_data"
+    if not raw_dir.exists():
+        return None
+    ext_map = {"parquet": "parquet", "edf": "edf", "hdf5": "hdf5", "zarr": "zarr"}
+    ext = ext_map.get(fmt, fmt)
+    if ext == "zarr":
+        candidates = list(raw_dir.glob("*.zarr"))
+    else:
+        candidates = list(raw_dir.glob(f"*.{ext}"))
+    if not candidates:
+        return None
+    # Prefer matching stem if present
+    for c in candidates:
+        if stem in c.stem:
+            return c
+    return candidates[0]
+
+
+def _load_dataset(cfg: dict[str, Any], default_runs: int) -> Tuple[CortiDataset, Dict[str, Any], int, str]:
     label = cfg["label"]
     ds = CortiDataset.from_synthetic(
         sampling_rate=float(cfg["sampling_rate"]),
@@ -167,7 +195,7 @@ def _load_dataset(cfg: dict[str, Any]) -> Tuple[CortiDataset, Dict[str, Any], in
         dtype=cfg.get("dtype"),
     )
     stats = _dataset_stats(ds, dataset_kind="synthetic", source=Path(f"{label}_synthetic"))
-    runs = int(cfg.get("runs", RUNS))
+    runs = int(cfg.get("runs", default_runs))
     task = _sanitize_task_name(cfg.get("task", label))
     return ds, stats, runs, task
 
@@ -176,6 +204,8 @@ def run(
     *,
     containers: Sequence[str] = ALLOWED_CONTAINERS,
     formats: Sequence[str] = ALLOWED_FORMATS,
+    datasets: Sequence[str] | None = None,
+    runs_override: int | None = None,
     keep_artifacts: bool = False,
     purge_outputs: bool = True,
     plot_scope: str = "all",
@@ -200,12 +230,18 @@ def run(
     if plot_scope not in {"all", "synthetic", "bin"}:
         raise ValueError("plot_scope must be one of: all, synthetic, bin")
 
+    default_runs = runs_override if runs_override is not None else RUNS
+    selected = DATASETS if datasets is None else [cfg for cfg in DATASETS if cfg["label"] in datasets]
+    missing = set(datasets or []) - {cfg["label"] for cfg in DATASETS}
+    if missing:
+        print(f"[WARN] Unknown dataset labels requested: {', '.join(sorted(missing))}")
+
     results: List[Dict[str, Any]] = []
     edf_baseline: dict[str, int] = {}
 
-    for cfg in DATASETS:
+    for cfg in selected:
         label = cfg["label"]
-        ds, stats, runs, task = _load_dataset(cfg)
+        ds, stats, runs, task = _load_dataset(cfg, default_runs=default_runs)
         print(f"Processing {label} ({stats['dataset_kind']})")
 
         dataset_dir = out_root / label
@@ -377,7 +413,8 @@ def run(
                             )
                             read_times = []
                             break
-                    size = _size_bytes(raw_path) if raw_path else 0
+                    raw_data_path = _find_sbids_raw(sbids_dir, fmt, Path(sbids_meta).stem)
+                    size = _size_bytes(raw_data_path) if raw_data_path else 0
                     write_thr = (size / sum(write_times)) if size and write_times and sum(write_times) > 0 else None
                     read_thr = (size / sum(read_times)) if size and read_times and sum(read_times) > 0 else None
                     res_sbids = {
@@ -449,6 +486,7 @@ def run(
     _plot_failure_summary(results, out_root)
     _plot_efficiency_bars(results, out_root)
     _plot_synth_multistrip(results, out_root)
+    _plot_rw_throughput(results, out_root)
 
 
 def _plot_metrics(results: List[Dict[str, Any]], out_root: Path) -> None:
@@ -1037,6 +1075,41 @@ def _plot_synth_multistrip(results: List[Dict[str, Any]], out_root: Path) -> Non
         print(f"Wrote plot: {out_file}")
 
 
+def _plot_rw_throughput(results: List[Dict[str, Any]], out_root: Path) -> None:
+    """Bars placing read vs write throughput side by side per dataset/container/format."""
+    entries = [
+        r
+        for r in results
+        if r.get("container") in {"bids", "sbids"}
+        and isinstance(r.get("write_throughput"), (int, float))
+        and isinstance(r.get("read_throughput"), (int, float))
+    ]
+    if not entries:
+        return
+    scope = results[0].get("_scope", "all") if results else "all"
+    suffix = f"_{scope}" if scope != "all" else ""
+
+    labels = [f"{r['dataset']}-{r['container']}-{r['format']}" for r in entries]
+    write_vals = [r["write_throughput"] / (1024 * 1024) for r in entries]
+    read_vals = [r["read_throughput"] / (1024 * 1024) for r in entries]
+    idx = np.arange(len(labels))
+    width = 0.35
+
+    plt.figure(figsize=(max(6, len(labels) * 0.7), 4))
+    plt.bar(idx - width / 2, write_vals, width, label="Write", color="steelblue")
+    plt.bar(idx + width / 2, read_vals, width, label="Read", color="orange")
+    plt.xticks(idx, labels, rotation=45, ha="right", fontsize=8)
+    plt.ylabel("Throughput (MB/s)")
+    plt.title("Read vs Write throughput")
+    plt.legend()
+    plt.tight_layout()
+    out_file = out_root / f"throughput_rw{suffix}.png"
+    plt.savefig(out_file, dpi=150)
+    plt.savefig(out_file.with_suffix(".pdf"))
+    plt.close()
+    print(f"Wrote plot: {out_file}")
+
+
 def _plot_latency_pairs(results: List[Dict[str, Any]], out_root: Path) -> None:
     """Side-by-side BIDS vs SBIDS bars per dataset/format for timing totals/means."""
     if not results:
@@ -1101,6 +1174,12 @@ if __name__ == "__main__":
         help="Keep per-dataset BIDS/SBIDS exports (synthetic datasets are deleted by default).",
     )
     parser.add_argument(
+        "--datasets",
+        type=str,
+        default=",".join(cfg["label"] for cfg in DATASETS),
+        help="Comma-separated dataset labels to run (default: all synthetic datasets).",
+    )
+    parser.add_argument(
         "--containers",
         type=str,
         default=",".join(ALLOWED_CONTAINERS),
@@ -1123,12 +1202,21 @@ if __name__ == "__main__":
         default="all",
         help="Which dataset kinds to include in plots (does not affect JSON).",
     )
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=None,
+        help="Override run count per dataset (default uses dataset config / RUNS).",
+    )
     args = parser.parse_args()
     containers = [c.strip() for c in args.containers.split(",") if c.strip()]
     formats = [f.strip() for f in args.formats.split(",") if f.strip()]
+    datasets = [d.strip() for d in args.datasets.split(",") if d.strip()]
     run(
         containers=containers,
         formats=formats,
+        datasets=datasets,
+        runs_override=args.runs,
         keep_artifacts=args.keep_artifacts,
         purge_outputs=not args.no_purge,
         plot_scope=args.plot_scope,

@@ -11,8 +11,8 @@ EEG_psd_file = fullfile(inFolder, 'EEGlab_psd_dB_continuous.bin');
 EEG_erp_file = fullfile(inFolder, 'EEGlab_erp_average.bin');
 
 % CortiPy files
-CP_psd_file  = fullfile(inFolder, 'Cortipy_psd_dB_continuous.bin');
-CP_erp_file  = fullfile(inFolder, 'Cortipy_erp_average.bin');
+CP_psd_file  = fullfile(inFolder, 'CortiPy_psd_dB.bin');
+CP_erp_file  = fullfile(inFolder, 'CortiPy_erp_average.bin');
 
 %% ------------------ Load EEGLAB PSD ------------------
 fid = fopen(EEG_psd_file,'r');
