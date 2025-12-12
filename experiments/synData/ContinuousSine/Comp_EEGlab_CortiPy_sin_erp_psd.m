@@ -47,47 +47,42 @@ time_CP = CP_erp(1,:);
 erp_CP  = CP_erp(2,:);
 
 %% ============================================================
-%                    CORRELATION
+%                    NUMERICAL SIMILARITY
 % ============================================================
 
-% Align lengths (in case CortiPy or EEGLAB padded differently)
-min_psd_len = min(length(psd_EEG_dB), length(psd_CP_dB));
-min_erp_len = min(length(erp_EEG),    length(erp_CP));
+% PSD similarity
+rmse_psd = sqrt(mean((psd_EEG_dB - psd_CP_dB).^2));
+mae_psd  = mean(abs(psd_EEG_dB - psd_CP_dB));
 
-% Crop
-psd_EEG_crop = psd_EEG_dB(1:min_psd_len);
-psd_CP_crop  = psd_CP_dB(1:min_psd_len);
+% ERP similarity
+rmse_erp = sqrt(mean((erp_EEG - erp_CP).^2));
+mae_erp  = mean(abs(erp_EEG - erp_CP));
 
-erp_EEG_crop = erp_EEG(1:min_erp_len);
-erp_CP_crop  = erp_CP(1:min_erp_len);
-
-% Pearson correlation
-corr_psd = corr(psd_EEG_crop(:), psd_CP_crop(:));
-corr_erp = corr(erp_EEG_crop(:), erp_CP_crop(:));
-
-fprintf('\n================ CORRELATION RESULTS ================\n');
-fprintf('PSD  correlation (EEGLAB vs CortiPy): %.4f\n', corr_psd);
-fprintf('ERP  correlation (EEGLAB vs CortiPy): %.4f\n', corr_erp);
-fprintf('=====================================================\n\n');
+fprintf('\n============== NUMERICAL SIMILARITY RESULTS =============\n');
+fprintf('PSD  RMSE (EEGLAB vs CortiPy): %.4f dB\n', rmse_psd);
+fprintf('PSD  MAE (EEGLAB vs CortiPy): %.4f dB\n', mae_psd);
+fprintf('ERP  RMSE (EEGLAB vs CortiPy): %.4f µV\n', rmse_erp);
+fprintf('ERP  MAE (EEGLAB vs CortiPy): %.4f µV\n', mae_erp);
+fprintf('==========================================================\n\n');
 
 %% ============================================================
-%                    PLOTTING
+%                     PLOTTING
 % ============================================================
 
 figure('Name','PSD Comparison','Position',[100 200 900 350]);
-plot(freqs_EEG(1:min_psd_len), psd_EEG_crop, 'b', 'LineWidth', 1.5); hold on;
-plot(freqs_CP(1:min_psd_len),  psd_CP_crop, 'r--', 'LineWidth', 1.5);
+plot(freqs_EEG, psd_EEG_dB, 'b', 'LineWidth', 1.5); hold on;
+plot(freqs_CP,  psd_CP_dB, 'r', 'LineWidth', 1.5);
 xlabel('Frequency (Hz)');
 ylabel('Power (dB)');
-title(sprintf('PSD Comparison (corr = %.3f)', corr_psd));
+title(sprintf('PSD Comparison (RMSE = %.3f dB, MAE = %.3f dB)', rmse_psd, mae_psd));
 legend('EEGLAB','CortiPy');
 grid on;
 
 figure('Name','ERP Comparison','Position',[100 600 900 350]);
-plot(time_EEG(1:min_erp_len), erp_EEG_crop, 'b', 'LineWidth', 1.5); hold on;
-plot(time_CP(1:min_erp_len), erp_CP_crop, 'r--', 'LineWidth', 1.5);
+plot(time_EEG, erp_EEG, 'b', 'LineWidth', 1.5); hold on;
+plot(time_CP, erp_CP, 'r', 'LineWidth', 1.5);
 xlabel('Time (ms)');
 ylabel('Amplitude (µV)');
-title(sprintf('ERP Comparison (corr = %.3f)', corr_erp));
+title(sprintf('ERP Comparison (RMSE = %.3f µV, MAE = %.3f µV)', rmse_erp, mae_erp));
 legend('EEGLAB','CortiPy');
 grid on;
