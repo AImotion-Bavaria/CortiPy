@@ -1,0 +1,2018 @@
+[
+  {
+    "dataset": "Synth19ch_250Hz_1h",
+    "container": "bids",
+    "format": "parquet",
+    "task": "synth19ch250hz1h",
+    "runs": 1,
+    "export_time": 0.5096166249999998,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 110454695,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.00027654199999993523
+        ],
+        "mean": 0.00027654199999993523,
+        "std": 0.0,
+        "total": 0.00027654199999993523,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.005650582999999987
+        ],
+        "mean": 0.005650582999999987,
+        "std": 0.0,
+        "total": 0.005650582999999987,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.005749250000000039
+        ],
+        "mean": 0.005749250000000039,
+        "std": 0.0,
+        "total": 0.005749250000000039,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.028264291999999802
+        ],
+        "mean": 0.028264291999999802,
+        "std": 0.0,
+        "total": 0.028264291999999802,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth19ch_250Hz_1h/bids/parquet/sub-01/eeg/sub-01_task-synth19ch250hz1h_eeg.parquet",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth19ch_250Hz_1h/bids/parquet/sub-01/eeg/sub-01_task-synth19ch250hz1h_eeg.json",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 19,
+    "sampling_rate": 250.0,
+    "duration_s": 3600.0,
+    "data_points": 17100000,
+    "approx_raw_bytes": 68400000,
+    "approx_raw_gb": 0.06370246410369873,
+    "bytes_per_sample": 4.0,
+    "source": "Synth19ch_250Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth19ch_250Hz_1h",
+    "container": "sbids",
+    "format": "parquet",
+    "task": "synth19ch250hz1h",
+    "runs": 1,
+    "export_time": 0.2966056250000002,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 80264825,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.0002411669999999866
+        ],
+        "mean": 0.0002411669999999866,
+        "std": 0.0,
+        "total": 0.0002411669999999866,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.0017136249999998299
+        ],
+        "mean": 0.0017136249999998299,
+        "std": 0.0,
+        "total": 0.0017136249999998299,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.001955000000000151
+        ],
+        "mean": 0.001955000000000151,
+        "std": 0.0,
+        "total": 0.001955000000000151,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.01594195799999998
+        ],
+        "mean": 0.01594195799999998,
+        "std": 0.0,
+        "total": 0.01594195799999998,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth19ch_250Hz_1h/sbids/raw_data/Synth19ch_250Hz_1h_parquet.parquet",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth19ch_250Hz_1h/sbids/Synth19ch_250Hz_1h_parquet.jsonld",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 19,
+    "sampling_rate": 250.0,
+    "duration_s": 3600.0,
+    "data_points": 17100000,
+    "approx_raw_bytes": 68400000,
+    "approx_raw_gb": 0.06370246410369873,
+    "bytes_per_sample": 4.0,
+    "source": "Synth19ch_250Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth19ch_250Hz_1h",
+    "container": "bids",
+    "format": "edf",
+    "task": "synth19ch250hz1h",
+    "runs": 1,
+    "export_time": 0.3768910409999999,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 34615776,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.017768624999999982
+        ],
+        "mean": 0.017768624999999982,
+        "std": 0.0,
+        "total": 0.017768624999999982,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.009952499999999809
+        ],
+        "mean": 0.009952499999999809,
+        "std": 0.0,
+        "total": 0.009952499999999809,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.0006551250000002007
+        ],
+        "mean": 0.0006551250000002007,
+        "std": 0.0,
+        "total": 0.0006551250000002007,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.0007266249999999808
+        ],
+        "mean": 0.0007266249999999808,
+        "std": 0.0,
+        "total": 0.0007266249999999808,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth19ch_250Hz_1h/bids/edf/sub-01/eeg/sub-01_task-synth19ch250hz1h_eeg.edf",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth19ch_250Hz_1h/bids/edf/sub-01/eeg/sub-01_task-synth19ch250hz1h_eeg.json",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 19,
+    "sampling_rate": 250.0,
+    "duration_s": 3600.0,
+    "data_points": 17100000,
+    "approx_raw_bytes": 68400000,
+    "approx_raw_gb": 0.06370246410369873,
+    "bytes_per_sample": 4.0,
+    "source": "Synth19ch_250Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth19ch_250Hz_1h",
+    "container": "sbids",
+    "format": "edf",
+    "task": "synth19ch250hz1h",
+    "runs": 1,
+    "export_time": 0.35377879199999995,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 34615776,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.015245500000000245
+        ],
+        "mean": 0.015245500000000245,
+        "std": 0.0,
+        "total": 0.015245500000000245,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.010100415999999779
+        ],
+        "mean": 0.010100415999999779,
+        "std": 0.0,
+        "total": 0.010100415999999779,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.0006585000000001173
+        ],
+        "mean": 0.0006585000000001173,
+        "std": 0.0,
+        "total": 0.0006585000000001173,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.0007230410000000909
+        ],
+        "mean": 0.0007230410000000909,
+        "std": 0.0,
+        "total": 0.0007230410000000909,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth19ch_250Hz_1h/sbids/raw_data/Synth19ch_250Hz_1h_edf.edf",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth19ch_250Hz_1h/sbids/Synth19ch_250Hz_1h_edf.jsonld",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 19,
+    "sampling_rate": 250.0,
+    "duration_s": 3600.0,
+    "data_points": 17100000,
+    "approx_raw_bytes": 68400000,
+    "approx_raw_gb": 0.06370246410369873,
+    "bytes_per_sample": 4.0,
+    "source": "Synth19ch_250Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth19ch_250Hz_1h",
+    "container": "bids",
+    "format": "zarr",
+    "task": "synth19ch250hz1h",
+    "runs": 1,
+    "export_time": 0.255292125,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 136970815,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.0002685000000002269
+        ],
+        "mean": 0.0002685000000002269,
+        "std": 0.0,
+        "total": 0.0002685000000002269,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.03221270800000031
+        ],
+        "mean": 0.03221270800000031,
+        "std": 0.0,
+        "total": 0.03221270800000031,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.0004553750000000356
+        ],
+        "mean": 0.0004553750000000356,
+        "std": 0.0,
+        "total": 0.0004553750000000356,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.0002540409999998161
+        ],
+        "mean": 0.0002540409999998161,
+        "std": 0.0,
+        "total": 0.0002540409999998161,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth19ch_250Hz_1h/bids/zarr/sub-01/eeg/sub-01_task-synth19ch250hz1h_eeg.zarr",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth19ch_250Hz_1h/bids/zarr/sub-01/eeg/sub-01_task-synth19ch250hz1h_eeg.json",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 19,
+    "sampling_rate": 250.0,
+    "duration_s": 3600.0,
+    "data_points": 17100000,
+    "approx_raw_bytes": 68400000,
+    "approx_raw_gb": 0.06370246410369873,
+    "bytes_per_sample": 4.0,
+    "source": "Synth19ch_250Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth19ch_250Hz_1h",
+    "container": "sbids",
+    "format": "zarr",
+    "task": "synth19ch250hz1h",
+    "runs": 1,
+    "export_time": 0.15690587500000008,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 136970815,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.00034945899999971886
+        ],
+        "mean": 0.00034945899999971886,
+        "std": 0.0,
+        "total": 0.00034945899999971886,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.03177391700000065
+        ],
+        "mean": 0.03177391700000065,
+        "std": 0.0,
+        "total": 0.03177391700000065,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.00025841700000039936
+        ],
+        "mean": 0.00025841700000039936,
+        "std": 0.0,
+        "total": 0.00025841700000039936,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.00014670900000002263
+        ],
+        "mean": 0.00014670900000002263,
+        "std": 0.0,
+        "total": 0.00014670900000002263,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth19ch_250Hz_1h/sbids/raw_data/Synth19ch_250Hz_1h_zarr.zarr",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth19ch_250Hz_1h/sbids/Synth19ch_250Hz_1h_zarr.jsonld",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 19,
+    "sampling_rate": 250.0,
+    "duration_s": 3600.0,
+    "data_points": 17100000,
+    "approx_raw_bytes": 68400000,
+    "approx_raw_gb": 0.06370246410369873,
+    "bytes_per_sample": 4.0,
+    "source": "Synth19ch_250Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth19ch_250Hz_1h",
+    "container": "bids",
+    "format": "hdf5",
+    "task": "synth19ch250hz1h",
+    "runs": 1,
+    "export_time": 3.1610749589999996,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 78765837,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.0003134160000000108
+        ],
+        "mean": 0.0003134160000000108,
+        "std": 0.0,
+        "total": 0.0003134160000000108,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.024360957999999933
+        ],
+        "mean": 0.024360957999999933,
+        "std": 0.0,
+        "total": 0.024360957999999933,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.00021800000000027353
+        ],
+        "mean": 0.00021800000000027353,
+        "std": 0.0,
+        "total": 0.00021800000000027353,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.003411167000000326
+        ],
+        "mean": 0.003411167000000326,
+        "std": 0.0,
+        "total": 0.003411167000000326,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth19ch_250Hz_1h/bids/hdf5/sub-01/eeg/sub-01_task-synth19ch250hz1h_eeg.hdf5",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth19ch_250Hz_1h/bids/hdf5/sub-01/eeg/sub-01_task-synth19ch250hz1h_eeg.json",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 19,
+    "sampling_rate": 250.0,
+    "duration_s": 3600.0,
+    "data_points": 17100000,
+    "approx_raw_bytes": 68400000,
+    "approx_raw_gb": 0.06370246410369873,
+    "bytes_per_sample": 4.0,
+    "source": "Synth19ch_250Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth19ch_250Hz_1h",
+    "container": "sbids",
+    "format": "hdf5",
+    "task": "synth19ch250hz1h",
+    "runs": 1,
+    "export_time": 3.0398717919999996,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 78765837,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.0002956669999996109
+        ],
+        "mean": 0.0002956669999996109,
+        "std": 0.0,
+        "total": 0.0002956669999996109,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.022886083999999585
+        ],
+        "mean": 0.022886083999999585,
+        "std": 0.0,
+        "total": 0.022886083999999585,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.00020199999999981344
+        ],
+        "mean": 0.00020199999999981344,
+        "std": 0.0,
+        "total": 0.00020199999999981344,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.0033291670000004103
+        ],
+        "mean": 0.0033291670000004103,
+        "std": 0.0,
+        "total": 0.0033291670000004103,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth19ch_250Hz_1h/sbids/raw_data/Synth19ch_250Hz_1h_hdf5.hdf5",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth19ch_250Hz_1h/sbids/Synth19ch_250Hz_1h_hdf5.jsonld",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 19,
+    "sampling_rate": 250.0,
+    "duration_s": 3600.0,
+    "data_points": 17100000,
+    "approx_raw_bytes": 68400000,
+    "approx_raw_gb": 0.06370246410369873,
+    "bytes_per_sample": 4.0,
+    "source": "Synth19ch_250Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth64ch_1000Hz_1h",
+    "container": "bids",
+    "format": "parquet",
+    "task": "synth64ch1000hz1h",
+    "runs": 1,
+    "export_time": 7.030036750000001,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 1491992714,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.000554042000000976
+        ],
+        "mean": 0.000554042000000976,
+        "std": 0.0,
+        "total": 0.000554042000000976,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.023278416000000135
+        ],
+        "mean": 0.023278416000000135,
+        "std": 0.0,
+        "total": 0.023278416000000135,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.008212125000000015
+        ],
+        "mean": 0.008212125000000015,
+        "std": 0.0,
+        "total": 0.008212125000000015,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.1151935420000001
+        ],
+        "mean": 0.1151935420000001,
+        "std": 0.0,
+        "total": 0.1151935420000001,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth64ch_1000Hz_1h/bids/parquet/sub-01/eeg/sub-01_task-synth64ch1000hz1h_eeg.parquet",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth64ch_1000Hz_1h/bids/parquet/sub-01/eeg/sub-01_task-synth64ch1000hz1h_eeg.json",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 64,
+    "sampling_rate": 1000.0,
+    "duration_s": 3600.0,
+    "data_points": 230400000,
+    "approx_raw_bytes": 921600000,
+    "approx_raw_gb": 0.858306884765625,
+    "bytes_per_sample": 4.0,
+    "source": "Synth64ch_1000Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth64ch_1000Hz_1h",
+    "container": "sbids",
+    "format": "parquet",
+    "task": "synth64ch1000hz1h",
+    "runs": 1,
+    "export_time": 4.084507541000001,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 1081370461,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.0005002080000018339
+        ],
+        "mean": 0.0005002080000018339,
+        "std": 0.0,
+        "total": 0.0005002080000018339,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.006039458000000053
+        ],
+        "mean": 0.006039458000000053,
+        "std": 0.0,
+        "total": 0.006039458000000053,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.0026260840000027486
+        ],
+        "mean": 0.0026260840000027486,
+        "std": 0.0,
+        "total": 0.0026260840000027486,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.05870679099999876
+        ],
+        "mean": 0.05870679099999876,
+        "std": 0.0,
+        "total": 0.05870679099999876,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth64ch_1000Hz_1h/sbids/raw_data/Synth64ch_1000Hz_1h_parquet.parquet",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth64ch_1000Hz_1h/sbids/Synth64ch_1000Hz_1h_parquet.jsonld",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 64,
+    "sampling_rate": 1000.0,
+    "duration_s": 3600.0,
+    "data_points": 230400000,
+    "approx_raw_bytes": 921600000,
+    "approx_raw_gb": 0.858306884765625,
+    "bytes_per_sample": 4.0,
+    "source": "Synth64ch_1000Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth64ch_1000Hz_1h",
+    "container": "bids",
+    "format": "edf",
+    "task": "synth64ch1000hz1h",
+    "runs": 1,
+    "export_time": 3.7509590830000015,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 461227296,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.0951798330000031
+        ],
+        "mean": 0.0951798330000031,
+        "std": 0.0,
+        "total": 0.0951798330000031,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.09077249999999992
+        ],
+        "mean": 0.09077249999999992,
+        "std": 0.0,
+        "total": 0.09077249999999992,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.0019619589999990694
+        ],
+        "mean": 0.0019619589999990694,
+        "std": 0.0,
+        "total": 0.0019619589999990694,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.0036896249999998076
+        ],
+        "mean": 0.0036896249999998076,
+        "std": 0.0,
+        "total": 0.0036896249999998076,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth64ch_1000Hz_1h/bids/edf/sub-01/eeg/sub-01_task-synth64ch1000hz1h_eeg.edf",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth64ch_1000Hz_1h/bids/edf/sub-01/eeg/sub-01_task-synth64ch1000hz1h_eeg.json",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 64,
+    "sampling_rate": 1000.0,
+    "duration_s": 3600.0,
+    "data_points": 230400000,
+    "approx_raw_bytes": 921600000,
+    "approx_raw_gb": 0.858306884765625,
+    "bytes_per_sample": 4.0,
+    "source": "Synth64ch_1000Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth64ch_1000Hz_1h",
+    "container": "sbids",
+    "format": "edf",
+    "task": "synth64ch1000hz1h",
+    "runs": 1,
+    "export_time": 3.6621587500000032,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 461227296,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.092773207999997
+        ],
+        "mean": 0.092773207999997,
+        "std": 0.0,
+        "total": 0.092773207999997,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.08855570900000487
+        ],
+        "mean": 0.08855570900000487,
+        "std": 0.0,
+        "total": 0.08855570900000487,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.0019201250000051573
+        ],
+        "mean": 0.0019201250000051573,
+        "std": 0.0,
+        "total": 0.0019201250000051573,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.0034977080000047067
+        ],
+        "mean": 0.0034977080000047067,
+        "std": 0.0,
+        "total": 0.0034977080000047067,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth64ch_1000Hz_1h/sbids/raw_data/Synth64ch_1000Hz_1h_edf.edf",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth64ch_1000Hz_1h/sbids/Synth64ch_1000Hz_1h_edf.jsonld",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 64,
+    "sampling_rate": 1000.0,
+    "duration_s": 3600.0,
+    "data_points": 230400000,
+    "approx_raw_bytes": 921600000,
+    "approx_raw_gb": 0.858306884765625,
+    "bytes_per_sample": 4.0,
+    "source": "Synth64ch_1000Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth64ch_1000Hz_1h",
+    "container": "bids",
+    "format": "zarr",
+    "task": "synth64ch1000hz1h",
+    "runs": 1,
+    "export_time": 2.4020484999999994,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 1843397905,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.00030237500000396267
+        ],
+        "mean": 0.00030237500000396267,
+        "std": 0.0,
+        "total": 0.00030237500000396267,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.30891237499999846
+        ],
+        "mean": 0.30891237499999846,
+        "std": 0.0,
+        "total": 0.30891237499999846,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.0011092089999991117
+        ],
+        "mean": 0.0011092089999991117,
+        "std": 0.0,
+        "total": 0.0011092089999991117,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.0011785000000017476
+        ],
+        "mean": 0.0011785000000017476,
+        "std": 0.0,
+        "total": 0.0011785000000017476,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth64ch_1000Hz_1h/bids/zarr/sub-01/eeg/sub-01_task-synth64ch1000hz1h_eeg.zarr",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth64ch_1000Hz_1h/bids/zarr/sub-01/eeg/sub-01_task-synth64ch1000hz1h_eeg.json",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 64,
+    "sampling_rate": 1000.0,
+    "duration_s": 3600.0,
+    "data_points": 230400000,
+    "approx_raw_bytes": 921600000,
+    "approx_raw_gb": 0.858306884765625,
+    "bytes_per_sample": 4.0,
+    "source": "Synth64ch_1000Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth64ch_1000Hz_1h",
+    "container": "sbids",
+    "format": "zarr",
+    "task": "synth64ch1000hz1h",
+    "runs": 1,
+    "export_time": 2.489450500000004,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 1843397905,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.0002610829999980524
+        ],
+        "mean": 0.0002610829999980524,
+        "std": 0.0,
+        "total": 0.0002610829999980524,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.3203566660000021
+        ],
+        "mean": 0.3203566660000021,
+        "std": 0.0,
+        "total": 0.3203566660000021,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.00166329200000348
+        ],
+        "mean": 0.00166329200000348,
+        "std": 0.0,
+        "total": 0.00166329200000348,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.0019797920000002023
+        ],
+        "mean": 0.0019797920000002023,
+        "std": 0.0,
+        "total": 0.0019797920000002023,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth64ch_1000Hz_1h/sbids/raw_data/Synth64ch_1000Hz_1h_zarr.zarr",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth64ch_1000Hz_1h/sbids/Synth64ch_1000Hz_1h_zarr.jsonld",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 64,
+    "sampling_rate": 1000.0,
+    "duration_s": 3600.0,
+    "data_points": 230400000,
+    "approx_raw_bytes": 921600000,
+    "approx_raw_gb": 0.858306884765625,
+    "bytes_per_sample": 4.0,
+    "source": "Synth64ch_1000Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth64ch_1000Hz_1h",
+    "container": "bids",
+    "format": "hdf5",
+    "task": "synth64ch1000hz1h",
+    "runs": 1,
+    "export_time": 43.49092575,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 1039378778,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.0002969159999963722
+        ],
+        "mean": 0.0002969159999963722,
+        "std": 0.0,
+        "total": 0.0002969159999963722,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.09312554199999568
+        ],
+        "mean": 0.09312554199999568,
+        "std": 0.0,
+        "total": 0.09312554199999568,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.0009837499999889587
+        ],
+        "mean": 0.0009837499999889587,
+        "std": 0.0,
+        "total": 0.0009837499999889587,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.04595820800000183
+        ],
+        "mean": 0.04595820800000183,
+        "std": 0.0,
+        "total": 0.04595820800000183,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth64ch_1000Hz_1h/bids/hdf5/sub-01/eeg/sub-01_task-synth64ch1000hz1h_eeg.hdf5",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth64ch_1000Hz_1h/bids/hdf5/sub-01/eeg/sub-01_task-synth64ch1000hz1h_eeg.json",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 64,
+    "sampling_rate": 1000.0,
+    "duration_s": 3600.0,
+    "data_points": 230400000,
+    "approx_raw_bytes": 921600000,
+    "approx_raw_gb": 0.858306884765625,
+    "bytes_per_sample": 4.0,
+    "source": "Synth64ch_1000Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth64ch_1000Hz_1h",
+    "container": "sbids",
+    "format": "hdf5",
+    "task": "synth64ch1000hz1h",
+    "runs": 1,
+    "export_time": 43.215995166,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 1039378778,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.00028525000001877743
+        ],
+        "mean": 0.00028525000001877743,
+        "std": 0.0,
+        "total": 0.00028525000001877743,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.0884650410000063
+        ],
+        "mean": 0.0884650410000063,
+        "std": 0.0,
+        "total": 0.0884650410000063,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.0007367500000157179
+        ],
+        "mean": 0.0007367500000157179,
+        "std": 0.0,
+        "total": 0.0007367500000157179,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.044201874999998836
+        ],
+        "mean": 0.044201874999998836,
+        "std": 0.0,
+        "total": 0.044201874999998836,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth64ch_1000Hz_1h/sbids/raw_data/Synth64ch_1000Hz_1h_hdf5.hdf5",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth64ch_1000Hz_1h/sbids/Synth64ch_1000Hz_1h_hdf5.jsonld",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 64,
+    "sampling_rate": 1000.0,
+    "duration_s": 3600.0,
+    "data_points": 230400000,
+    "approx_raw_bytes": 921600000,
+    "approx_raw_gb": 0.858306884765625,
+    "bytes_per_sample": 4.0,
+    "source": "Synth64ch_1000Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth256ch_2000Hz_1h",
+    "container": "bids",
+    "format": "parquet",
+    "task": "synth256ch2000hz1h",
+    "runs": 1,
+    "export_time": 59.153115790999976,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 11843889843,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.001863458000002538
+        ],
+        "mean": 0.001863458000002538,
+        "std": 0.0,
+        "total": 0.001863458000002538,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.06445625000003474
+        ],
+        "mean": 0.06445625000003474,
+        "std": 0.0,
+        "total": 0.06445625000003474,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.0071977910000100565
+        ],
+        "mean": 0.0071977910000100565,
+        "std": 0.0,
+        "total": 0.0071977910000100565,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.45324770799999214
+        ],
+        "mean": 0.45324770799999214,
+        "std": 0.0,
+        "total": 0.45324770799999214,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth256ch_2000Hz_1h/bids/parquet/sub-01/eeg/sub-01_task-synth256ch2000hz1h_eeg.parquet",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth256ch_2000Hz_1h/bids/parquet/sub-01/eeg/sub-01_task-synth256ch2000hz1h_eeg.json",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 256,
+    "sampling_rate": 2000.0,
+    "duration_s": 3600.0,
+    "data_points": 1843200000,
+    "approx_raw_bytes": 7372800000,
+    "approx_raw_gb": 6.866455078125,
+    "bytes_per_sample": 4.0,
+    "source": "Synth256ch_2000Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth256ch_2000Hz_1h",
+    "container": "sbids",
+    "format": "parquet",
+    "task": "synth256ch2000hz1h",
+    "runs": 1,
+    "export_time": 33.115267166999956,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 8491209402,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.0018977920000224913
+        ],
+        "mean": 0.0018977920000224913,
+        "std": 0.0,
+        "total": 0.0018977920000224913,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.02567787500004215
+        ],
+        "mean": 0.02567787500004215,
+        "std": 0.0,
+        "total": 0.02567787500004215,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.0026701250000087384
+        ],
+        "mean": 0.0026701250000087384,
+        "std": 0.0,
+        "total": 0.0026701250000087384,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.2865802500000427
+        ],
+        "mean": 0.2865802500000427,
+        "std": 0.0,
+        "total": 0.2865802500000427,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth256ch_2000Hz_1h/sbids/raw_data/Synth256ch_2000Hz_1h_parquet.parquet",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth256ch_2000Hz_1h/sbids/Synth256ch_2000Hz_1h_parquet.jsonld",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 256,
+    "sampling_rate": 2000.0,
+    "duration_s": 3600.0,
+    "data_points": 1843200000,
+    "approx_raw_bytes": 7372800000,
+    "approx_raw_gb": 6.866455078125,
+    "bytes_per_sample": 4.0,
+    "source": "Synth256ch_2000Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth256ch_2000Hz_1h",
+    "container": "bids",
+    "format": "edf",
+    "task": "synth256ch2000hz1h",
+    "runs": 1,
+    "export_time": 78.38343033299998,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 3686876448,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.5683458330000235
+        ],
+        "mean": 0.5683458330000235,
+        "std": 0.0,
+        "total": 0.5683458330000235,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.5475799580000285
+        ],
+        "mean": 0.5475799580000285,
+        "std": 0.0,
+        "total": 0.5475799580000285,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.007837624999979198
+        ],
+        "mean": 0.007837624999979198,
+        "std": 0.0,
+        "total": 0.007837624999979198,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.01581425000000536
+        ],
+        "mean": 0.01581425000000536,
+        "std": 0.0,
+        "total": 0.01581425000000536,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth256ch_2000Hz_1h/bids/edf/sub-01/eeg/sub-01_task-synth256ch2000hz1h_eeg.edf",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth256ch_2000Hz_1h/bids/edf/sub-01/eeg/sub-01_task-synth256ch2000hz1h_eeg.json",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 256,
+    "sampling_rate": 2000.0,
+    "duration_s": 3600.0,
+    "data_points": 1843200000,
+    "approx_raw_bytes": 7372800000,
+    "approx_raw_gb": 6.866455078125,
+    "bytes_per_sample": 4.0,
+    "source": "Synth256ch_2000Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth256ch_2000Hz_1h",
+    "container": "sbids",
+    "format": "edf",
+    "task": "synth256ch2000hz1h",
+    "runs": 1,
+    "export_time": 77.86203337500001,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 3686876448,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.5661261669999931
+        ],
+        "mean": 0.5661261669999931,
+        "std": 0.0,
+        "total": 0.5661261669999931,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.5706566249999696
+        ],
+        "mean": 0.5706566249999696,
+        "std": 0.0,
+        "total": 0.5706566249999696,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.004892667000035544
+        ],
+        "mean": 0.004892667000035544,
+        "std": 0.0,
+        "total": 0.004892667000035544,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.01640183399996431
+        ],
+        "mean": 0.01640183399996431,
+        "std": 0.0,
+        "total": 0.01640183399996431,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth256ch_2000Hz_1h/sbids/raw_data/Synth256ch_2000Hz_1h_edf.edf",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth256ch_2000Hz_1h/sbids/Synth256ch_2000Hz_1h_edf.jsonld",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 256,
+    "sampling_rate": 2000.0,
+    "duration_s": 3600.0,
+    "data_points": 1843200000,
+    "approx_raw_bytes": 7372800000,
+    "approx_raw_gb": 6.866455078125,
+    "bytes_per_sample": 4.0,
+    "source": "Synth256ch_2000Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth256ch_2000Hz_1h",
+    "container": "bids",
+    "format": "zarr",
+    "task": "synth256ch2000hz1h",
+    "runs": 1,
+    "export_time": 22.09656137500002,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 14747177391,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.00038074999997661507
+        ],
+        "mean": 0.00038074999997661507,
+        "std": 0.0,
+        "total": 0.00038074999997661507,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.6477087079999819
+        ],
+        "mean": 0.6477087079999819,
+        "std": 0.0,
+        "total": 0.6477087079999819,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.0018732499999600805
+        ],
+        "mean": 0.0018732499999600805,
+        "std": 0.0,
+        "total": 0.0018732499999600805,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.0118990839999924
+        ],
+        "mean": 0.0118990839999924,
+        "std": 0.0,
+        "total": 0.0118990839999924,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth256ch_2000Hz_1h/bids/zarr/sub-01/eeg/sub-01_task-synth256ch2000hz1h_eeg.zarr",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth256ch_2000Hz_1h/bids/zarr/sub-01/eeg/sub-01_task-synth256ch2000hz1h_eeg.json",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 256,
+    "sampling_rate": 2000.0,
+    "duration_s": 3600.0,
+    "data_points": 1843200000,
+    "approx_raw_bytes": 7372800000,
+    "approx_raw_gb": 6.866455078125,
+    "bytes_per_sample": 4.0,
+    "source": "Synth256ch_2000Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth256ch_2000Hz_1h",
+    "container": "sbids",
+    "format": "zarr",
+    "task": "synth256ch2000hz1h",
+    "runs": 1,
+    "export_time": 20.688914833000013,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 14747177391,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.00046320899997454035
+        ],
+        "mean": 0.00046320899997454035,
+        "std": 0.0,
+        "total": 0.00046320899997454035,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.6545793750000257
+        ],
+        "mean": 0.6545793750000257,
+        "std": 0.0,
+        "total": 0.6545793750000257,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.0024440420000360064
+        ],
+        "mean": 0.0024440420000360064,
+        "std": 0.0,
+        "total": 0.0024440420000360064,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.012513792000049762
+        ],
+        "mean": 0.012513792000049762,
+        "std": 0.0,
+        "total": 0.012513792000049762,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth256ch_2000Hz_1h/sbids/raw_data/Synth256ch_2000Hz_1h_zarr.zarr",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth256ch_2000Hz_1h/sbids/Synth256ch_2000Hz_1h_zarr.jsonld",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 256,
+    "sampling_rate": 2000.0,
+    "duration_s": 3600.0,
+    "data_points": 1843200000,
+    "approx_raw_bytes": 7372800000,
+    "approx_raw_gb": 6.866455078125,
+    "bytes_per_sample": 4.0,
+    "source": "Synth256ch_2000Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth256ch_2000Hz_1h",
+    "container": "bids",
+    "format": "hdf5",
+    "task": "synth256ch2000hz1h",
+    "runs": 1,
+    "export_time": 356.83593945800004,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 8236837598,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.0003291250000074797
+        ],
+        "mean": 0.0003291250000074797,
+        "std": 0.0,
+        "total": 0.0003291250000074797,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.257881416000032
+        ],
+        "mean": 0.257881416000032,
+        "std": 0.0,
+        "total": 0.257881416000032,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.0007582499999898573
+        ],
+        "mean": 0.0007582499999898573,
+        "std": 0.0,
+        "total": 0.0007582499999898573,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.19123708400002215
+        ],
+        "mean": 0.19123708400002215,
+        "std": 0.0,
+        "total": 0.19123708400002215,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth256ch_2000Hz_1h/bids/hdf5/sub-01/eeg/sub-01_task-synth256ch2000hz1h_eeg.hdf5",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth256ch_2000Hz_1h/bids/hdf5/sub-01/eeg/sub-01_task-synth256ch2000hz1h_eeg.json",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 256,
+    "sampling_rate": 2000.0,
+    "duration_s": 3600.0,
+    "data_points": 1843200000,
+    "approx_raw_bytes": 7372800000,
+    "approx_raw_gb": 6.866455078125,
+    "bytes_per_sample": 4.0,
+    "source": "Synth256ch_2000Hz_1h_synthetic"
+  },
+  {
+    "dataset": "Synth256ch_2000Hz_1h",
+    "container": "sbids",
+    "format": "hdf5",
+    "task": "synth256ch2000hz1h",
+    "runs": 1,
+    "export_time": 354.9517712080001,
+    "export_cpu": null,
+    "export_rss": null,
+    "size_bytes": 8236837598,
+    "stream_metrics": {
+      "open": {
+        "times": [
+          0.0003974999999627471
+        ],
+        "mean": 0.0003974999999627471,
+        "std": 0.0,
+        "total": 0.0003974999999627471,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "single_channel_full": {
+        "times": [
+          0.30978775000016867
+        ],
+        "mean": 0.30978775000016867,
+        "std": 0.0,
+        "total": 0.30978775000016867,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_single_channel": {
+        "times": [
+          0.001521959000001516
+        ],
+        "mean": 0.001521959000001516,
+        "std": 0.0,
+        "total": 0.001521959000001516,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_all_channels": {
+        "times": [
+          0.4552945829998407
+        ],
+        "mean": 0.4552945829998407,
+        "std": 0.0,
+        "total": 0.4552945829998407,
+        "cpu_times": [],
+        "cpu_mean": null,
+        "cpu_std": null,
+        "cpu_total": null,
+        "rss_list": [],
+        "rss_max": null
+      },
+      "window_s": 10.0,
+      "channel_idx": 0
+    },
+    "data_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth256ch_2000Hz_1h/sbids/raw_data/Synth256ch_2000Hz_1h_hdf5.hdf5",
+    "meta_path": "/Users/jonasheinzmann/Local_Documents/GitHub/CortiPy/experiments/format_benchmark/results_exp3/Synth256ch_2000Hz_1h/sbids/Synth256ch_2000Hz_1h_hdf5.jsonld",
+    "window_s": 10.0,
+    "channel_idx": 0,
+    "dataset_kind": "synthetic",
+    "channel_count": 256,
+    "sampling_rate": 2000.0,
+    "duration_s": 3600.0,
+    "data_points": 1843200000,
+    "approx_raw_bytes": 7372800000,
+    "approx_raw_gb": 6.866455078125,
+    "bytes_per_sample": 4.0,
+    "source": "Synth256ch_2000Hz_1h_synthetic"
+  }
+]

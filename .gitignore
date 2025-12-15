@@ -209,7 +209,8 @@ __marimo__/
 
 /.idea
 .DS_Store
-/cortipy_runs
+/cortipy_runs/*
+!/cortipy_runs/README.md
 results.json
 AGENTS.md
 TODO.md

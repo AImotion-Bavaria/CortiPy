@@ -6,32 +6,40 @@
     "task": "synth19ch250hz1h",
     "runs": 1,
     "write_times": [
-      0.6799851250000004
+      0.8569815419999713
     ],
     "read_times": [
-      0.14683004200000038
+      0.29470479200000455
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 0.6799851250000004,
+    "write_cpu_times": [
+      0.7139202560000002
+    ],
+    "read_cpu_times": [
+      0.3223833599999999
+    ],
+    "write_rss_list": [
+      890126336
+    ],
+    "read_rss_list": [
+      1338048512
+    ],
+    "write_mean": 0.8569815419999713,
     "write_std": 0.0,
-    "read_mean": 0.14683004200000038,
+    "read_mean": 0.29470479200000455,
     "read_std": 0.0,
-    "write_total": 0.6799851250000004,
-    "read_total": 0.14683004200000038,
-    "write_throughput": 162436928.30780664,
-    "read_throughput": 752262231.1856296,
+    "write_total": 0.8569815419999713,
+    "read_total": 0.29470479200000455,
+    "write_throughput": 128887848.32194635,
+    "read_throughput": 374797119.0098541,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
-    "size_bytes": 110454695,
+    "write_cpu_mean": 0.7139202560000002,
+    "read_cpu_mean": 0.3223833599999999,
+    "write_cpu_total": 0.7139202560000002,
+    "read_cpu_total": 0.3223833599999999,
+    "write_rss_max": 890126336,
+    "read_rss_max": 1338048512,
+    "size_bytes": 110454507,
     "codec": "snappy (default)",
     "dataset_kind": "synthetic",
     "channel_count": 19,
@@ -42,7 +50,7 @@
     "approx_raw_gb": 0.06370246410369873,
     "bytes_per_sample": 4.0,
     "source": "Synth19ch_250Hz_1h_synthetic",
-    "reduction_vs_edf": -2.1908773329247335
+    "reduction_vs_edf": -2.1908719018750293
   },
   {
     "dataset": "Synth19ch_250Hz_1h",
@@ -51,32 +59,40 @@
     "task": "synth19ch250hz1h",
     "runs": 1,
     "write_times": [
-      0.38074412499999966
+      0.3800377079999748
     ],
     "read_times": [
-      0.05353291700000007
+      0.05185624999995753
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 0.38074412499999966,
+    "write_cpu_times": [
+      0.3856094719999992
+    ],
+    "read_cpu_times": [
+      0.12840115200000035
+    ],
+    "write_rss_list": [
+      1272807424
+    ],
+    "read_rss_list": [
+      1482457088
+    ],
+    "write_mean": 0.3800377079999748,
     "write_std": 0.0,
-    "read_mean": 0.05353291700000007,
+    "read_mean": 0.05185624999995753,
     "read_std": 0.0,
-    "write_total": 0.38074412499999966,
-    "read_total": 0.05353291700000007,
-    "write_throughput": 20557.112995505857,
-    "read_throughput": 146209.1071928696,
+    "write_total": 0.3800377079999748,
+    "read_total": 0.05185624999995753,
+    "write_throughput": 211201771.06216344,
+    "read_throughput": 1547829567.3147545,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
-    "size_bytes": 7827,
+    "write_cpu_mean": 0.3856094719999992,
+    "read_cpu_mean": 0.12840115200000035,
+    "write_cpu_total": 0.3856094719999992,
+    "read_cpu_total": 0.12840115200000035,
+    "write_rss_max": 1272807424,
+    "read_rss_max": 1482457088,
+    "size_bytes": 80264637,
     "codec": "snappy (default)",
     "dataset_kind": "synthetic",
     "channel_count": 19,
@@ -87,7 +103,7 @@
     "approx_raw_gb": 0.06370246410369873,
     "bytes_per_sample": 4.0,
     "source": "Synth19ch_250Hz_1h_synthetic",
-    "reduction_vs_edf": 0.9997738892232259
+    "reduction_vs_edf": -1.3187299628932196
   },
   {
     "dataset": "Synth19ch_250Hz_1h",
@@ -96,31 +112,39 @@
     "task": "synth19ch250hz1h",
     "runs": 1,
     "write_times": [
-      0.5436125829999998
+      0.576384040999983
     ],
     "read_times": [
-      0.0772723329999998
+      0.09238341700000774
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 0.5436125829999998,
+    "write_cpu_times": [
+      0.49298534400000005
+    ],
+    "read_cpu_times": [
+      0.0913489919999999
+    ],
+    "write_rss_list": [
+      1483538432
+    ],
+    "read_rss_list": [
+      1494630400
+    ],
+    "write_mean": 0.576384040999983,
     "write_std": 0.0,
-    "read_mean": 0.0772723329999998,
+    "read_mean": 0.09238341700000774,
     "read_std": 0.0,
-    "write_total": 0.5436125829999998,
-    "read_total": 0.0772723329999998,
-    "write_throughput": 63677289.82461764,
-    "read_throughput": 447971151.58927697,
+    "write_total": 0.576384040999983,
+    "read_total": 0.09238341700000774,
+    "write_throughput": 60056791.19766091,
+    "read_throughput": 374696857.120982,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
+    "write_cpu_mean": 0.49298534400000005,
+    "read_cpu_mean": 0.0913489919999999,
+    "write_cpu_total": 0.49298534400000005,
+    "read_cpu_total": 0.0913489919999999,
+    "write_rss_max": 1483538432,
+    "read_rss_max": 1494630400,
     "size_bytes": 34615776,
     "codec": "n/a",
     "dataset_kind": "synthetic",
@@ -141,32 +165,40 @@
     "task": "synth19ch250hz1h",
     "runs": 1,
     "write_times": [
-      0.5066094999999997
+      0.5246924589999935
     ],
     "read_times": [
-      0.07008470799999955
+      0.09972412499996608
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 0.5066094999999997,
+    "write_cpu_times": [
+      0.49588198399999905
+    ],
+    "read_cpu_times": [
+      0.09293260800000036
+    ],
+    "write_rss_list": [
+      1494777856
+    ],
+    "read_rss_list": [
+      1494810624
+    ],
+    "write_mean": 0.5246924589999935,
     "write_std": 0.0,
-    "read_mean": 0.07008470799999955,
+    "read_mean": 0.09972412499996608,
     "read_std": 0.0,
-    "write_total": 0.5066094999999997,
-    "read_total": 0.07008470799999955,
-    "write_throughput": 15368.839313119877,
-    "read_throughput": 111094.13482895655,
+    "write_total": 0.5246924589999935,
+    "read_total": 0.09972412499996608,
+    "write_throughput": 65973458.177717835,
+    "read_throughput": 347115364.51196516,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
-    "size_bytes": 7786,
+    "write_cpu_mean": 0.49588198399999905,
+    "read_cpu_mean": 0.09293260800000036,
+    "write_cpu_total": 0.49588198399999905,
+    "read_cpu_total": 0.09293260800000036,
+    "write_rss_max": 1494777856,
+    "read_rss_max": 1494810624,
+    "size_bytes": 34615776,
     "codec": "n/a",
     "dataset_kind": "synthetic",
     "channel_count": 19,
@@ -177,7 +209,7 @@
     "approx_raw_gb": 0.06370246410369873,
     "bytes_per_sample": 4.0,
     "source": "Synth19ch_250Hz_1h_synthetic",
-    "reduction_vs_edf": 0.9997750736542783
+    "reduction_vs_edf": 0.0
   },
   {
     "dataset": "Synth19ch_250Hz_1h",
@@ -186,32 +218,40 @@
     "task": "synth19ch250hz1h",
     "runs": 1,
     "write_times": [
-      0.4202595840000001
+      0.4745877919999657
     ],
     "read_times": [
-      0.14408524999999983
+      0.1700360000000387
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 0.4202595840000001,
+    "write_cpu_times": [
+      0.5187102719999999
+    ],
+    "read_cpu_times": [
+      0.20357734399999972
+    ],
+    "write_rss_list": [
+      1509376000
+    ],
+    "read_rss_list": [
+      1516650496
+    ],
+    "write_mean": 0.4745877919999657,
     "write_std": 0.0,
-    "read_mean": 0.14408524999999983,
+    "read_mean": 0.1700360000000387,
     "read_std": 0.0,
-    "write_total": 0.4202595840000001,
-    "read_total": 0.14408524999999983,
-    "write_throughput": 304.5736608352993,
-    "read_throughput": 888.3629656748359,
+    "write_total": 0.4745877919999657,
+    "read_total": 0.1700360000000387,
+    "write_throughput": 288610717.150537,
+    "read_throughput": 805541902.890969,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
-    "size_bytes": 128,
+    "write_cpu_mean": 0.5187102719999999,
+    "read_cpu_mean": 0.20357734399999972,
+    "write_cpu_total": 0.5187102719999999,
+    "read_cpu_total": 0.20357734399999972,
+    "write_rss_max": 1509376000,
+    "read_rss_max": 1516650496,
+    "size_bytes": 136971123,
     "codec": "n/a",
     "dataset_kind": "synthetic",
     "channel_count": 19,
@@ -222,7 +262,7 @@
     "approx_raw_gb": 0.06370246410369873,
     "bytes_per_sample": 4.0,
     "source": "Synth19ch_250Hz_1h_synthetic",
-    "reduction_vs_edf": 0.9999963022640312
+    "reduction_vs_edf": -2.9568988139974097
   },
   {
     "dataset": "Synth19ch_250Hz_1h",
@@ -231,32 +271,40 @@
     "task": "synth19ch250hz1h",
     "runs": 1,
     "write_times": [
-      0.21200237499999997
+      0.22325912499997003
     ],
     "read_times": [
-      0.11652179199999946
+      0.13092454200000248
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 0.21200237499999997,
+    "write_cpu_times": [
+      0.33527628799999976
+    ],
+    "read_cpu_times": [
+      0.16403174399999942
+    ],
+    "write_rss_list": [
+      1526480896
+    ],
+    "read_rss_list": [
+      1526497280
+    ],
+    "write_mean": 0.22325912499997003,
     "write_std": 0.0,
-    "read_mean": 0.11652179199999946,
+    "read_mean": 0.13092454200000248,
     "read_std": 0.0,
-    "write_total": 0.21200237499999997,
-    "read_total": 0.11652179199999946,
-    "write_throughput": 36740.15444402451,
-    "read_throughput": 66845.86519232417,
+    "write_total": 0.22325912499997003,
+    "read_total": 0.13092454200000248,
+    "write_throughput": 613507389.6756444,
+    "read_throughput": 1046183709.3919138,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
-    "size_bytes": 7789,
+    "write_cpu_mean": 0.33527628799999976,
+    "read_cpu_mean": 0.16403174399999942,
+    "write_cpu_total": 0.33527628799999976,
+    "read_cpu_total": 0.16403174399999942,
+    "write_rss_max": 1526480896,
+    "read_rss_max": 1526497280,
+    "size_bytes": 136971123,
     "codec": "n/a",
     "dataset_kind": "synthetic",
     "channel_count": 19,
@@ -267,7 +315,7 @@
     "approx_raw_gb": 0.06370246410369873,
     "bytes_per_sample": 4.0,
     "source": "Synth19ch_250Hz_1h_synthetic",
-    "reduction_vs_edf": 0.9997749869885916
+    "reduction_vs_edf": -2.9568988139974097
   },
   {
     "dataset": "Synth19ch_250Hz_1h",
@@ -276,31 +324,39 @@
     "task": "synth19ch250hz1h",
     "runs": 1,
     "write_times": [
-      4.552459333000001
+      3.792592999999954
     ],
     "read_times": [
-      0.7651337500000004
+      0.6046457500000315
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 4.552459333000001,
+    "write_cpu_times": [
+      3.3563921920000004
+    ],
+    "read_cpu_times": [
+      0.5970508800000003
+    ],
+    "write_rss_list": [
+      1548763136
+    ],
+    "read_rss_list": [
+      1558528000
+    ],
+    "write_mean": 3.792592999999954,
     "write_std": 0.0,
-    "read_mean": 0.7651337500000004,
+    "read_mean": 0.6046457500000315,
     "read_std": 0.0,
-    "write_total": 4.552459333000001,
-    "read_total": 0.7651337500000004,
-    "write_throughput": 17301821.11217115,
-    "read_throughput": 102943880.0732551,
+    "write_total": 3.792592999999954,
+    "read_total": 0.6046457500000315,
+    "write_throughput": 20768333.69676128,
+    "read_throughput": 130267742.72372855,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
+    "write_cpu_mean": 3.3563921920000004,
+    "read_cpu_mean": 0.5970508800000003,
+    "write_cpu_total": 3.3563921920000004,
+    "read_cpu_total": 0.5970508800000003,
+    "write_rss_max": 1548763136,
+    "read_rss_max": 1558528000,
     "size_bytes": 78765837,
     "codec": "n/a",
     "dataset_kind": "synthetic",
@@ -321,32 +377,40 @@
     "task": "synth19ch250hz1h",
     "runs": 1,
     "write_times": [
-      4.334840334000001
+      3.4900905420000186
     ],
     "read_times": [
-      0.7437143749999997
+      0.5753688340000167
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 4.334840334000001,
+    "write_cpu_times": [
+      3.386763519999999
+    ],
+    "read_cpu_times": [
+      0.5742397439999998
+    ],
+    "write_rss_list": [
+      1568063488
+    ],
+    "read_rss_list": [
+      1582137344
+    ],
+    "write_mean": 3.4900905420000186,
     "write_std": 0.0,
-    "read_mean": 0.7437143749999997,
+    "read_mean": 0.5753688340000167,
     "read_std": 0.0,
-    "write_total": 4.334840334000001,
-    "read_total": 0.7437143749999997,
-    "write_throughput": 1797.990098705213,
-    "read_throughput": 10479.829706128785,
+    "write_total": 3.4900905420000186,
+    "read_total": 0.5753688340000167,
+    "write_throughput": 22568422.237797514,
+    "read_throughput": 136896252.18733644,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
-    "size_bytes": 7794,
+    "write_cpu_mean": 3.386763519999999,
+    "read_cpu_mean": 0.5742397439999998,
+    "write_cpu_total": 3.386763519999999,
+    "read_cpu_total": 0.5742397439999998,
+    "write_rss_max": 1568063488,
+    "read_rss_max": 1582137344,
+    "size_bytes": 78765837,
     "codec": "n/a",
     "dataset_kind": "synthetic",
     "channel_count": 19,
@@ -357,7 +421,7 @@
     "approx_raw_gb": 0.06370246410369873,
     "bytes_per_sample": 4.0,
     "source": "Synth19ch_250Hz_1h_synthetic",
-    "reduction_vs_edf": 0.9997748425457803
+    "reduction_vs_edf": -1.2754317857846087
   },
   {
     "dataset": "Synth64ch_1000Hz_1h",
@@ -366,32 +430,40 @@
     "task": "synth64ch1000hz1h",
     "runs": 1,
     "write_times": [
-      8.624836291999998
+      7.530412916000046
     ],
     "read_times": [
-      0.693871792000003
+      0.8673324160000107
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 8.624836291999998,
+    "write_cpu_times": [
+      7.223615487999999
+    ],
+    "read_cpu_times": [
+      2.821151743999999
+    ],
+    "write_rss_list": [
+      4659216384
+    ],
+    "read_rss_list": [
+      11332583424
+    ],
+    "write_mean": 7.530412916000046,
     "write_std": 0.0,
-    "read_mean": 0.693871792000003,
+    "read_mean": 0.8673324160000107,
     "read_std": 0.0,
-    "write_total": 8.624836291999998,
-    "read_total": 0.693871792000003,
-    "write_throughput": 172987945.91427827,
-    "read_throughput": 2150242640.213847,
+    "write_total": 7.530412916000046,
+    "read_total": 0.8673324160000107,
+    "write_throughput": 198128573.64433944,
+    "read_throughput": 1720205474.2526557,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
-    "size_bytes": 1491992714,
+    "write_cpu_mean": 7.223615487999999,
+    "read_cpu_mean": 2.821151743999999,
+    "write_cpu_total": 7.223615487999999,
+    "read_cpu_total": 2.821151743999999,
+    "write_rss_max": 4659216384,
+    "read_rss_max": 11332583424,
+    "size_bytes": 1491989970,
     "codec": "snappy (default)",
     "dataset_kind": "synthetic",
     "channel_count": 64,
@@ -402,7 +474,7 @@
     "approx_raw_gb": 0.858306884765625,
     "bytes_per_sample": 4.0,
     "source": "Synth64ch_1000Hz_1h_synthetic",
-    "reduction_vs_edf": -2.234831778039433
+    "reduction_vs_edf": -2.2348258286950995
   },
   {
     "dataset": "Synth64ch_1000Hz_1h",
@@ -411,32 +483,40 @@
     "task": "synth64ch1000hz1h",
     "runs": 1,
     "write_times": [
-      4.733552709000001
+      4.4808164579999925
     ],
     "read_times": [
-      0.5828685419999999
+      0.6968187910000552
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 4.733552709000001,
+    "write_cpu_times": [
+      7.650323455999996
+    ],
+    "read_cpu_times": [
+      1.4680012800000002
+    ],
+    "write_rss_list": [
+      8575172608
+    ],
+    "read_rss_list": [
+      12155764736
+    ],
+    "write_mean": 4.4808164579999925,
     "write_std": 0.0,
-    "read_mean": 0.5828685419999999,
+    "read_mean": 0.6968187910000552,
     "read_std": 0.0,
-    "write_total": 4.733552709000001,
-    "read_total": 0.5828685419999999,
-    "write_throughput": 4160.300140433061,
-    "read_throughput": 33786.349032368955,
+    "write_total": 4.4808164579999925,
+    "read_total": 0.6968187910000552,
+    "write_throughput": 241332740.83774173,
+    "read_throughput": 1551863599.2121434,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
-    "size_bytes": 19693,
+    "write_cpu_mean": 7.650323455999996,
+    "read_cpu_mean": 1.4680012800000002,
+    "write_cpu_total": 7.650323455999996,
+    "read_cpu_total": 1.4680012800000002,
+    "write_rss_max": 8575172608,
+    "read_rss_max": 12155764736,
+    "size_bytes": 1081367717,
     "codec": "snappy (default)",
     "dataset_kind": "synthetic",
     "channel_count": 64,
@@ -447,7 +527,7 @@
     "approx_raw_gb": 0.858306884765625,
     "bytes_per_sample": 4.0,
     "source": "Synth64ch_1000Hz_1h_synthetic",
-    "reduction_vs_edf": 0.9999573030473895
+    "reduction_vs_edf": -1.3445440596820184
   },
   {
     "dataset": "Synth64ch_1000Hz_1h",
@@ -456,31 +536,39 @@
     "task": "synth64ch1000hz1h",
     "runs": 1,
     "write_times": [
-      4.643748541000001
+      5.509985709000034
     ],
     "read_times": [
-      0.6873536669999964
+      1.0981126249999988
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 4.643748541000001,
+    "write_cpu_times": [
+      5.374178304000003
+    ],
+    "read_cpu_times": [
+      1.0865336319999983
+    ],
+    "write_rss_list": [
+      8470413312
+    ],
+    "read_rss_list": [
+      12124012544
+    ],
+    "write_mean": 5.509985709000034,
     "write_std": 0.0,
-    "read_mean": 0.6873536669999964,
+    "read_mean": 1.0981126249999988,
     "read_std": 0.0,
-    "write_total": 4.643748541000001,
-    "read_total": 0.6873536669999964,
-    "write_throughput": 99322194.54343618,
-    "read_throughput": 671018891.9382056,
+    "write_total": 5.509985709000034,
+    "read_total": 1.0981126249999988,
+    "write_throughput": 83707530.35649972,
+    "read_throughput": 420018207.1488346,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
+    "write_cpu_mean": 5.374178304000003,
+    "read_cpu_mean": 1.0865336319999983,
+    "write_cpu_total": 5.374178304000003,
+    "read_cpu_total": 1.0865336319999983,
+    "write_rss_max": 8470413312,
+    "read_rss_max": 12124012544,
     "size_bytes": 461227296,
     "codec": "n/a",
     "dataset_kind": "synthetic",
@@ -501,32 +589,40 @@
     "task": "synth64ch1000hz1h",
     "runs": 1,
     "write_times": [
-      4.519772791999998
+      5.723444541999925
     ],
     "read_times": [
-      0.664901915999998
+      1.0396122910000258
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 4.519772791999998,
+    "write_cpu_times": [
+      5.425688575999999
+    ],
+    "read_cpu_times": [
+      1.0286223359999962
+    ],
+    "write_rss_list": [
+      8443772928
+    ],
+    "read_rss_list": [
+      12130189312
+    ],
+    "write_mean": 5.723444541999925,
     "write_std": 0.0,
-    "read_mean": 0.664901915999998,
+    "read_mean": 1.0396122910000258,
     "read_std": 0.0,
-    "write_total": 4.519772791999998,
-    "read_total": 0.664901915999998,
-    "write_throughput": 4347.784922901941,
-    "read_throughput": 29554.735107726865,
+    "write_total": 5.723444541999925,
+    "read_total": 1.0396122910000258,
+    "write_throughput": 80585614.591949,
+    "read_throughput": 443653177.24007994,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
-    "size_bytes": 19651,
+    "write_cpu_mean": 5.425688575999999,
+    "read_cpu_mean": 1.0286223359999962,
+    "write_cpu_total": 5.425688575999999,
+    "read_cpu_total": 1.0286223359999962,
+    "write_rss_max": 8443772928,
+    "read_rss_max": 12130189312,
+    "size_bytes": 461227296,
     "codec": "n/a",
     "dataset_kind": "synthetic",
     "channel_count": 64,
@@ -537,7 +633,7 @@
     "approx_raw_gb": 0.858306884765625,
     "bytes_per_sample": 4.0,
     "source": "Synth64ch_1000Hz_1h_synthetic",
-    "reduction_vs_edf": 0.9999573941087824
+    "reduction_vs_edf": 0.0
   },
   {
     "dataset": "Synth64ch_1000Hz_1h",
@@ -546,32 +642,40 @@
     "task": "synth64ch1000hz1h",
     "runs": 1,
     "write_times": [
-      2.2997972500000046
+      2.1532344580000427
     ],
     "read_times": [
-      1.632154750000005
+      1.840285832999939
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 2.2997972500000046,
+    "write_cpu_times": [
+      2.810960895999999
+    ],
+    "read_cpu_times": [
+      2.209771519999993
+    ],
+    "write_rss_list": [
+      8455913472
+    ],
+    "read_rss_list": [
+      12146540544
+    ],
+    "write_mean": 2.1532344580000427,
     "write_std": 0.0,
-    "read_mean": 1.632154750000005,
+    "read_mean": 1.840285832999939,
     "read_std": 0.0,
-    "write_total": 2.2997972500000046,
-    "read_total": 1.632154750000005,
-    "write_throughput": 55.65708020565715,
-    "read_throughput": 78.42393621070526,
+    "write_total": 2.1532344580000427,
+    "read_total": 1.840285832999939,
+    "write_throughput": 856106549.9166201,
+    "read_throughput": 1001691199.2388636,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
-    "size_bytes": 128,
+    "write_cpu_mean": 2.810960895999999,
+    "read_cpu_mean": 2.209771519999993,
+    "write_cpu_total": 2.810960895999999,
+    "read_cpu_total": 2.209771519999993,
+    "write_rss_max": 8455913472,
+    "read_rss_max": 12146540544,
+    "size_bytes": 1843398123,
     "codec": "n/a",
     "dataset_kind": "synthetic",
     "channel_count": 64,
@@ -582,7 +686,7 @@
     "approx_raw_gb": 0.858306884765625,
     "bytes_per_sample": 4.0,
     "source": "Synth64ch_1000Hz_1h_synthetic",
-    "reduction_vs_edf": 0.9999997224795646
+    "reduction_vs_edf": -2.996723825729516
   },
   {
     "dataset": "Synth64ch_1000Hz_1h",
@@ -591,32 +695,40 @@
     "task": "synth64ch1000hz1h",
     "runs": 1,
     "write_times": [
-      1.8106646250000011
+      2.206506166000054
     ],
     "read_times": [
-      1.5828265829999992
+      1.6442315410000674
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 1.8106646250000011,
+    "write_cpu_times": [
+      2.9077043200000006
+    ],
+    "read_cpu_times": [
+      2.0729763840000004
+    ],
+    "write_rss_list": [
+      8483209216
+    ],
+    "read_rss_list": [
+      12171739136
+    ],
+    "write_mean": 2.206506166000054,
     "write_std": 0.0,
-    "read_mean": 1.5828265829999992,
+    "read_mean": 1.6442315410000674,
     "read_std": 0.0,
-    "write_total": 1.8106646250000011,
-    "read_total": 1.5828265829999992,
-    "write_throughput": 10854.025493539417,
-    "read_throughput": 12416.394955125674,
+    "write_total": 2.206506166000054,
+    "read_total": 1.6442315410000674,
+    "write_throughput": 835437557.9841254,
+    "read_throughput": 1121130495.9390292,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
-    "size_bytes": 19653,
+    "write_cpu_mean": 2.9077043200000006,
+    "read_cpu_mean": 2.0729763840000004,
+    "write_cpu_total": 2.9077043200000006,
+    "read_cpu_total": 2.0729763840000004,
+    "write_rss_max": 8483209216,
+    "read_rss_max": 12171739136,
+    "size_bytes": 1843398123,
     "codec": "n/a",
     "dataset_kind": "synthetic",
     "channel_count": 64,
@@ -627,7 +739,7 @@
     "approx_raw_gb": 0.858306884765625,
     "bytes_per_sample": 4.0,
     "source": "Synth64ch_1000Hz_1h_synthetic",
-    "reduction_vs_edf": 0.9999573897725256
+    "reduction_vs_edf": -2.996723825729516
   },
   {
     "dataset": "Synth64ch_1000Hz_1h",
@@ -636,31 +748,39 @@
     "task": "synth64ch1000hz1h",
     "runs": 1,
     "write_times": [
-      59.958014084
+      48.450143207999986
     ],
     "read_times": [
-      9.774603916000004
+      8.97779587499997
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 59.958014084,
+    "write_cpu_times": [
+      47.285737471999994
+    ],
+    "read_cpu_times": [
+      8.642562047999995
+    ],
+    "write_rss_list": [
+      8503918592
+    ],
+    "read_rss_list": [
+      12195479552
+    ],
+    "write_mean": 48.450143207999986,
     "write_std": 0.0,
-    "read_mean": 9.774603916000004,
+    "read_mean": 8.97779587499997,
     "read_std": 0.0,
-    "write_total": 59.958014084,
-    "read_total": 9.774603916000004,
-    "write_throughput": 17335110.14130406,
-    "read_throughput": 106334618.45943913,
+    "write_total": 48.450143207999986,
+    "read_total": 8.97779587499997,
+    "write_throughput": 21452542.947868522,
+    "read_throughput": 115772155.26745349,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
+    "write_cpu_mean": 47.285737471999994,
+    "read_cpu_mean": 8.642562047999995,
+    "write_cpu_total": 47.285737471999994,
+    "read_cpu_total": 8.642562047999995,
+    "write_rss_max": 8503918592,
+    "read_rss_max": 12195479552,
     "size_bytes": 1039378778,
     "codec": "n/a",
     "dataset_kind": "synthetic",
@@ -681,32 +801,40 @@
     "task": "synth64ch1000hz1h",
     "runs": 1,
     "write_times": [
-      58.57331695900001
+      86.02143470800002
     ],
     "read_times": [
-      9.656301374999998
+      28.982098333999943
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 58.57331695900001,
+    "write_cpu_times": [
+      56.58536959999999
+    ],
+    "read_cpu_times": [
+      11.707795456000003
+    ],
+    "write_rss_list": [
+      8511717376
+    ],
+    "read_rss_list": [
+      12211257344
+    ],
+    "write_mean": 86.02143470800002,
     "write_std": 0.0,
-    "read_mean": 9.656301374999998,
+    "read_mean": 28.982098333999943,
     "read_std": 0.0,
-    "write_total": 58.57331695900001,
-    "read_total": 9.656301374999998,
-    "write_throughput": 335.6477150467943,
-    "read_throughput": 2035.9762228320058,
+    "write_total": 86.02143470800002,
+    "read_total": 28.982098333999943,
+    "write_throughput": 12082788.220496135,
+    "read_throughput": 35862785.57272947,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
-    "size_bytes": 19660,
+    "write_cpu_mean": 56.58536959999999,
+    "read_cpu_mean": 11.707795456000003,
+    "write_cpu_total": 56.58536959999999,
+    "read_cpu_total": 11.707795456000003,
+    "write_rss_max": 8511717376,
+    "read_rss_max": 12211257344,
+    "size_bytes": 1039378778,
     "codec": "n/a",
     "dataset_kind": "synthetic",
     "channel_count": 64,
@@ -717,7 +845,7 @@
     "approx_raw_gb": 0.858306884765625,
     "bytes_per_sample": 4.0,
     "source": "Synth64ch_1000Hz_1h_synthetic",
-    "reduction_vs_edf": 0.9999573745956267
+    "reduction_vs_edf": -1.2535066484876904
   },
   {
     "dataset": "Synth256ch_2000Hz_1h",
@@ -726,32 +854,40 @@
     "task": "synth256ch2000hz1h",
     "runs": 1,
     "write_times": [
-      70.97661729099997
+      56.66937562499993
     ],
     "read_times": [
-      20.037862709000024
+      20.915023957999892
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 70.97661729099997,
+    "write_cpu_times": [
+      56.455917568000025
+    ],
+    "read_cpu_times": [
+      37.161680896000036
+    ],
+    "write_rss_list": [
+      28058599424
+    ],
+    "read_rss_list": [
+      26118586368
+    ],
+    "write_mean": 56.66937562499993,
     "write_std": 0.0,
-    "read_mean": 20.037862709000024,
+    "read_mean": 20.915023957999892,
     "read_std": 0.0,
-    "write_total": 70.97661729099997,
-    "read_total": 20.037862709000024,
-    "write_throughput": 166870305.9549985,
-    "read_throughput": 591075506.1556693,
+    "write_total": 56.66937562499993,
+    "read_total": 20.915023957999892,
+    "write_throughput": 208999486.41352293,
+    "read_throughput": 566285289.6933823,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
-    "size_bytes": 11843889843,
+    "write_cpu_mean": 56.455917568000025,
+    "read_cpu_mean": 37.161680896000036,
+    "write_cpu_total": 56.455917568000025,
+    "read_cpu_total": 37.161680896000036,
+    "write_rss_max": 28058599424,
+    "read_rss_max": 26118586368,
+    "size_bytes": 11843870401,
     "codec": "snappy (default)",
     "dataset_kind": "synthetic",
     "channel_count": 256,
@@ -762,7 +898,7 @@
     "approx_raw_gb": 6.866455078125,
     "bytes_per_sample": 4.0,
     "source": "Synth256ch_2000Hz_1h_synthetic",
-    "reduction_vs_edf": -2.212445551145304
+    "reduction_vs_edf": -2.2124402778468153
   },
   {
     "dataset": "Synth256ch_2000Hz_1h",
@@ -771,32 +907,40 @@
     "task": "synth256ch2000hz1h",
     "runs": 1,
     "write_times": [
-      41.84018308399999
+      40.905381084000055
     ],
     "read_times": [
-      13.509792667
+      49.01490454200007
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 41.84018308399999,
+    "write_cpu_times": [
+      85.49533286399998
+    ],
+    "read_cpu_times": [
+      23.788740607999955
+    ],
+    "write_rss_list": [
+      19223560192
+    ],
+    "read_rss_list": [
+      19223560192
+    ],
+    "write_mean": 40.905381084000055,
     "write_std": 0.0,
-    "read_mean": 13.509792667,
+    "read_mean": 49.01490454200007,
     "read_std": 0.0,
-    "write_total": 41.84018308399999,
-    "read_total": 13.509792667,
-    "write_throughput": 1695.1646664070802,
-    "read_throughput": 5249.969540483697,
+    "write_total": 40.905381084000055,
+    "read_total": 49.01490454200007,
+    "write_throughput": 207581245.66944295,
+    "read_throughput": 173236896.80399233,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
-    "size_bytes": 70926,
+    "write_cpu_mean": 85.49533286399998,
+    "read_cpu_mean": 23.788740607999955,
+    "write_cpu_total": 85.49533286399998,
+    "read_cpu_total": 23.788740607999955,
+    "write_rss_max": 19223560192,
+    "read_rss_max": 19223560192,
+    "size_bytes": 8491189960,
     "codec": "snappy (default)",
     "dataset_kind": "synthetic",
     "channel_count": 256,
@@ -807,7 +951,7 @@
     "approx_raw_gb": 6.866455078125,
     "bytes_per_sample": 4.0,
     "source": "Synth256ch_2000Hz_1h_synthetic",
-    "reduction_vs_edf": 0.9999807625774825
+    "reduction_vs_edf": -1.3030850313972877
   },
   {
     "dataset": "Synth256ch_2000Hz_1h",
@@ -816,31 +960,39 @@
     "task": "synth256ch2000hz1h",
     "runs": 1,
     "write_times": [
-      86.64124824999999
+      311.5301965829999
     ],
     "read_times": [
-      10.086883166999996
+      20.642573083000116
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 86.64124824999999,
+    "write_cpu_times": [
+      217.41502464
+    ],
+    "read_cpu_times": [
+      15.84182067200004
+    ],
+    "write_rss_list": [
+      15197028352
+    ],
+    "read_rss_list": [
+      29727440896
+    ],
+    "write_mean": 311.5301965829999,
     "write_std": 0.0,
-    "read_mean": 10.086883166999996,
+    "read_mean": 20.642573083000116,
     "read_std": 0.0,
-    "write_total": 86.64124824999999,
-    "read_total": 10.086883166999996,
-    "write_throughput": 42553362.54345805,
-    "read_throughput": 365511961.1241157,
+    "write_total": 311.5301965829999,
+    "read_total": 20.642573083000116,
+    "write_throughput": 11834732.197518189,
+    "read_throughput": 178605469.05541888,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
+    "write_cpu_mean": 217.41502464,
+    "read_cpu_mean": 15.84182067200004,
+    "write_cpu_total": 217.41502464,
+    "read_cpu_total": 15.84182067200004,
+    "write_rss_max": 15197028352,
+    "read_rss_max": 29727440896,
     "size_bytes": 3686876448,
     "codec": "n/a",
     "dataset_kind": "synthetic",
@@ -861,32 +1013,40 @@
     "task": "synth256ch2000hz1h",
     "runs": 1,
     "write_times": [
-      85.23720466700001
+      191.71580362500004
     ],
     "read_times": [
-      10.45123137500002
+      20.032938290999937
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 85.23720466700001,
+    "write_cpu_times": [
+      188.787408896
+    ],
+    "read_cpu_times": [
+      15.506079744000033
+    ],
+    "write_rss_list": [
+      15181037568
+    ],
+    "read_rss_list": [
+      31612796928
+    ],
+    "write_mean": 191.71580362500004,
     "write_std": 0.0,
-    "read_mean": 10.45123137500002,
+    "read_mean": 20.032938290999937,
     "read_std": 0.0,
-    "write_total": 85.23720466700001,
-    "read_total": 10.45123137500002,
-    "write_throughput": 831.6204206476455,
-    "read_throughput": 6782.454378491822,
+    "write_total": 191.71580362500004,
+    "read_total": 20.032938290999937,
+    "write_throughput": 19230946.94484136,
+    "read_throughput": 184040723.05540812,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
-    "size_bytes": 70885,
+    "write_cpu_mean": 188.787408896,
+    "read_cpu_mean": 15.506079744000033,
+    "write_cpu_total": 188.787408896,
+    "read_cpu_total": 15.506079744000033,
+    "write_rss_max": 15181037568,
+    "read_rss_max": 31612796928,
+    "size_bytes": 3686876448,
     "codec": "n/a",
     "dataset_kind": "synthetic",
     "channel_count": 256,
@@ -897,7 +1057,7 @@
     "approx_raw_gb": 6.866455078125,
     "bytes_per_sample": 4.0,
     "source": "Synth256ch_2000Hz_1h_synthetic",
-    "reduction_vs_edf": 0.9999807736980071
+    "reduction_vs_edf": 0.0
   },
   {
     "dataset": "Synth256ch_2000Hz_1h",
@@ -906,32 +1066,40 @@
     "task": "synth256ch2000hz1h",
     "runs": 1,
     "write_times": [
-      22.284974541999986
+      27.925698250000096
     ],
     "read_times": [
-      24.409432000000038
+      23.320246417000135
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 22.284974541999986,
+    "write_cpu_times": [
+      32.09651814400013
+    ],
+    "read_cpu_times": [
+      23.732486144000006
+    ],
+    "write_rss_list": [
+      15282470912
+    ],
+    "read_rss_list": [
+      35961421824
+    ],
+    "write_mean": 27.925698250000096,
     "write_std": 0.0,
-    "read_mean": 24.409432000000038,
+    "read_mean": 23.320246417000135,
     "read_std": 0.0,
-    "write_total": 22.284974541999986,
-    "read_total": 24.409432000000038,
-    "write_throughput": 5.743780400500853,
-    "read_throughput": 5.243874580940671,
+    "write_total": 27.925698250000096,
+    "read_total": 23.320246417000135,
+    "write_throughput": 528086248.47903126,
+    "read_throughput": 632376560.7489256,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
-    "size_bytes": 128,
+    "write_cpu_mean": 32.09651814400013,
+    "read_cpu_mean": 23.732486144000006,
+    "write_cpu_total": 32.09651814400013,
+    "read_cpu_total": 23.732486144000006,
+    "write_rss_max": 15282470912,
+    "read_rss_max": 35961421824,
+    "size_bytes": 14747177225,
     "codec": "n/a",
     "dataset_kind": "synthetic",
     "channel_count": 256,
@@ -942,7 +1110,7 @@
     "approx_raw_gb": 6.866455078125,
     "bytes_per_sample": 4.0,
     "source": "Synth256ch_2000Hz_1h_synthetic",
-    "reduction_vs_edf": 0.9999999652822649
+    "reduction_vs_edf": -2.9999108820149973
   },
   {
     "dataset": "Synth256ch_2000Hz_1h",
@@ -951,32 +1119,40 @@
     "task": "synth256ch2000hz1h",
     "runs": 1,
     "write_times": [
-      24.373405374999948
+      27.408259625000028
     ],
     "read_times": [
-      23.420585999999957
+      26.158168959000022
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 24.373405374999948,
+    "write_cpu_times": [
+      30.697947135999925
+    ],
+    "read_cpu_times": [
+      24.568430592000027
+    ],
+    "write_rss_list": [
+      15256518656
+    ],
+    "read_rss_list": [
+      38304268288
+    ],
+    "write_mean": 27.408259625000028,
     "write_std": 0.0,
-    "read_mean": 23.420585999999957,
+    "read_mean": 26.158168959000022,
     "read_std": 0.0,
-    "write_total": 24.373405374999948,
-    "read_total": 23.420585999999957,
-    "write_throughput": 2908.3338544358066,
-    "read_throughput": 3026.653560248242,
+    "write_total": 27.408259625000028,
+    "read_total": 26.158168959000022,
+    "write_throughput": 538055951.9929746,
+    "read_throughput": 563769476.6829642,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
-    "size_bytes": 70886,
+    "write_cpu_mean": 30.697947135999925,
+    "read_cpu_mean": 24.568430592000027,
+    "write_cpu_total": 30.697947135999925,
+    "read_cpu_total": 24.568430592000027,
+    "write_rss_max": 15256518656,
+    "read_rss_max": 38304268288,
+    "size_bytes": 14747177225,
     "codec": "n/a",
     "dataset_kind": "synthetic",
     "channel_count": 256,
@@ -987,7 +1163,7 @@
     "approx_raw_gb": 6.866455078125,
     "bytes_per_sample": 4.0,
     "source": "Synth256ch_2000Hz_1h_synthetic",
-    "reduction_vs_edf": 0.9999807734267747
+    "reduction_vs_edf": -2.9999108820149973
   },
   {
     "dataset": "Synth256ch_2000Hz_1h",
@@ -996,31 +1172,39 @@
     "task": "synth256ch2000hz1h",
     "runs": 1,
     "write_times": [
-      469.3002405830001
+      407.2351504170001
     ],
     "read_times": [
-      81.54378041700011
+      65.42243899999994
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 469.3002405830001,
+    "write_cpu_times": [
+      368.311304192
+    ],
+    "read_cpu_times": [
+      63.940263936000065
+    ],
+    "write_rss_list": [
+      8817065984
+    ],
+    "read_rss_list": [
+      20383858688
+    ],
+    "write_mean": 407.2351504170001,
     "write_std": 0.0,
-    "read_mean": 81.54378041700011,
+    "read_mean": 65.42243899999994,
     "read_std": 0.0,
-    "write_total": 469.3002405830001,
-    "read_total": 81.54378041700011,
-    "write_throughput": 17551317.65491443,
-    "read_throughput": 101011230.48107785,
+    "write_total": 407.2351504170001,
+    "read_total": 65.42243899999994,
+    "write_throughput": 20226244.197156493,
+    "read_throughput": 125902331.43096374,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
+    "write_cpu_mean": 368.311304192,
+    "read_cpu_mean": 63.940263936000065,
+    "write_cpu_total": 368.311304192,
+    "read_cpu_total": 63.940263936000065,
+    "write_rss_max": 8817065984,
+    "read_rss_max": 20383858688,
     "size_bytes": 8236837598,
     "codec": "n/a",
     "dataset_kind": "synthetic",
@@ -1041,32 +1225,40 @@
     "task": "synth256ch2000hz1h",
     "runs": 1,
     "write_times": [
-      463.01277708400016
+      627.4642360000003
     ],
     "read_times": [
-      80.79255075000015
+      66.52782124999976
     ],
-    "write_cpu_times": [],
-    "read_cpu_times": [],
-    "write_rss_list": [],
-    "read_rss_list": [],
-    "write_mean": 463.01277708400016,
+    "write_cpu_times": [
+      429.98041804800005
+    ],
+    "read_cpu_times": [
+      64.70923059200015
+    ],
+    "write_rss_list": [
+      314195968
+    ],
+    "read_rss_list": [
+      29854531584
+    ],
+    "write_mean": 627.4642360000003,
     "write_std": 0.0,
-    "read_mean": 80.79255075000015,
+    "read_mean": 66.52782124999976,
     "read_std": 0.0,
-    "write_total": 463.01277708400016,
-    "read_total": 80.79255075000015,
-    "write_throughput": 153.11240533463408,
-    "read_throughput": 877.4695110118165,
+    "write_total": 627.4642360000003,
+    "read_total": 66.52782124999976,
+    "write_throughput": 13127182.595312089,
+    "read_throughput": 123810421.61364979,
     "write_cv": 0.0,
     "read_cv": 0.0,
-    "write_cpu_mean": null,
-    "read_cpu_mean": null,
-    "write_cpu_total": null,
-    "read_cpu_total": null,
-    "write_rss_max": null,
-    "read_rss_max": null,
-    "size_bytes": 70893,
+    "write_cpu_mean": 429.98041804800005,
+    "read_cpu_mean": 64.70923059200015,
+    "write_cpu_total": 429.98041804800005,
+    "read_cpu_total": 64.70923059200015,
+    "write_rss_max": 314195968,
+    "read_rss_max": 29854531584,
+    "size_bytes": 8236837598,
     "codec": "n/a",
     "dataset_kind": "synthetic",
     "channel_count": 256,
@@ -1077,6 +1269,6 @@
     "approx_raw_gb": 6.866455078125,
     "bytes_per_sample": 4.0,
     "source": "Synth256ch_2000Hz_1h_synthetic",
-    "reduction_vs_edf": 0.9999807715281486
+    "reduction_vs_edf": -1.234096453779511
   }
 ]

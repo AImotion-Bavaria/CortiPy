@@ -15,6 +15,56 @@ cortipy/
 └── ui/          # Config loaders, Streamlit UI, session runner, save helpers
 ```
 
+## Clinical use and privacy
+
+- CortiPy is for research and educational use only; it is not a medical device and must not be used for diagnosis or patient care.
+- Follow institutional approvals and local regulations before any clinical evaluation; validate device interoperability and trigger/latency behavior in your lab.
+- Do not store or share identifiable participant data in repositories or issue trackers. Anonymize runs and keep PHI on secured systems; use synthetic/anonymized data for examples.
+- Questions or incident reports: joh1391@thi.de, Rahul.Mondal@thi.de, Laurens.Kreilinger@thi.de.
+
+## Installation matrix
+
+| Platform | pip | conda | Notes |
+| --- | --- | --- | --- |
+| Windows 10/11 | ✅ `pip install -e .[ui,bids,sbids]` | ✅ `conda env create -f environment.yml` | ActiCHamp binaries supported only on Windows; Streamlit UI works. |
+| macOS (Apple/Intel) | ✅ | ✅ | UNICORN supported; ActiCHamp not supported (Windows-only SDK). |
+| Linux (Ubuntu 22.04+) | ✅ | ✅ | UNICORN supported; ActiCHamp not supported (Windows-only SDK). |
+
+## Hardware compatibility
+
+| Device | Windows | macOS | Linux | Notes |
+| --- | --- | --- | --- | --- |
+| UNICORN | ✅ | ✅ | ✅ | Uses virtual COM/Bluetooth serial; verify port name (e.g., `COM7`, `/dev/tty.Unicorn-DevB`). |
+| ActiCHamp | ✅ | ❌ | ❌ | Windows-only due to vendor SDK binaries shipped in `cortipy/devices/actichamp`. |
+| LSL streams | ✅ | ✅ | ✅ | Any LabStreamingLayer EEG source. |
+| Dummy/Sim | ✅ | ✅ | ✅ | For UI/tests without hardware. |
+| Offline replay | ✅ | ✅ | ✅ | Replays `.npz/.mat`/BIDS data. |
+
+## Support and triage
+
+- Issue/PR templates live in `.github/ISSUE_TEMPLATE` and `.github/pull_request_template.md`; please avoid sharing PHI in tickets.
+- Response target: within 5 business days for new issues and vulnerability reports (use the contacts above).
+- For clinical/academic collaborations, reach out via Rahul.Mondal@thi.de or Laurens.Kreilinger@thi.de.
+
+## Roadmap (abridged)
+
+- CI/CD hardening: lint/type/coverage gates, release automation to PyPI.
+- Streamlit UX: impedance/latency display, clearer device status, structured logging.
+- Docs: quickstart, device setup, BIDS/SBIDS workflows, troubleshooting.
+- Data governance: anonymization guidance, SBOM/dependency provenance for clinical reviews.
+- Packaging: signed wheels/sdists, unified versioning and changelog.
+
+## Format benchmark experiments
+
+- **Experiment 1 – Streaming & numerical validation** (`experiments/format_benchmark/run_experiment1.py`): `PYTHONPATH=. python ...` with no flags. Checks bitwise identity of BIN exports, runs a synthetic sine pipeline surrogate, and renders CortiPy plots for ABR/ASSR/Oddball/VEP/SSVEP/Sine10Hz to compare against EEGLAB references. Outputs live under `experiments/format_benchmark/results_exp1/` (JSON + PNG/PDFs). Hardware/EEGLAB numeric correlations are documented as manual placeholders.
+- **Experiment 2 – File format storage & latency** (`.../run_experiment2.py`): measures export size and read/write latency across BIDS/SBIDS containers and formats (parquet/edf/zarr/hdf5) using synthetic 1 h datasets (19/64/256 ch). Default: run all datasets, containers, and formats; results saved to `results_exp2/experiment2_results.json` with plots. Key flags: `--datasets` labels, `--containers` bids|sbids, `--formats` parquet|edf|zarr|hdf5, `--runs` N, `--keep-artifacts`, `--no-purge`, `--plot-scope all|synthetic|bin`, `--plots-only`, `--results-json PATH`.
+- **Experiment 3 – Streaming access benchmark** (`.../run_experiment3.py`): times streaming-style reads (open handle, single channel, random windows) for the same synthetic datasets exported to BIDS/SBIDS formats. Default: all datasets, containers, formats; results to `results_exp3/experiment3_results.json` with plots. Key flags: `--datasets`, `--containers`, `--formats`, `--runs`, `--window-s` (window duration), `--channel-idx` (0-based), `--keep-artifacts`, `--no-purge`, `--plots-only`, `--results-json PATH`.
+
+## Documentation
+
+- Quickstart, API reference, and workflows will live in a docs site (MkDocs/Sphinx). For now, see the README and in-code docstrings.
+- Release notes are maintained in `CHANGELOG.md`.
+
 ## Installation
 
 Install in editable mode with optional UI extras:

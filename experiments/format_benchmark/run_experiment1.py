@@ -597,7 +597,49 @@ def run_dataset_plots() -> Dict[str, Any]:
                 info_topo, kept_idx = _topomap_info(
                     data_inst.ch_names, params=ds.metadata.get("params") if isinstance(ds.metadata, dict) else None
                 )
-                data_slice = data_inst.get_data()[:, sample]
+                data_arr = data_inst.get_data()
+                # If the synthetic dataset is epoch-stacked (e.g., ABR), average across epochs first
+                params = ds.metadata.get("params") if isinstance(ds.metadata, dict) else {}
+                ep_len_ms = params.get("EpochLength") or params.get("Parameters", {}).get("EpochLength")
+                ep_count = params.get("Epochs") or params.get("Parameters", {}).get("Epochs")
+                if ep_len_ms and ep_count:
+                    ep_samples = int(round((ep_len_ms / 1000.0) * data_inst.info["sfreq"]))
+                    if ep_samples > 0 and data_arr.shape[1] % ep_samples == 0:
+                        n_ep = data_arr.shape[1] // ep_samples
+                        data_arr_epochs = data_arr.reshape(data_arr.shape[0], ep_samples, n_ep, order="F")
+                        # Default: mean across all epochs
+                        data_mean = data_arr_epochs.mean(axis=2)
+                        sample_epoch = sample % ep_samples
+                        data_slice = data_mean[:, sample_epoch]
+                        # For Oddball, isolate likely targets (top 20% positive peak near 300 ms on Pz)
+                        if name == "Oddball":
+                            try:
+                                fs = float(data_inst.info["sfreq"])
+                                ratio_std = params.get("ratio", 0.8) if isinstance(params, dict) else 0.8
+                                target_count = max(1, int(round(n_ep * (1 - ratio_std))))
+                                detect_ch = channel if channel in data_inst.ch_names else data_inst.ch_names[0]
+                                detect_idx = data_inst.ch_names.index(detect_ch)
+                                win_start = int(round(0.26 * fs))
+                                win_end = int(round(0.34 * fs))
+                                win_end = min(win_end, ep_samples)
+                                peaks = data_arr_epochs[detect_idx, win_start:win_end, :].max(axis=0)
+                                order = np.argsort(peaks)[::-1]
+                                target_mask = np.zeros(n_ep, dtype=bool)
+                                target_mask[order[:target_count]] = True
+                                target_epochs = data_arr_epochs[:, :, target_mask]
+                                b_len = int(round(0.05 * fs))
+                                if b_len > 0 and target_epochs.size:
+                                    target_epochs = target_epochs - target_epochs[:, :b_len, :].mean(axis=1, keepdims=True)
+                                if target_epochs.ndim == 3 and target_epochs.shape[2] > 0:
+                                    target_mean = target_epochs.mean(axis=2)
+                                    data_slice = target_mean[:, sample_epoch]
+                            except Exception:
+                                # Fallback to all-epoch mean if target selection fails
+                                pass
+                    else:
+                        data_slice = data_arr[:, sample]
+                else:
+                    data_slice = data_arr[:, sample]
                 kept_idx_list = list(kept_idx) if isinstance(kept_idx, (list, tuple)) else list(kept_idx)
                 values = data_slice if len(kept_idx_list) == 0 else data_slice[kept_idx_list]
                 topo_info = info_topo if len(kept_idx_list) else data_inst.info
@@ -615,6 +657,8 @@ def run_dataset_plots() -> Dict[str, Any]:
                     extrapolate="head",
                     names=topo_info.ch_names if hasattr(topo_info, "ch_names") else None,
                 )
+                if name == "ABR":
+                    im.set_clim(-0.02, 0.06)
                 cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
                 cbar.set_label("Amplitude (uV)", fontsize=12)
                 fig.suptitle(f"{name} Topomap @ {topo_time_ms} ms", fontsize=18)

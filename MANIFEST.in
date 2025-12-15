@@ -1,5 +1,6 @@
 include README.md
-include Dataset.md
+include LICENSE
+include experiments/Dataset.md
 
 graft cortipy/devices/actichamp
 
