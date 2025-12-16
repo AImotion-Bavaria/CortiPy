@@ -1,7 +1,7 @@
 cff-version: 1.2.0
 message: "If you use CortiPy in research or clinical evaluation, please cite this project."
 title: "CortiPy: Python EEG acquisition and analysis toolkit"
-version: "0.1.0"
+version: "v0.1.0"
 authors:
   - family-names: "CortiPy"
     given-names: "Developers"

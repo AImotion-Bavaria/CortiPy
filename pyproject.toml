@@ -31,6 +31,7 @@ dependencies = [
     "pyserial==3.5",
     "tomli>=2.0.1; python_version < \"3.11\"",
 ]
+dynamic = ["version"]
 
 [project.optional-dependencies]
 ui = [
@@ -51,7 +52,6 @@ sbids = [
     "jsonschema>=4.22.0",
     "pyld>=2.0.4",
 ]
-dynamic = ["version"]
 
 [project.urls]
 Homepage = "https://github.com/CortiPy/CortiPy"
