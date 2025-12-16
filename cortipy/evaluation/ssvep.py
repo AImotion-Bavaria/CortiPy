@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Dict, Tuple
 
 import logging
 import matplotlib
 import numpy as np
 import mne
+from cortipy.shared.assr import SpectralResult
 
 try:  # pragma: no cover - optional Streamlit integration
     import streamlit as st
@@ -21,8 +23,16 @@ else:
 
 import matplotlib.pyplot as plt
 
-from cortipy.evaluation.base import EvaluatorBase
-from cortipy.shared import assr_compute_psd, calc_fft, cca_correlations, compute_t2circ, ssvep_f_test, ssvep_snr
+from cortipy.evaluation.base import EvaluatorBase, save_new_figures
+from cortipy.shared import (
+    assr_compute_psd,
+    calc_fft,
+    cca_correlations,
+    compute_t2circ,
+    plot_cortipy_topomap,
+    ssvep_f_test,
+    ssvep_snr,
+)
 
 LOGGER = logging.getLogger("cortipy.evaluation.ssvep")
 
@@ -30,8 +40,17 @@ LOGGER = logging.getLogger("cortipy.evaluation.ssvep")
 class SsvepEvaluator(EvaluatorBase):
     """Python port of EvalSSVEPmain."""
 
-    def __init__(self, show_plots: bool | None = None) -> None:
+    def __init__(
+        self,
+        show_plots: bool | None = None,
+        save_plots: bool | None = None,
+        save_dir: Path | str | None = None,
+        figure_prefix: str | None = None,
+    ) -> None:
         self.show_plots = show_plots
+        self.save_plots = save_plots
+        self.save_dir = Path(save_dir) if save_dir is not None else None
+        self.figure_prefix = figure_prefix
 
     def evaluate(self, context) -> None:  # type: ignore[override]
         LOGGER.debug("SsvepEvaluator.evaluate invoked")
@@ -60,7 +79,8 @@ class SsvepEvaluator(EvaluatorBase):
 
         data_ref = self._apply_reference(params, np.asarray(data, dtype=float))
         spectrum, freq = calc_fft(data_ref, fs)
-        psd_result = assr_compute_psd(data_ref, fs)
+        # Use Welch PSD (aligned with legacy/EEGLAB appearance)
+        psd_result = _compute_ssvep_psd(data_ref, fs)
 
         evaluation = params.setdefault("Evaluation", {})
         evaluation["fft"] = {
@@ -102,27 +122,48 @@ class SsvepEvaluator(EvaluatorBase):
         if f_test:
             evaluation["F_Test"] = f_test
 
+        plot_channel_label = param_block.get("PlotChannelLabel", "Oz")
+        # Resolve channel index from label; default to Oz when available.
+        plot_idx = _channel_idx_from_label(params, plot_channel_label)
+        if plot_idx is None:
+            plot_idx = _channel_idx_from_label(params, "Oz")
+        if plot_idx is None or plot_idx < 0 or plot_idx >= psd_result.dBpsd.shape[0]:
+            plot_idx = 0
+        param_block["PlotChannelLabel"] = plot_channel_label
+        param_block["ChannelIpsi"] = plot_idx + 1
+        param_block["ChannelContra"] = plot_idx + 1
+        topomap_freq = float(param_block.get("TopomapFrequencyHz", stim_freqs[0]))
+
         show_plots = self.show_plots if self.show_plots is not None else not params.get("ReportAnalyzer")
-        if show_plots:
+        save_plots = bool(self.save_plots)
+        render_plots = show_plots or save_plots
+        before_figs = set(plt.get_fignums()) if render_plots else set()
+        if render_plots:
             LOGGER.debug("Rendering SSVEP evaluation plots")
             fig_psd, ax_psd = _get_axes("ssvep_psd")
             plot_ssvep_power_db(
                 ax_psd,
                 psd_result.freq,
-                psd_result.dBpsd.mean(axis=1),
+                _pick_psd_channel(psd_result.dBpsd, plot_idx),
                 smooth=1.0,
                 xlim=(0, 500),
                 ylim=(-100, -20),
-                title="SSVEP PSD @ Oz",
+                title=f"SSVEP PSD @ {plot_channel_label}",
             )
             _show_mpl(fig_psd, "ssvep_psd")
             _plot_ssvep_topomap(
                 context,
                 params,
-                stim_freq=float(stim_freqs[0]),
+                stim_freq=float(topomap_freq),
                 vlim_db=(-80, -20),
                 contours=8,
             )
+
+        if save_plots and self.save_dir:
+            prefix = self.figure_prefix or param_block.get("Filename", "ssvep")
+            saved = save_new_figures(before_figs, self.save_dir, prefix, close=not show_plots)
+            if saved:
+                evaluation["_figures_saved"] = saved
 
         context.params = params
 
@@ -190,10 +231,14 @@ def _plot_ssvep_topomap(
     try:
         raw = getattr(context, "raw", None)
         data = None
-        info = None
+        labels: list[str] = []
+        fs = None
         if raw is not None and isinstance(raw, mne.io.BaseRaw):
-            data = raw.get_data(picks="eeg")
-            info = raw.info
+            picks = mne.pick_types(raw.info, eeg=True, stim=False, meg=False, ref_meg=False, misc=False)
+            if picks.size:
+                data = raw.get_data(picks=picks)
+                labels = [raw.ch_names[idx] for idx in picks]
+                fs = float(raw.info["sfreq"])
         else:
             data_arr = params.get("data")
             fs = float(params.get("Parameters", {}).get("fs", 0))
@@ -202,22 +247,28 @@ def _plot_ssvep_topomap(
                 arr = np.asarray(data_arr, dtype=float)
                 if arr.ndim == 2:
                     data = arr.T
-                    if data.shape[0] < data.shape[1]:
-                        data = data
                 elif arr.ndim == 3:
                     data = arr.mean(axis=0).T
                 if data is not None:
-                    info = mne.create_info(
-                        ch_names=[str(c) for c in ch_labels] if ch_labels else [f"Ch{ii+1}" for ii in range(data.shape[0])],
-                        sfreq=fs,
-                        ch_types="eeg",
-                    )
-        if data is None or info is None:
+                    resolved = []
+                    for entry in ch_labels or []:
+                        if isinstance(entry, dict):
+                            lbl = entry.get("Channel") or entry.get("Position") or entry.get("label") or entry.get("name")
+                        else:
+                            lbl = entry
+                        resolved.append(str(lbl) if lbl is not None else "")
+                    labels = resolved or [f"Ch{ii+1}" for ii in range(data.shape[0])]
+                    if len(labels) < data.shape[0]:
+                        labels += [f"Ch{ii+1}" for ii in range(len(labels), data.shape[0])]
+                    if len(labels) > data.shape[0]:
+                        labels = labels[: data.shape[0]]
+                        data = data[: len(labels), :]
+        if data is None or fs is None or fs <= 0 or not labels:
             return
         n_times = data.shape[1]
         psd, freqs = mne.time_frequency.psd_array_welch(
             data,
-            sfreq=info["sfreq"],
+            sfreq=fs,
             fmin=max(1.0, stim_freq - 2),
             fmax=stim_freq + 2,
             average="mean",
@@ -228,23 +279,23 @@ def _plot_ssvep_topomap(
             return
         freq_idx = int(np.argmin(np.abs(freqs - stim_freq)))
         values = 10 * np.log10(psd[:, freq_idx] + np.finfo(float).eps)
-        fig, ax = plt.subplots(figsize=(8, 8), dpi=200)
-        ax.set_axis_off()
-        im, _ = mne.viz.plot_topomap(
+        # Fixed vlim to match EEGLAB/legacy appearance
+        vlim_fixed = (-60.0, -20.0)
+        fig, _ = plot_cortipy_topomap(
             values,
-            info,
-            axes=ax,
-            show=False,
-            contours=contours,
+            ch_names=labels,
+            params=params,
+            title=f"SSVEP Topomap @ {stim_freq:.1f} Hz",
+            cbar_label="Power (µV²/Hz)",
             cmap="turbo",
-            outlines="head",
-            extrapolate="head",
+            vlim=vlim_fixed,
+            contours=contours,
+            sphere=(0.0, -0.01, 0.0, 0.105),
+            figsize=(12, 12),
+            dpi=400,
+            colorbar=True,
+            show_names=False,
         )
-        im.set_clim(vmin=vlim_db[0], vmax=vlim_db[1])
-        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        cbar.set_label("Power (µV²/Hz)", fontsize=12)
-        fig.suptitle(f"SSVEP Topomap @ {stim_freq:.1f} Hz", fontsize=14)
-        fig.tight_layout()
     except Exception:
         return
 
@@ -282,3 +333,70 @@ def plot_ssvep_power_db(
     ax.set_ylim(*ylim)
     ax.grid(True, alpha=0.3)
     return ax
+
+
+def _channel_idx_from_label(params: dict, label) -> int | None:
+    """Resolve a 0-based channel index from a label or numeric value."""
+    if label is None:
+        return None
+    # numeric labels can be passed directly
+    try:
+        lbl_int = int(label)
+    except (TypeError, ValueError):
+        lbl_int = None
+    else:
+        if lbl_int > 0:
+            return lbl_int - 1
+    labels = params.get("Channels") or params.get("ChannelLabels") or params.get("ChannelLabelsEEG") or []
+    labels = [str(lab).lower() for lab in labels]
+    try:
+        return labels.index(str(label).lower())
+    except ValueError:
+        return None
+
+
+def _pick_psd_channel(psd_db: np.ndarray, idx: int) -> np.ndarray:
+    """Safely pick a PSD channel, falling back to the first channel."""
+    psd_db = np.asarray(psd_db)
+    if psd_db.ndim == 1:
+        return psd_db
+    if psd_db.ndim > 1:
+        # handle shapes (channels, freqs) or (freqs, channels)
+        if psd_db.shape[0] <= psd_db.shape[1]:
+            # likely channels x freqs
+            if idx < 0 or idx >= psd_db.shape[0]:
+                idx = 0
+            return psd_db[idx, :]
+        else:
+            # likely freqs x channels
+            if idx < 0 or idx >= psd_db.shape[1]:
+                idx = 0
+            return psd_db[:, idx]
+    return psd_db
+
+
+def _compute_ssvep_psd(data_ref: np.ndarray, fs: float) -> SpectralResult:
+    """Welch PSD up to 500 Hz with light smoothing and dropped last bin (EEGLAB-like)."""
+    data_ref = np.asarray(data_ref, dtype=float)
+    n_times = data_ref.shape[0]
+    seg = min(2048, n_times)
+    psd, freqs = mne.time_frequency.psd_array_welch(
+        data_ref.T,
+        sfreq=fs,
+        fmin=0.5,
+        fmax=500.0,
+        average="mean",
+        n_fft=seg,
+        n_per_seg=seg,
+    )
+    power_db = 10 * np.log10(psd + np.finfo(float).eps)
+    if freqs.size > 5:
+        k = max(3, int(round(1 / (freqs[1] - freqs[0]))))
+        k = k + (k + 1) % 2  # enforce odd
+        kernel = np.ones(k) / k
+        power_db = np.convolve(power_db, kernel, mode="same")
+    if power_db.shape[1] > 1:
+        power_db = power_db[:, :-1]
+        freqs = freqs[:-1]
+        psd = psd[:, :-1]
+    return SpectralResult(psd=psd, freq=freqs, dBpsd=power_db)

@@ -158,7 +158,7 @@ Open `http://localhost:8501` (default Streamlit port) and configure a run:
 
 - `cortipy.shared.BIDSLoader` can read/write BIDS datasets. Supported inputs include EDF/BDF, BrainVision (`.vhdr/.eeg`), EEGLAB (`.set`), FIF, Parquet, HDF5, and Zarr.
 - `cortipy.shared.ExperimentBinLoader` reads/writes the `.bin` + `params.json` pairs used in `experiments/synData`, returning a `BIDSLoadResult` so you can analyse or re-export them.
-- Extra dependencies for non-default formats: `pyedflib` (EDF/BDF export), `pyarrow` (Parquet), `h5py` (HDF5), `zarr` (Zarr); BrainVision/EEGLAB exports still rely on `pybv` / `eeglabio`.
+- Extra dependencies for non-default formats: `pyedflib` (EDF/BDF export), `pyarrow` or `fastparquet` (Parquet), `h5py` (HDF5), `zarr` (Zarr), `pybv` (BrainVision export), and `eeglabio` (EEGLAB export).
 - Install them via `pip install -e .[bids]` (or combine with `[ui]`) to enable all BIDS I/O features.
 
 ```python

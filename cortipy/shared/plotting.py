@@ -24,6 +24,23 @@ import matplotlib.pyplot as plt
 
 from cortipy.shared.signal import time_vector
 
+__all__ = [
+    "plot_fft_live",
+    "plot_fft_static",
+    "plot_live_erp",
+    "plot_p300_results",
+    "plot_bera_live",
+    "plot_bera_results",
+    "plot_cortipy_topomap",
+    "plot_psd_time",
+    "plot_spectrogram",
+    "plot_alpha_matrix",
+    "apply_standard_montage",
+    "topomap_info_from_labels",
+    "_resolve_channels",
+    "_topomap_info_from_labels",
+]
+
 
 _fft_fig_cache: Dict[str, plt.Figure] = {}
 _vep_fig_cache: Dict[str, plt.Figure] = {}
@@ -70,28 +87,49 @@ def _resolve_channels(params: dict, count: int) -> Sequence[ChannelInfo]:
     return [ChannelInfo(label=f"CH {idx+1}") for idx in range(count)]
 
 
-def _topomap_info_from_labels(labels: Sequence[str]):
+def topomap_info_from_labels(labels: Sequence[str], params: dict | None = None):
+    """Public helper: best-effort Info + kept indices for scalp plots with position aliases."""
+    return _topomap_info_from_labels(labels, params=params)
+
+
+def _topomap_info_from_labels(labels: Sequence[str], params: dict | None = None):
     """Best-effort Info + kept indices for scalp plots."""
-    try:
-        montage = mne.channels.make_standard_montage("standard_1005")
-        known = montage.get_positions().get("ch_pos", {})
-    except Exception:
-        known = {}
+    montage = None
+    known = {}
+    for candidate in ("standard_1005", "standard_1020"):
+        try:
+            montage = mne.channels.make_standard_montage(candidate)
+            known = montage.get_positions().get("ch_pos", {})
+            if known:
+                break
+        except Exception:
+            continue
+
+    pos_map = {}
+    if isinstance(params, dict) and isinstance(params.get("Channels"), Iterable):
+        pos_map = {ch.get("Channel"): ch.get("Position") for ch in params["Channels"] if isinstance(ch, dict)}
 
     kept_idx: list[int] = []
     ch_pos: dict[str, tuple[float, float, float]] = {}
     for idx, label in enumerate(labels):
-        pos = known.get(label)
+        target = pos_map.get(label, label) if pos_map else label
+        pos = known.get(target)
+        if pos is None:
+            pos = known.get(label)
         if pos is None:
             continue
         ch_pos[label] = pos
         kept_idx.append(idx)
 
-    if not ch_pos:
+    if len(ch_pos) < len(labels):
         total = max(1, len(labels))
         for idx, label in enumerate(labels):
+            if label in ch_pos:
+                continue
             angle = 2 * np.pi * idx / total + 0.1 * idx
-            radius = 0.06 + 0.01 * (idx % total) / max(1, total)
+            base_radius = 0.045
+            jitter = (abs(hash(label)) % 1000) / 1e6
+            radius = base_radius + jitter
             ch_pos[label] = (radius * np.cos(angle), radius * np.sin(angle), 0.0)
             kept_idx.append(idx)
 
@@ -102,6 +140,122 @@ def _topomap_info_from_labels(labels: Sequence[str]):
     except Exception:
         pass
     return info, kept_idx
+
+
+def apply_standard_montage(raw: mne.io.BaseRaw, params: dict | None = None) -> None:
+    """Assign a montage using channel labels/params; fallback to synthetic circle to avoid warnings."""
+    info, _ = _topomap_info_from_labels(raw.ch_names, params=params)
+    montage = getattr(info, "get_montage", lambda: None)()
+    if montage is not None:
+        try:
+            raw.set_montage(montage, on_missing="ignore")
+        except Exception:
+            return
+
+
+def plot_cortipy_topomap(
+    values: np.ndarray,
+    ch_names: Sequence[str] | None = None,
+    *,
+    params: dict | None = None,
+    info: mne.Info | None = None,
+    title: str | None = None,
+    cbar_label: str | None = None,
+    cmap: str = "RdBu_r",
+    vlim: tuple[float, float] | None = None,
+    contours: int = 6,
+    show_names: bool = True,
+    sphere: tuple[float, float, float, float] | None = (0.0, -0.01, 0.0, 0.105),
+    figsize: tuple[float, float] = (7.0, 7.0),
+    dpi: int = 200,
+    colorbar: bool = True,
+) -> tuple[plt.Figure, plt.Axes]:
+    """Consistent CortiPy scalp plot helper used across evaluators."""
+    data = np.asarray(values, dtype=float).squeeze()
+    labels = list(ch_names) if ch_names is not None else []
+
+    topo_info = info
+    kept_idx_seq: Sequence[int] | None = None
+    if topo_info is None:
+        if not labels:
+            raise ValueError("plot_cortipy_topomap requires `ch_names` when `info` is not provided.")
+        topo_info, kept_idx_seq = _topomap_info_from_labels(labels, params=params)
+    else:
+        if not labels:
+            labels = list(topo_info["ch_names"])
+        if len(topo_info["ch_names"]) != len(labels):
+            try:
+                topo_info = topo_info.copy().pick_channels(labels, ordered=True)
+            except Exception:
+                labels = list(topo_info["ch_names"])
+
+    kept_idx_arr = np.asarray(kept_idx_seq, dtype=int) if kept_idx_seq else None
+    if kept_idx_arr is not None:
+        if data.shape[0] >= len(labels):
+            data = data[kept_idx_arr]
+            labels = [labels[idx] for idx in kept_idx_arr if idx < len(labels)]
+        elif data.shape[0] == len(kept_idx_arr):
+            labels = [labels[idx] for idx in kept_idx_arr if idx < len(labels)]
+
+    target_len = min(data.shape[0], len(labels), len(topo_info["ch_names"]))
+    data = data[:target_len]
+    labels = labels[:target_len]
+    if len(topo_info["ch_names"]) != target_len:
+        try:
+            topo_info = topo_info.copy().pick_channels(labels, ordered=True)
+        except Exception:
+            pass
+
+    fig, ax = plt.subplots(figsize=figsize, dpi=dpi)
+    ax.set_axis_off()
+    try:
+        im, _ = mne.viz.plot_topomap(
+            data,
+            topo_info,
+            axes=ax,
+            show=False,
+            contours=contours,
+            cmap=cmap,
+            outlines="head",
+            sphere=sphere,
+            extrapolate="head",
+            names=labels if show_names else None,
+            show_names=show_names,
+        )
+    except TypeError:
+        # Older MNE versions may not support some kwargs; fall back to minimal call.
+        im, _ = mne.viz.plot_topomap(
+            data,
+            topo_info,
+            axes=ax,
+            show=False,
+            contours=contours,
+            cmap=cmap,
+            outlines="head",
+            sphere=sphere,
+            extrapolate="head",
+            names=None if show_names else None,
+        )
+        if show_names:
+            try:
+                from mne.channels.layout import _find_topomap_coords
+
+                coords = _find_topomap_coords(topo_info, picks=range(len(labels)))
+                for (x, y), label in zip(coords, labels):
+                    ax.text(x, y, label, ha="center", va="center", fontsize=7)
+            except Exception:
+                pass
+    if vlim is not None:
+        im.set_clim(vmin=vlim[0], vmax=vlim[1])
+    if colorbar:
+        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+        if cbar_label is not None:
+            cbar.set_label(cbar_label, fontsize=12)
+    if title:
+        fig.suptitle(title, fontsize=14)
+    fig.tight_layout()
+    fig.canvas.draw_idle()
+    return fig, ax
 
 
 def plot_fft_live(freq: np.ndarray, data: np.ndarray, ylabel: str, title: str, params: dict) -> None:
@@ -362,11 +516,11 @@ def plot_bera_results(
     if evaluation.get("RN_eclipse") is not None and len(evaluation["RN_eclipse"]) > 0:
         stats_lines.append(f"RN_Eclipse: {evaluation['RN_eclipse'][0]:.3f} µV")
     stats_lines.append(f"Cycles: {num_cycles}")
-    ax.text(
+    zoom_ax.text(
         0.98,
         0.02,
         "\n".join(stats_lines),
-        transform=ax.transAxes,
+        transform=zoom_ax.transAxes,
         ha="right",
         va="bottom",
         fontsize=10,
@@ -503,25 +657,14 @@ def _plot_p300_topomap(avg_signal: np.ndarray, t_ms: np.ndarray, channels: Seque
         return
     data = np.nanmean(avg_signal[window], axis=0)
     labels = [ch.label for ch in channels]
-    info, kept_idx = _topomap_info_from_labels(labels)
-    kept_idx = np.asarray(kept_idx, dtype=int)
-    plot_data = data[kept_idx] if kept_idx.size == data.shape[0] else data
     try:
-        fig, ax = plt.subplots()
-        mne.viz.plot_topomap(
-            plot_data,
-            info,
-            axes=ax,
-            show=False,
-            cmap="RdBu_r",
-            contours=4,
-            names=labels,
-            sphere=(0.0, -0.01, 0.0, 0.11),
-            outlines="head",
+        fig, _ = plot_cortipy_topomap(
+            data,
+            ch_names=labels,
+            title="P300 mean amplitude (250-500 ms)",
+            cbar_label="Amplitude (µV)",
+            contours=6,
         )
-        ax.set_title("P300 mean amplitude (250-500 ms)")
-        fig.tight_layout()
-        fig.canvas.draw_idle()
         _show_in_streamlit(fig, f"p300-results-{filename}-topomap")
     except Exception:
         return

@@ -41,8 +41,11 @@ ui = [
 bids = [
     "pyedflib>=0.1.36",
     "pyarrow>=10",
+    "fastparquet>=2024.2.0",
     "h5py>=3.9",
     "zarr>=2.15",
+    "pybv>=0.8",
+    "eeglabio>=0.0.5",
 ]
 sbids = [
     "jsonschema>=4.22.0",

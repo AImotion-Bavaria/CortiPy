@@ -28,6 +28,7 @@ except ImportError:  # pragma: no cover
     psutil = None
 
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 
 from cortipy.shared import CortiDataset  # type: ignore
 
@@ -241,6 +242,7 @@ def run(
         _plot_synth_multistrip(results, out_root)
         _plot_rw_throughput(results, out_root)
         _plot_extension_box(results, out_root)
+        _plot_extension_rw_pairs(results, out_root)
         return
 
     containers = [c.lower() for c in containers]
@@ -512,6 +514,7 @@ def run(
     _plot_synth_multistrip(results, out_root)
     _plot_rw_throughput(results, out_root)
     _plot_extension_box(results, out_root)
+    _plot_extension_rw_pairs(results, out_root)
 
 
 def _plot_metrics(results: List[Dict[str, Any]], out_root: Path) -> None:
@@ -525,7 +528,10 @@ def _plot_metrics(results: List[Dict[str, Any]], out_root: Path) -> None:
             return
         labels = [f"{r['dataset']}-{r['container']}-{r['format']}" for r in filtered]
         values = [r[metric] * scale for r in filtered]
-        errors = [r.get(error_key, 0.0) if error_key else 0.0 for r in filtered]
+        errors = [
+            (r.get(error_key, 0.0) or 0.0) * scale if error_key else 0.0
+            for r in filtered
+        ]
 
         plt.figure(figsize=(max(6, len(values) * 0.5), 4))
         plt.bar(range(len(values)), values, yerr=errors if error_key else None, alpha=0.8, color="steelblue")
@@ -543,7 +549,7 @@ def _plot_metrics(results: List[Dict[str, Any]], out_root: Path) -> None:
     scope = results[0].get("_scope", "all")
     plot_metric("size_bytes", None, "sizes.png", "Size (bytes)", scope)
     plot_metric("write_mean", "write_std", "write_latency.png", "Write latency (s)", scope)
-    plot_metric("read_mean", "read_std", "read_latency.png", "Read latency (s)", scope)
+    plot_metric("read_mean", "read_std", "read_latency.png", "Read latency (ms)", scope, scale=1000.0)
     plot_metric("write_total", None, "write_total.png", "Write total (s)", scope)
     plot_metric("read_total", None, "read_total.png", "Read total (s)", scope)
     plot_metric("write_throughput", None, "write_throughput.png", "Write throughput (bytes/s)", scope)
@@ -1163,31 +1169,99 @@ def _plot_rw_throughput(results: List[Dict[str, Any]], out_root: Path) -> None:
 
 def _plot_extension_box(results: List[Dict[str, Any]], out_root: Path) -> None:
     """Box plot of throughput by file extension (collapsed across BIDS/SBIDS)."""
-    entries = [
-        r
-        for r in results
-        if r.get("container") in {"bids", "sbids"}
-        and isinstance(r.get("read_throughput"), (int, float))
-    ]
-    if not entries:
-        return
-    buckets: Dict[str, List[float]] = {}
-    for r in entries:
-        fmt = r.get("format")
+
+    def _plot(metric_key: str, ylabel: str, fname_base: str) -> None:
+        entries = [
+            r
+            for r in results
+            if r.get("container") in {"bids", "sbids"} and isinstance(r.get(metric_key), (int, float))
+        ]
+        if not entries:
+            return
+        buckets: Dict[str, List[float]] = {}
+        for r in entries:
+            fmt = r.get("format")
+            if not fmt:
+                continue
+            buckets.setdefault(fmt, []).append(r[metric_key] / (1024 * 1024))
+        if not buckets:
+            return
+        labels = list(buckets.keys())
+        data = [buckets[k] for k in labels]
+
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.boxplot(data, tick_labels=labels, showfliers=False, medianprops={"color": "red", "linewidth": 2})
+        ax.set_ylabel(ylabel, fontsize=13)
+        ax.tick_params(axis="both", labelsize=12)
+        plt.tight_layout()
+        scope = results[0].get("_scope", "all") if results else "all"
+        suffix = f"_{scope}" if scope != "all" else ""
+        out_file = out_root / f"{fname_base}{suffix}.png"
+        plt.savefig(out_file, dpi=150)
+        plt.savefig(out_file.with_suffix(".pdf"))
+        plt.close()
+        print(f"Wrote plot: {out_file}")
+
+    _plot("read_throughput", "Read throughput (MB/s)", "extension_throughput_box")
+    _plot("write_throughput", "Write throughput (MB/s)", "extension_write_throughput_box")
+
+
+def _plot_extension_rw_pairs(results: List[Dict[str, Any]], out_root: Path) -> None:
+    """Box plots per extension with read (left) and write (right) throughput."""
+    fmts = sorted({r.get("format") for r in results if r.get("container") in {"bids", "sbids"}})
+    data = []
+    positions = []
+    colors = []
+    tick_positions: List[float] = []
+    tick_labels: List[str] = []
+    for idx, fmt in enumerate(fmts):
         if not fmt:
             continue
-        buckets.setdefault(fmt, []).append(r["read_throughput"] / (1024 * 1024))
-    if not buckets:
+        reads = [
+            r["read_throughput"] / (1024 * 1024)
+            for r in results
+            if r.get("format") == fmt
+            and r.get("container") in {"bids", "sbids"}
+            and isinstance(r.get("read_throughput"), (int, float))
+        ]
+        writes = [
+            r["write_throughput"] / (1024 * 1024)
+            for r in results
+            if r.get("format") == fmt
+            and r.get("container") in {"bids", "sbids"}
+            and isinstance(r.get("write_throughput"), (int, float))
+        ]
+        if not reads or not writes:
+            continue
+        base = idx * 2.5
+        data.extend([reads, writes])
+        positions.extend([base, base + 0.8])
+        colors.extend(["steelblue", "green"])
+        tick_positions.append(base + 0.4)
+        tick_labels.append(fmt)
+    if not data:
         return
-    labels = list(buckets.keys())
-    data = [buckets[k] for k in labels]
-
-    plt.figure(figsize=(max(6, len(labels) * 1.2), 5))
-    plt.boxplot(data, tick_labels=labels, showfliers=False)
-    plt.ylabel("Read throughput (MB/s)")
-    plt.title("Experiment 2 – Read throughput by extension")
+    fig, ax = plt.subplots(figsize=(max(6, len(tick_labels) * 1.4), 4))
+    bp = ax.boxplot(
+        data,
+        positions=positions,
+        widths=0.6,
+        showfliers=False,
+        patch_artist=True,
+        medianprops={"color": "red", "linewidth": 2},
+    )
+    for patch, color in zip(bp["boxes"], colors):
+        patch.set_facecolor(color)
+    ax.set_yscale("log")
+    ax.set_xticks(tick_positions)
+    ax.set_xticklabels(tick_labels, rotation=0, fontsize=12)
+    ax.set_ylabel("Throughput (MB/s)", fontsize=13)
+    ax.tick_params(axis="y", labelsize=12)
+    ax.legend([Patch(color="steelblue"), Patch(color="green")], ["Read", "Write"], loc="best")
     plt.tight_layout()
-    out_file = out_root / "extension_throughput_box.png"
+    scope = results[0].get("_scope", "all") if results else "all"
+    suffix = f"_{scope}" if scope != "all" else ""
+    out_file = out_root / f"extension_rw_throughput_box{suffix}.png"
     plt.savefig(out_file, dpi=150)
     plt.savefig(out_file.with_suffix(".pdf"))
     plt.close()

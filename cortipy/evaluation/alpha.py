@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, MutableMapping, Optional, Sequence, Tuple
 
 import logging
@@ -22,7 +23,7 @@ else:
 
 import matplotlib.pyplot as plt
 
-from cortipy.evaluation.base import EvaluatorBase
+from cortipy.evaluation.base import EvaluatorBase, save_new_figures
 from cortipy.shared.signal import hann_window, time_vector
 
 EPS = np.finfo(np.float64).eps
@@ -61,8 +62,17 @@ def _is_streamlit_runtime() -> bool:
 class AlphaEvaluator(EvaluatorBase):
     """Port of the MATLAB alpha evaluation stack."""
 
-    def __init__(self, show_plots: bool | None = None) -> None:
+    def __init__(
+        self,
+        show_plots: bool | None = None,
+        save_plots: bool | None = None,
+        save_dir: Path | str | None = None,
+        figure_prefix: str | None = None,
+    ) -> None:
         self.show_plots = show_plots
+        self.save_plots = save_plots
+        self.save_dir = Path(save_dir) if save_dir is not None else None
+        self.figure_prefix = figure_prefix
 
     def evaluate(self, context) -> None:  # type: ignore[override]
         LOGGER.debug("AlphaEvaluator.evaluate invoked")
@@ -91,7 +101,10 @@ class AlphaEvaluator(EvaluatorBase):
             data_ref, trigger_idx = _append_synthetic_trigger(data_ref, time_seconds, trigger_time, period, params)
 
         show_plots = self.show_plots if self.show_plots is not None else not params.get("ReportAnalyzer")
-        LOGGER.debug("AlphaEvaluator show_plots=%s", show_plots)
+        save_plots = bool(self.save_plots)
+        render_plots = show_plots or save_plots
+        before_figs = set(plt.get_fignums()) if render_plots else set()
+        LOGGER.debug("AlphaEvaluator show_plots=%s save_plots=%s", show_plots, save_plots)
 
         trigger_channel = trigger_idx if trigger_idx is not None else data_ref.shape[1] - 1
         trigger_times = trigger_timestamp(data_ref, trigger_channel, without_first_seconds=1, fs=fs)
@@ -127,11 +140,11 @@ class AlphaEvaluator(EvaluatorBase):
             time_axis = T if time_axis is None else time_axis
             freq_axis = F if freq_axis is None else freq_axis
 
-            if show_plots:
+            if render_plots:
                 LOGGER.debug("Calling plot_psd_time for channel %s", ch + 1)
                 plot_psd_time(T, band_power, ch + 1)
 
-            if show_plots and trigger_times.size:
+            if render_plots and trigger_times.size:
                 LOGGER.debug("Calling plot_spectrogram for channel %s", ch + 1)
                 plot_spectrogram(F, power_spectrogram, T, trigger_times, ch + 1)
 
@@ -206,7 +219,7 @@ class AlphaEvaluator(EvaluatorBase):
             params=param_block,
         )
 
-        if show_plots:
+        if render_plots:
             plot_alpha_matrix(
                 evaluation,
                 reference_channel=int(param_block.get("ReferenceChannel", 1)),
@@ -214,6 +227,11 @@ class AlphaEvaluator(EvaluatorBase):
             )
 
         params["Evaluation"] = evaluation
+        if save_plots and self.save_dir:
+            prefix = self.figure_prefix or param_block.get("Filename", "alpha")
+            saved = save_new_figures(before_figs, self.save_dir, prefix, close=not show_plots)
+            if saved:
+                evaluation["_figures_saved"] = saved
         context.params = params
 
 

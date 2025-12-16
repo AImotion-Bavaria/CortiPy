@@ -14,23 +14,22 @@ Outputs are written under experiments/format_benchmark/results_exp1/
 from __future__ import annotations
 
 import hashlib
+import copy
+import contextlib
 import json
-import math
 import shutil
 import subprocess
-import time
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
-import seaborn as sns
 import mne
 import numpy as np
-from mne.channels import make_standard_montage, make_dig_montage
 
 from cortipy.shared import CortiDataset  # type: ignore
 from cortipy.shared.bids import ExperimentBinLoader
+from cortipy.shared.plotting import apply_standard_montage, topomap_info_from_labels
 
 RESULTS_DIR = Path(__file__).resolve().parent / "results_exp1"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -56,6 +55,7 @@ DATASETS = {
         "trace_channel": "Pz",
         "trace_label": "Oddball ERP (Pz)",
         "topo_time_ms": 300,
+        "data_path": "Oddball_scalpdata.bin",
     },
     "VEP": {
         "bin_dir": "VEP",
@@ -141,6 +141,21 @@ def bitwise_identity(bin_dir: Path) -> Dict[str, Any]:
     reexport_path, _ = ds.to_bin(out_dir, overwrite=True)
     reexport_hash = _hash_file(reexport_path)
 
+    report_path = out_dir / "bitwise_report.txt"
+    report_lines = [
+        "Bitwise Identity Check",
+        "======================",
+        f"Dataset root: {bin_dir}",
+        f"Params file:  {params_path}",
+        f"Input BIN:    {data_path}",
+        f"Input SHA256: {original_hash}",
+        f"Output BIN:   {reexport_path}",
+        f"Output SHA256:{reexport_hash}",
+        f"Identical:    {original_hash == reexport_hash}",
+        "",
+    ]
+    report_path.write_text("\n".join(report_lines))
+
     return {
         "dataset": str(bin_dir),
         "original": str(data_path),
@@ -148,25 +163,8 @@ def bitwise_identity(bin_dir: Path) -> Dict[str, Any]:
         "original_hash": original_hash,
         "reexport_hash": reexport_hash,
         "identical": original_hash == reexport_hash,
+        "report": str(report_path),
     }
-
-
-def _synthetic_sine_trigger(
-    sfreq: float = 250.0,
-    duration_s: float = 10.0,
-    freq_hz: float = 10.0,
-    amplitude_uV: float = 20.0,
-    trigger_interval_s: float = 1.0,
-) -> mne.io.Raw:
-    samples = int(round(sfreq * duration_s))
-    t = np.arange(samples) / sfreq
-    sine = amplitude_uV * np.sin(2 * np.pi * freq_hz * t)
-    trigger = np.zeros_like(sine)
-    every = max(1, int(round(trigger_interval_s * sfreq)))
-    trigger[::every] = 1.0
-    data = np.vstack([sine, trigger])
-    info = mne.create_info(ch_names=["Cz", "TRIG"], sfreq=sfreq, ch_types=["eeg", "stim"])
-    return mne.io.RawArray(data, info)
 
 
 def _epoch_and_metrics(raw: mne.io.BaseRaw, tmin: float = -0.2, tmax: float = 0.8) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -190,7 +188,8 @@ def _epoch_and_metrics(raw: mne.io.BaseRaw, tmin: float = -0.2, tmax: float = 0.
 
 
 def pipeline_equivalence_surrogate() -> Dict[str, Any]:
-    raw = _synthetic_sine_trigger()
+    ds = CortiDataset.synthetic_sine_trigger()
+    raw = ds.raw
     evoked, psd_mean, freqs = _epoch_and_metrics(raw)
 
     out_dir = RESULTS_DIR / "pipeline_equivalence"
@@ -242,561 +241,116 @@ def document_placeholders() -> Dict[str, Any]:
 
 
 def run_dataset_plots() -> Dict[str, Any]:
-    """Generate CortiPy plots that mirror the EEGLAB references per dataset."""
+    """Run CortiPy evaluators with their built-in plotting instead of local matplotlib code."""
     syn_root = Path(__file__).resolve().parents[2] / "experiments" / "synData"
     out_root = RESULTS_DIR / "cortipy_plots"
     out_root.mkdir(parents=True, exist_ok=True)
+    refs_root = RESULTS_DIR / "eeglab_refs"
 
     outputs: Dict[str, Any] = {}
     for name, cfg in DATASETS.items():
         bin_dir = syn_root / cfg["bin_dir"]
-        data_path = cfg.get("data_path")
-        channel_count = cfg.get("channel_count")
-        sampling_rate = cfg.get("sampling_rate")
         try:
             ds = CortiDataset.from_bin(
                 bin_dir,
-                data_path=bin_dir / data_path if data_path else None,
-                channel_count=channel_count,
-                sampling_rate=sampling_rate,
+                data_path=bin_dir / cfg["data_path"] if cfg.get("data_path") else None,
+                channel_count=cfg.get("channel_count"),
+                sampling_rate=cfg.get("sampling_rate"),
             )
+            params_from_meta = _params_from_metadata(ds.metadata)
+            if name == "VEP":
+                ds.inject_synthetic_trigger(step_ms=params_from_meta.get("Parameters", {}).get("EpochLength"))
+            apply_standard_montage(ds.raw, params=params_from_meta)
+            _ensure_plot_channel(params_from_meta, ds.raw, cfg.get("trace_channel"))
+            # Persist updated params (e.g., PlotChannelLabel) back into metadata so evaluators use them.
+            meta_copy = dict(ds.metadata or {})
+            meta_copy["params"] = params_from_meta
+            ds.result.metadata = meta_copy
+
+            ds_dir = out_root / name
+            ds_dir.mkdir(parents=True, exist_ok=True)
+            method_key = _method_for_dataset(name)
+            if method_key is None:
+                outputs[name] = {"error": "No evaluator mapping"}
+                continue
+
+            with _suppress_matplotlib_show():
+                evaluation = ds.evaluate(
+                    method_key,
+                    show_plots=False,
+                    save_plots=True,
+                    save_dir=ds_dir,
+                    figure_prefix=name,
+                    store_result=False,
+                )
+
+            saved = {}
+            if isinstance(evaluation, dict):
+                saved_raw = evaluation.get("_figures_saved")
+                if isinstance(saved_raw, dict):
+                    saved = saved_raw
+            if not saved:
+                saved = {str(p.name): [str(p)] for p in sorted(ds_dir.glob("*.png"))}
+            refs_dir = refs_root / name
+            refs = sorted(str(p) for p in refs_dir.glob("*.png")) if refs_dir.exists() else []
+            outputs[name] = {
+                "plots": saved,
+                "eeglab_refs": refs,
+                "evaluation_keys": sorted(evaluation.keys()) if isinstance(evaluation, dict) else [],
+            }
         except Exception as exc:
-            outputs[name] = {"error": f"Load failed: {exc}"}
+            outputs[name] = {"error": f"Failed: {exc}"}
+            plt.close("all")
             continue
-
-        _apply_standard_montage(ds.raw, params=ds.metadata.get("params") if isinstance(ds.metadata, dict) else None)
-
-        ds_dir = out_root / name
-        ds_dir.mkdir(parents=True, exist_ok=True)
-        channel = cfg.get("trace_channel")
-        topo_time_ms = cfg.get("topo_time_ms")
-        topo_freq = cfg.get("topo_freq_hz")
-
-        plots = {}
-
-        # Trace: overlay all channels in gray and mean in blue
-        if channel and channel in ds.raw.ch_names:
-            data_all = ds.raw.get_data(picks="eeg")
-            times = ds.raw.times
-            data_plot = data_all
-            if name == "ABR":
-                fs = float(ds.raw.info["sfreq"])
-                # Epoch around detected triggers to mimic EEGLAB single‑trial view
-                try:
-                    events = mne.find_events(ds.raw, stim_channel=None, shortest_event=1, initial_event=False)
-                except Exception:
-                    events = np.empty((0, 3), dtype=int)
-
-                if len(events) > 0:
-                    tmin, tmax = 0.0, 0.015  # 0‑15 ms as in params
-                    epochs = mne.Epochs(
-                        ds.raw,
-                        events,
-                        event_id=None,
-                        tmin=tmin,
-                        tmax=tmax,
-                        baseline=(None, 0),
-                        preload=True,
-                        picks="eeg",
-                    )
-                    if channel in epochs.ch_names:
-                        data_trials = epochs.get_data(picks=[channel]).squeeze()  # (n_trials, n_times)
-                        t_axis = epochs.times * 1000.0  # ms
-                        mean_wave = data_trials.mean(axis=0)
-                        plt.figure(figsize=(10, 4))
-                        plt.plot(t_axis, data_trials.T, color="gray", alpha=0.15, linewidth=0.6)
-                        plt.plot(t_axis, mean_wave, color="blue", linewidth=1.5, label="Mean")
-                        plt.xlabel("Time (ms)")
-                        plt.ylabel("Amplitude (µV)")
-                        plt.title(f"CortiPy {name} trace ({channel})")
-                        plt.grid(True, alpha=0.3)
-                        # Match MATLAB-like framing: 0–15 ms, -0.3–0.4 µV
-                        plt.xlim(0.0, 15.0)
-                        plt.ylim(-0.3, 0.4)
-                        plt.tight_layout()
-                        trace_path = ds_dir / f"{name}_trace_{channel}.png"
-                        plt.savefig(trace_path, dpi=200)
-                        plt.savefig(trace_path.with_suffix(".pdf"))
-                        plt.close()
-                        plots["trace"] = str(trace_path)
-                        data_plot = data_trials  # reuse for PSD sizing
-                    else:
-                        plots["trace"] = f"Channel {channel} not found in epochs."
-                else:
-                    # Fallback to contiguous 15 ms windows if no events were found
-                    epoch_len = max(1, int(round(fs * 0.015)))
-                    total = data_all.shape[1] // epoch_len
-                    data_one = ds.raw.get_data(picks=[channel]).squeeze()
-                    data_one = data_one[: total * epoch_len]
-                    trials = data_one.reshape(total, epoch_len)
-                    t_axis = (np.arange(epoch_len) / fs) * 1000.0
-                    mean_wave = trials.mean(axis=0)
-                    plt.figure(figsize=(10, 4))
-                    plt.plot(t_axis, trials.T, color="gray", alpha=0.15, linewidth=0.6)
-                    plt.plot(t_axis, mean_wave, color="blue", linewidth=1.5, label="Mean")
-                    plt.xlabel("Time (ms)")
-                    plt.ylabel("Amplitude (µV)")
-                    plt.title(f"CortiPy {name} trace ({channel})")
-                    plt.grid(True, alpha=0.3)
-                    plt.xlim(0.0, 15.0)
-                    plt.ylim(-0.3, 0.4)
-                    plt.tight_layout()
-                    trace_path = ds_dir / f"{name}_trace_{channel}.png"
-                    plt.savefig(trace_path, dpi=200)
-                    plt.savefig(trace_path.with_suffix(".pdf"))
-                    plt.close()
-                    plots["trace"] = str(trace_path)
-                    data_plot = trials
-            elif name == "Oddball":
-                # Construct events from fixed-length epochs (600 ms) and classify targets by peak size
-                fs = float(ds.raw.info["sfreq"])
-                epoch_len = int(round(0.6 * fs))
-                total = data_all.shape[1] // epoch_len
-                data_one = ds.raw.get_data(picks=[channel]).squeeze()[: total * epoch_len]
-                trials = data_one.reshape(total, epoch_len)
-                # Estimate target ratio (defaults to 20% like the MATLAB script)
-                params = ds.metadata.get("params") if isinstance(ds.metadata, dict) else {}
-                ratio_std = params.get("ratio", 0.8) if isinstance(params, dict) else 0.8
-                target_count = max(1, int(round(total * (1 - ratio_std))))
-                # Identify trials with largest positive peak around 300 ms
-                win_start = int(round(0.26 * fs))
-                win_end = int(round(0.34 * fs))
-                win_end = min(win_end, trials.shape[1])
-                peak_vals = trials[:, win_start:win_end].max(axis=1)
-                top_idx = np.argsort(peak_vals)[::-1][:target_count]
-                target_idx = np.zeros(total, dtype=bool)
-                target_idx[top_idx] = True
-                standard = trials[~target_idx]
-                target = trials[target_idx] if target_idx.any() else trials
-                t_axis = (np.arange(epoch_len) / fs) * 1000.0  # ms
-                # Baseline correct each trial (first 50 ms)
-                b_len = int(round(0.05 * fs))
-                if b_len > 0:
-                    standard = standard - standard[:, :b_len].mean(axis=1, keepdims=True) if len(standard) else standard
-                    target = target - target[:, :b_len].mean(axis=1, keepdims=True)
-                mean_std = standard.mean(axis=0) if len(standard) else trials.mean(axis=0)
-                mean_tgt = target.mean(axis=0)
-                # Align baselines between conditions to reduce offset
-                if b_len > 0:
-                    base_common = 0.5 * (mean_std[:b_len].mean() + mean_tgt[:b_len].mean())
-                    mean_std = mean_std - base_common
-                    mean_tgt = mean_tgt - base_common
-                # Remove residual DC so both traces hover near zero overall
-                dc_common = 0.5 * (mean_std.mean() + mean_tgt.mean())
-                mean_std = mean_std - dc_common
-                mean_tgt = mean_tgt - dc_common
-                # Optional: align first dip depth (around 80–150 ms) so target starts slightly lower
-                dip_window = (t_axis >= 80) & (t_axis <= 150)
-                if dip_window.any():
-                    min_std = mean_std[dip_window].min()
-                    min_tgt = mean_tgt[dip_window].min()
-                    dip_shift = min_std - min_tgt
-                    mean_tgt = mean_tgt + dip_shift
-                # Stretch time axis so P300 peak aligns near 300 ms
-                peak_loc = np.argmax(mean_tgt) / fs * 1000.0
-                stretch = 300.0 / peak_loc if peak_loc > 1e-6 else 1.0
-                t_axis_plot = t_axis * stretch
-                # Scale amplitude to match reference magnitude (target peak ~0.3 µV)
-                tgt_peak = float(mean_tgt.max()) if mean_tgt.size else 0.0
-                amp_scale = 0.3 / tgt_peak if tgt_peak > 1e-6 else 1.0
-                mean_std_plot = mean_std * amp_scale
-                mean_tgt_plot = mean_tgt * amp_scale
-
-                plt.figure(figsize=(10, 4))
-                plt.plot(t_axis_plot, mean_std_plot, color="blue", label="Standard", linewidth=1.5)
-                plt.plot(t_axis_plot, mean_tgt_plot, color="red", label="Target", linewidth=1.5)
-                plt.xlabel("Time (ms)")
-                plt.ylabel("Amplitude (µV)")
-                plt.title(f"CortiPy {name} ERP ({channel})")
-                plt.grid(True, alpha=0.3)
-                plt.xlim(0, 600)
-                plt.ylim(-0.15, 0.35)
-                plt.legend()
-                plt.tight_layout()
-                trace_path = ds_dir / f"{name}_trace_{channel}.png"
-                plt.savefig(trace_path, dpi=200)
-                plt.savefig(trace_path.with_suffix(".pdf"))
-                plt.close()
-                plots["trace"] = str(trace_path)
-                data_plot = trials
-            elif name == "VEP":
-                # Use fixed epochs (500 ms) at 1 kHz, single condition
-                fs = float(ds.raw.info["sfreq"])
-                epoch_len = int(round(0.5 * fs))
-                total = data_all.shape[1] // epoch_len
-                data_one = ds.raw.get_data(picks=[channel]).squeeze()[: total * epoch_len]
-                trials = data_one.reshape(total, epoch_len)
-                # Baseline correct first 50 ms
-                b_len = int(round(0.05 * fs))
-                if b_len > 0:
-                    trials = trials - trials[:, :b_len].mean(axis=1, keepdims=True)
-                mean_wave = trials.mean(axis=0)
-                t_axis = (np.arange(epoch_len) / fs) * 1000.0
-
-                plt.figure(figsize=(10, 4))
-                plt.plot(t_axis, trials.T, color="gray", alpha=0.15, linewidth=0.6)
-                plt.plot(t_axis, mean_wave, color="blue", linewidth=1.5, label="Mean")
-                plt.xlabel("Time (ms)")
-                plt.ylabel("Amplitude (µV)")
-                plt.title(f"CortiPy {name} trace ({channel})")
-                plt.grid(True, alpha=0.3)
-                plt.xlim(0, 500)
-                plt.ylim(-0.6, 0.7)
-                plt.tight_layout()
-                trace_path = ds_dir / f"{name}_trace_{channel}.png"
-                plt.savefig(trace_path, dpi=200)
-                plt.savefig(trace_path.with_suffix(".pdf"))
-                plt.close()
-                plots["trace"] = str(trace_path)
-                data_plot = trials
-            else:
-                times_plot = times
-                data_plot = data_all
-                xlab = "Time (s)"
-
-                mean_wave = data_plot.mean(axis=0)
-                plt.figure(figsize=(10, 4))
-                plt.plot(times_plot, data_plot.T, color="gray", alpha=0.15, linewidth=0.6)
-                plt.plot(times_plot, mean_wave, color="blue", linewidth=1.5, label="Mean")
-                plt.xlabel(xlab)
-                plt.ylabel("Amplitude (µV)")
-                plt.title(f"CortiPy {name} trace ({channel})")
-                plt.grid(True, alpha=0.3)
-                plt.tight_layout()
-                trace_path = ds_dir / f"{name}_trace_{channel}.png"
-                plt.savefig(trace_path, dpi=200)
-                plt.savefig(trace_path.with_suffix(".pdf"))
-                plt.close()
-                plots["trace"] = str(trace_path)
-
-            # PSD at channel (mean over channels for simplicity)
-            n_times = data_plot.shape[-1]
-            try:
-                if name == "ASSR":
-                    # Match EEGLAB view: single channel (T8) up to 500 Hz in dB
-                    data_chan = ds.raw.get_data(picks=[channel]).squeeze()
-                    # Use shorter windows and smooth to mimic EEGLAB spectopo appearance
-                    seg = min(1024, n_times)
-                    psd, freqs = mne.time_frequency.psd_array_welch(
-                        data_chan,
-                        sfreq=ds.raw.info["sfreq"],
-                        fmin=0.5,
-                        fmax=500.0,
-                        average="mean",
-                        n_fft=seg,
-                        n_per_seg=seg,
-                    )
-                    power_db = 10 * np.log10(psd + np.finfo(float).eps)
-                    # Drop the last bin to avoid edge artifacts
-                    if power_db.size > 1:
-                        power_db = power_db[:-1]
-                        freqs = freqs[:-1]
-                    ypad = 5
-                    ymin = np.nanmin(power_db) - ypad
-                    ymax = np.nanmax(power_db) + ypad
-                    plt.figure(figsize=(10, 4))
-                    plt.plot(freqs, power_db, color="blue", linewidth=1.25)
-                    plt.xlabel("Frequency (Hz)")
-                    plt.ylabel("Power (µV^2/Hz)")
-                    plt.title(f"{name} PSD @ {channel}")
-                    plt.xlim(0, 500)
-                    plt.ylim(ymin, ymax)
-                    plt.grid(True, alpha=0.3)
-                    plt.tight_layout()
-                    psd_path = ds_dir / f"{name}_psd_{channel}.png"
-                    plt.savefig(psd_path, dpi=200)
-                    plt.savefig(psd_path.with_suffix(".pdf"))
-                    plt.close()
-                    plots["psd"] = str(psd_path)
-                elif name == "SSVEP":
-                    # Single channel (Oz) up to 500 Hz to mirror EEGLAB PSD at Oz
-                    picks_ch = [channel] if channel in ds.raw.ch_names else "eeg"
-                    data_chan = ds.raw.get_data(picks=picks_ch).squeeze()
-                    seg = min(2048, n_times)
-                    psd, freqs = mne.time_frequency.psd_array_welch(
-                        data_chan,
-                        sfreq=ds.raw.info["sfreq"],
-                        fmin=0.5,
-                        fmax=500.0,
-                        average="mean",
-                        n_fft=seg,
-                        n_per_seg=seg,
-                    )
-                    power_db = 10 * np.log10(psd + np.finfo(float).eps)
-                    # Very light smoothing (~1 Hz window) for closer EEGLAB appearance
-                    if freqs.size > 5:
-                        k = max(3, int(round(1 / (freqs[1] - freqs[0]))))
-                        k = k + (k + 1) % 2  # make odd
-                        kernel = np.ones(k) / k
-                        power_db = np.convolve(power_db, kernel, mode="same")
-                    # Drop last bin to avoid edge spike
-                    if power_db.size > 1:
-                        power_db = power_db[:-1]
-                        freqs = freqs[:-1]
-                    plt.figure(figsize=(10, 4))
-                    plt.plot(freqs, power_db, color="blue", linewidth=1.25)
-                    plt.xlabel("Frequency (Hz)")
-                    plt.ylabel("Power (µV^2/Hz)")
-                    plt.title(f"{name} PSD @ {channel}")
-                    plt.xlim(0, 500)
-                    plt.ylim(-100, -20)
-                    plt.grid(True, alpha=0.3)
-                    plt.tight_layout()
-                    psd_path = ds_dir / f"{name}_psd_{channel}.png"
-                    plt.savefig(psd_path, dpi=200)
-                    plt.savefig(psd_path.with_suffix(".pdf"))
-                    plt.close()
-                    plots["psd"] = str(psd_path)
-                else:
-                    sfreq = float(ds.raw.info["sfreq"])
-                    fmax = min(60.0, sfreq / 2 - 0.1)
-                    fmin = min(1.0, max(0.1, fmax / 4)) if fmax <= 1.0 else 1.0
-                    n_per_seg = min(1024, n_times)
-                    n_fft = max(2048, n_per_seg)  # allow zero padding for finer bins
-                    psd, freqs = mne.time_frequency.psd_array_welch(
-                        data_all,
-                        sfreq=sfreq,
-                        fmin=fmin,
-                        fmax=fmax,
-                        average="mean",
-                        n_fft=n_fft,
-                        n_per_seg=n_per_seg,
-                    )
-                    if freqs.size == 0:
-                        raise ValueError(f"No frequencies available between {fmin} and {fmax} Hz")
-                    psd_mean = psd.mean(axis=0) if psd.ndim > 1 else psd
-                    power_db = 10 * np.log10(psd_mean + np.finfo(float).eps)
-                    plt.figure(figsize=(6.5, 3.2))
-                    plt.plot(freqs, power_db, color="blue", linewidth=1.25)
-                    plt.xlabel("Frequency (Hz)")
-                    plt.ylabel("Power (µV^2/Hz)")
-                    plt.title(f"{name} PSD (mean of EEG)")
-                    plt.grid(True, alpha=0.3)
-                    plt.tight_layout()
-                    psd_path = ds_dir / f"{name}_psd_{channel}.png"
-                    plt.savefig(psd_path, dpi=200)
-                    plt.savefig(psd_path.with_suffix(".pdf"))
-                    plt.close()
-                    plots["psd"] = str(psd_path)
-            except Exception as exc:
-                plots["psd"] = f"PSD failed: {exc}"
-        else:
-            # Fallback: pick the first EEG channel if available to avoid empty plots
-            if len(ds.raw.ch_names) > 0:
-                fallback = [ch for ch, ct in zip(ds.raw.ch_names, ds.raw.get_channel_types()) if ct == "eeg"]
-                if fallback:
-                    cfg["trace_channel"] = fallback[0]
-                    return run_dataset_plots()  # retry with fallback (rare)
-            plots["trace"] = f"Channel {channel} not found."
-
-        # Topomap at time (for ABR/Oddball/VEP)
-        if topo_time_ms is not None:
-            sample = int(round((topo_time_ms / 1000.0) * ds.raw.info["sfreq"]))
-            if 0 <= sample < ds.raw.n_times:
-                data_inst = ds.raw.copy().pick(picks="eeg")
-                info_topo, kept_idx = _topomap_info(
-                    data_inst.ch_names, params=ds.metadata.get("params") if isinstance(ds.metadata, dict) else None
-                )
-                data_arr = data_inst.get_data()
-                # If the synthetic dataset is epoch-stacked (e.g., ABR), average across epochs first
-                params = ds.metadata.get("params") if isinstance(ds.metadata, dict) else {}
-                ep_len_ms = params.get("EpochLength") or params.get("Parameters", {}).get("EpochLength")
-                ep_count = params.get("Epochs") or params.get("Parameters", {}).get("Epochs")
-                if ep_len_ms and ep_count:
-                    ep_samples = int(round((ep_len_ms / 1000.0) * data_inst.info["sfreq"]))
-                    if ep_samples > 0 and data_arr.shape[1] % ep_samples == 0:
-                        n_ep = data_arr.shape[1] // ep_samples
-                        data_arr_epochs = data_arr.reshape(data_arr.shape[0], ep_samples, n_ep, order="F")
-                        # Default: mean across all epochs
-                        data_mean = data_arr_epochs.mean(axis=2)
-                        sample_epoch = sample % ep_samples
-                        data_slice = data_mean[:, sample_epoch]
-                        # For Oddball, isolate likely targets (top 20% positive peak near 300 ms on Pz)
-                        if name == "Oddball":
-                            try:
-                                fs = float(data_inst.info["sfreq"])
-                                ratio_std = params.get("ratio", 0.8) if isinstance(params, dict) else 0.8
-                                target_count = max(1, int(round(n_ep * (1 - ratio_std))))
-                                detect_ch = channel if channel in data_inst.ch_names else data_inst.ch_names[0]
-                                detect_idx = data_inst.ch_names.index(detect_ch)
-                                win_start = int(round(0.26 * fs))
-                                win_end = int(round(0.34 * fs))
-                                win_end = min(win_end, ep_samples)
-                                peaks = data_arr_epochs[detect_idx, win_start:win_end, :].max(axis=0)
-                                order = np.argsort(peaks)[::-1]
-                                target_mask = np.zeros(n_ep, dtype=bool)
-                                target_mask[order[:target_count]] = True
-                                target_epochs = data_arr_epochs[:, :, target_mask]
-                                b_len = int(round(0.05 * fs))
-                                if b_len > 0 and target_epochs.size:
-                                    target_epochs = target_epochs - target_epochs[:, :b_len, :].mean(axis=1, keepdims=True)
-                                if target_epochs.ndim == 3 and target_epochs.shape[2] > 0:
-                                    target_mean = target_epochs.mean(axis=2)
-                                    data_slice = target_mean[:, sample_epoch]
-                            except Exception:
-                                # Fallback to all-epoch mean if target selection fails
-                                pass
-                    else:
-                        data_slice = data_arr[:, sample]
-                else:
-                    data_slice = data_arr[:, sample]
-                kept_idx_list = list(kept_idx) if isinstance(kept_idx, (list, tuple)) else list(kept_idx)
-                values = data_slice if len(kept_idx_list) == 0 else data_slice[kept_idx_list]
-                topo_info = info_topo if len(kept_idx_list) else data_inst.info
-                fig, ax = plt.subplots(figsize=(12, 12), dpi=400)
-                ax.set_axis_off()
-                im, _ = mne.viz.plot_topomap(
-                    values,
-                    topo_info,
-                    axes=ax,
-                    show=False,
-                    contours=6,
-                    cmap="RdBu_r",
-                    outlines="head",
-                    sphere=(0.0, -0.01, 0.0, 0.105),  # larger sphere to fill circle
-                    extrapolate="head",
-                    names=topo_info.ch_names if hasattr(topo_info, "ch_names") else None,
-                )
-                if name == "ABR":
-                    im.set_clim(-0.02, 0.06)
-                cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-                cbar.set_label("Amplitude (uV)", fontsize=12)
-                fig.suptitle(f"{name} Topomap @ {topo_time_ms} ms", fontsize=18)
-                topo_base = ds_dir / f"{name}_topomap_{topo_time_ms}ms"
-                fig.savefig(topo_base.with_suffix(".svg"), bbox_inches="tight")
-                fig.savefig(topo_base.with_suffix(".png"), dpi=400, bbox_inches="tight")
-                fig.savefig(topo_base.with_suffix(".pdf"), bbox_inches="tight")
-                plt.close(fig)
-                plots["topomap_time"] = str(topo_base.with_suffix(".svg"))
-            else:
-                plots["topomap_time"] = f"Time {topo_time_ms} ms out of range."
-
-        # Topomap at frequency (for ASSR/SSVEP/Sine)
-        if topo_freq is not None:
-            data_inst = ds.raw.copy().pick(picks="eeg")
-            info_topo, kept_idx = _topomap_info(
-                data_inst.ch_names, params=ds.metadata.get("params") if isinstance(ds.metadata, dict) else None
-            )
-            data = data_inst.get_data()
-            n_times = data.shape[1]
-            psd, freqs = mne.time_frequency.psd_array_welch(
-                data,
-                sfreq=data_inst.info["sfreq"],
-                fmin=max(1.0, topo_freq - 2),
-                fmax=topo_freq + 2,
-                average="mean",
-                n_fft=min(1024, n_times),
-                n_per_seg=min(1024, n_times),
-            )
-            if psd.ndim == 2:
-                freq_idx = int(np.argmin(np.abs(freqs - topo_freq)))
-                band_power = psd[:, freq_idx]
-                # Convert to dB for ASSR/SSVEP to match EEGLAB power maps
-                if name in ("ASSR", "SSVEP"):
-                    band_power = 10 * np.log10(band_power + np.finfo(float).eps)
-                    cmap = "turbo"
-                    vmin, vmax = -80, -20
-                    cbar_label = "Power (µV²/Hz)"
-                else:
-                    cmap = "RdBu_r"
-                    vmin = vmax = None
-                    cbar_label = "Amplitude (µV)"
-                kept_idx_list = list(kept_idx) if isinstance(kept_idx, (list, tuple)) else list(kept_idx)
-                values = band_power if len(kept_idx_list) == 0 else band_power[kept_idx_list]
-                topo_info = info_topo if len(kept_idx_list) else data_inst.info
-                fig, ax = plt.subplots(figsize=(12, 12), dpi=400)
-                ax.set_axis_off()
-                contour_count = 8 if name == "ASSR" else 6
-                im, _ = mne.viz.plot_topomap(
-                    values,
-                    topo_info,
-                    axes=ax,
-                    show=False,
-                    contours=contour_count,
-                    cmap=cmap,
-                    outlines="head",
-                    sphere=(0.0, -0.01, 0.0, 0.105),
-                    extrapolate="head",
-                    names=topo_info.ch_names if hasattr(topo_info, "ch_names") else None,
-                )
-                if vmin is not None or vmax is not None:
-                    im.set_clim(vmin=vmin, vmax=vmax)
-                cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-                cbar.set_label(cbar_label, fontsize=12)
-                fig.suptitle(f"{name} Topomap @ {topo_freq} Hz", fontsize=18)
-                topo_base = ds_dir / f"{name}_topomap_{topo_freq}Hz"
-                fig.savefig(topo_base.with_suffix(".svg"), bbox_inches="tight")
-                fig.savefig(topo_base.with_suffix(".png"), dpi=400, bbox_inches="tight")
-                fig.savefig(topo_base.with_suffix(".pdf"), bbox_inches="tight")
-                plt.close(fig)
-                plots["topomap_freq"] = str(topo_base.with_suffix(".svg"))
-            else:
-                plots["topomap_freq"] = "PSD shape unexpected."
-
-        outputs[name] = plots
 
     return outputs
 
 
-def _apply_standard_montage(raw: mne.io.BaseRaw, params: Optional[dict] = None) -> None:
-    """Assign a montage using channel labels; fallback to synthetic circle to avoid warnings."""
-    info, _ = _topomap_info(raw.ch_names, params=params)
-    montage = getattr(info, "get_montage", lambda: None)()
-    if montage is not None:
-        try:
-            raw.set_montage(montage, on_missing="ignore")
-        except Exception:
-            pass
+def _params_from_metadata(meta: Any) -> dict[str, Any]:
+    if not isinstance(meta, dict):
+        return {}
+    params = meta.get("params")
+    if isinstance(params, dict):
+        return copy.deepcopy(params)
+    return copy.deepcopy(meta)
 
 
-def _topomap_info(channel_labels: Sequence[str], params: Optional[dict] = None):
-    """Build Info for topomaps using known positions; fallback to circle."""
-    montage = None
-    for candidate in ("standard_1005", "standard_1020"):
-        try:
-            montage = mne.channels.make_standard_montage(candidate)
-            break
-        except Exception:
-            continue
+def _method_for_dataset(name: str) -> Optional[str]:
+    mapping = {
+        "ABR": "bera",
+        "ASSR": "assr",
+        "Oddball": "p300",
+        "VEP": "vep",
+        "SSVEP": "ssvep",
+        "Sine10Hz": "ssvep",
+    }
+    return mapping.get(name)
 
-    known = montage.get_positions().get("ch_pos", {}) if montage is not None else {}
 
-    # Map channel -> desired position label from params
-    pos_map = {}
-    if isinstance(params, dict) and isinstance(params.get("Channels"), list):
-        pos_map = {ch.get("Channel"): ch.get("Position") for ch in params["Channels"] if isinstance(ch, dict)}
-
-    kept_idx: list[int] = []
-    ch_pos: dict[str, tuple[float, float, float]] = {}
-    for idx, label in enumerate(channel_labels):
-        target = pos_map.get(label, label) if pos_map else label
-        pos = known.get(target)
-        if pos is None:
-            pos = known.get(label)
-        if pos is None:
-            continue
-        ch_pos[label] = pos
-        kept_idx.append(idx)
-
-    # If nothing matched, fall back to a small circle with all channels.
-    if not ch_pos:
-        total = max(1, len(channel_labels))
-        for idx, label in enumerate(channel_labels):
-            angle = 2 * np.pi * idx / total + 0.1 * idx
-            base_radius = 0.045
-            # deterministic jitter to avoid co-planar issues
-            jitter = (abs(hash(label)) % 1000) / 1e6
-            radius = base_radius + jitter
-            ch_pos[label] = (radius * np.cos(angle), radius * np.sin(angle), 0.0)
-            kept_idx.append(idx)
-
-    info = mne.create_info(list(ch_pos.keys()), sfreq=1.0, ch_types="eeg")
+def _ensure_plot_channel(params: dict, raw: mne.io.BaseRaw, preferred_label: Optional[str]) -> None:
+    """Set PlotChannelLabel/ChannelIpsi if a preferred label is given and found."""
+    if not preferred_label or not isinstance(preferred_label, str):
+        return
+    params_block = params.setdefault("Parameters", {})
+    params_block["PlotChannelLabel"] = preferred_label
     try:
-        custom_montage = mne.channels.make_dig_montage(ch_pos=ch_pos, coord_frame="head")
-        info.set_montage(custom_montage)
+        names_lower = [ch.lower() for ch in raw.ch_names]
+        idx = names_lower.index(preferred_label.lower())
+        params_block["ChannelIpsi"] = idx + 1  # 1-based for evaluators
     except Exception:
-        pass
-    return info, kept_idx
+        return
+
+
+@contextlib.contextmanager
+def _suppress_matplotlib_show():
+    """Prevent evaluator plots from blocking via plt.show()."""
+    original = getattr(plt, "show", None)
+    try:
+        plt.show = lambda *args, **kwargs: None  # type: ignore[assignment]
+        yield
+    finally:
+        if original is not None:
+            plt.show = original  # type: ignore[assignment]
 
 
 def copy_eeglab_refs() -> None:
@@ -837,6 +391,33 @@ def _pdf_to_png(src: Path, dst: Path) -> None:
             pass
 
 
+def _pick_best_corti_image(directory: Path, kind: str) -> Optional[Path]:
+    """Select the most relevant CortiPy image for a kind when multiple exist."""
+    candidates = sorted(directory.glob(f"*{kind}*.png"))
+    if not candidates:
+        return None
+
+    def score(path: Path) -> tuple[int, int]:
+        name = path.name.lower()
+        penalty = 0
+        if "dbg" in name:
+            penalty += 5
+        if "figure" in name and kind != "figure":
+            penalty += 3
+        if "psd_2" in name or "psd-2" in name or "psd_3" in name or "psd-3" in name:
+            penalty += 2
+        # Prefer specific peak topomaps for VEP (so we match P100 vs N75/N135)
+        if "p100" in name:
+            penalty -= 3 if kind == "topomap" else 0
+        if "n75" in name or "n135" in name:
+            penalty += 1
+        if name.count(kind) > 1:
+            penalty += 1
+        return penalty, len(name)
+
+    return sorted(candidates, key=score)[0]
+
+
 def make_side_by_side() -> None:
     """Create side-by-side panels of CortiPy vs EEGLAB for quick comparison."""
     import matplotlib.image as mpimg
@@ -845,7 +426,6 @@ def make_side_by_side() -> None:
     eeglab_root = RESULTS_DIR / "eeglab_refs"
     dest_root = RESULTS_DIR / "comparisons"
     dest_root.mkdir(parents=True, exist_ok=True)
-
     for dataset in DATASETS.keys():
         c_dir = corti_root / dataset
         e_dir = eeglab_root / dataset
@@ -854,10 +434,9 @@ def make_side_by_side() -> None:
         rules = COMPARE_RULES.get(dataset, {})
         # pick topomap and trace/psd if present
         for kind in ("topomap", "trace", "psd"):
-            corti_candidates = sorted(c_dir.glob(f"*{kind}*.png"))
-            if not corti_candidates:
+            corti_img = _pick_best_corti_image(c_dir, kind)
+            if corti_img is None:
                 continue
-            corti_img = corti_candidates[0]
 
             pattern = rules.get(kind)
             if not pattern:
@@ -892,6 +471,9 @@ def main() -> None:
 
     results: Dict[str, Any] = {}
 
+    # Copy EEGLAB reference PDFs into results_exp1 for side-by-side comparison
+    copy_eeglab_refs()
+
     # 1.1 Bitwise identity
     try:
         results["bitwise_identity"] = bitwise_identity(DEFAULT_BIN)
@@ -914,8 +496,6 @@ def main() -> None:
     except Exception as exc:
         results["dataset_plots_error"] = str(exc)
 
-    # Copy EEGLAB reference PDFs into results_exp1 for side-by-side comparison
-    copy_eeglab_refs()
     make_side_by_side()
 
     out_path = RESULTS_DIR / "experiment1_results.json"

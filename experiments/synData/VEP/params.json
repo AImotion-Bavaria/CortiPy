@@ -11,7 +11,7 @@
     "Environment": "LabSim",
     "NumberEEGChannels": 64,
     "NumberAUXChannels": 0,
-    "ReferenceChannel": "Ref",
+    "ReferenceChannel": 1,
     "Epochs": 100,
     "EpochLength": 500,
     "PreStim": 0,

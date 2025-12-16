@@ -113,6 +113,59 @@ class CortiDataset:
         return cls(result)
 
     @classmethod
+    def synthetic_sine_trigger(
+        cls,
+        *,
+        sfreq: float = 250.0,
+        duration_s: float = 10.0,
+        freq_hz: float = 10.0,
+        amplitude_uV: float = 20.0,
+        trigger_interval_s: float = 1.0,
+        channel: str = "Cz",
+        stim_label: str = "TRIG",
+        method: str = "SyntheticSine",
+    ) -> CortiDataset:
+        """Generate a simple sine + trigger Raw and wrap it in a CortiDataset."""
+        raw = _synthetic_sine_trigger_raw(
+            sfreq=sfreq,
+            duration_s=duration_s,
+            freq_hz=freq_hz,
+            amplitude_uV=amplitude_uV,
+            trigger_interval_s=trigger_interval_s,
+            channel=channel,
+            stim_label=stim_label,
+        )
+        params = {
+            "Method": method,
+            "Device": "Simulated",
+            "Parameters": {
+                "fs": float(sfreq),
+                "RecordingTime": float(duration_s),
+                "Epochs": int(round(duration_s / trigger_interval_s)) if trigger_interval_s > 0 else 1,
+                "EpochLength": int(round(trigger_interval_s * 1000.0)),
+                "FrequencyHz": float(freq_hz),
+                "Amplitude_uV": float(amplitude_uV),
+            },
+            "Channels": [
+                {"Channel": channel, "Position": channel, "Type": "EEG", "Active": True},
+                {"Channel": stim_label, "Position": stim_label, "Type": "Stim", "Active": True},
+            ],
+        }
+        channels_df = pd.DataFrame({"name": [channel, stim_label], "type": ["EEG", "STIM"]})
+        metadata: dict[str, Any] = {"params": params, "source": "synthetic_sine_trigger"}
+        result = BIDSLoadResult(
+            raw=raw,
+            data=raw.get_data().T,
+            sampling_rate=float(sfreq),
+            events=None,
+            channels=channels_df,
+            metadata=metadata,
+            source_path=Path(f"{method}_synthetic.bin"),
+            ancillary_files=[],
+        )
+        return cls(result)
+
+    @classmethod
     def generate_eeg_samples(
         cls,
         *,
@@ -327,6 +380,9 @@ class CortiDataset:
         *,
         params: Optional[dict[str, Any]] = None,
         show_plots: bool = False,
+        save_plots: bool = False,
+        save_dir: str | Path | None = None,
+        figure_prefix: str | None = None,
         store_result: bool = True,
     ) -> dict[str, Any]:
         """Run any available evaluator (Alpha, SSVEP, BERA, P300, VEP, ASSR).
@@ -343,7 +399,12 @@ class CortiDataset:
         from cortipy.core.context import ModuleContext
 
         ctx = ModuleContext(prepared_params)
-        evaluator = evaluator_cls(show_plots=show_plots)  # type: ignore[arg-type]
+        evaluator = evaluator_cls(
+            show_plots=show_plots,
+            save_plots=save_plots,
+            save_dir=save_dir,
+            figure_prefix=figure_prefix,
+        )  # type: ignore[arg-type]
         evaluator.evaluate(ctx)
         evaluation = ctx.params.get("Evaluation", {})
 
@@ -371,6 +432,78 @@ class CortiDataset:
 
     def evaluate_assr(self, **kwargs) -> dict[str, Any]:
         return self.evaluate("assr", **kwargs)
+
+    # ---- augmentation helpers ----
+    def inject_synthetic_trigger(
+        self,
+        *,
+        step_ms: float | None = None,
+        step_samples: int | None = None,
+        channel_name: str = "TRIG_SYN",
+    ) -> int | None:
+        """Append a synthetic stim channel at a fixed interval if none exists.
+
+        Returns the 0-based index of the stim channel in ``raw.ch_names`` or ``None`` on failure.
+        """
+        raw = self.result.raw
+        existing = [i for i, ct in enumerate(raw.get_channel_types()) if ct == "stim"]
+        if existing:
+            return existing[0]
+
+        try:
+            fs = float(raw.info["sfreq"])
+        except Exception:
+            return None
+        if not np.isfinite(fs) or fs <= 0:
+            return None
+
+        if step_samples is None:
+            if step_ms is None:
+                meta = self.metadata
+                if isinstance(meta, dict):
+                    params_block = meta.get("params") or meta.get("Parameters") or {}
+                    try:
+                        step_ms = float(params_block.get("EpochLength", 0))
+                    except Exception:
+                        step_ms = None
+            if step_ms is not None:
+                try:
+                    step_samples = int(round((float(step_ms) / 1000.0) * fs))
+                except Exception:
+                    step_samples = None
+        if step_samples is None or step_samples <= 0:
+            return None
+
+        stim = np.zeros(raw.n_times, dtype=float)
+        stim[::step_samples] = 1.0
+        stim_info = mne.create_info(ch_names=[channel_name], sfreq=fs, ch_types=["stim"])
+        stim_raw = mne.io.RawArray(stim[np.newaxis, :], stim_info)
+        raw.add_channels([stim_raw], force_update_info=True)
+        raw.set_channel_types({channel_name: "stim"})
+
+        # Keep result arrays in sync
+        self.result.data = raw.get_data().T
+        ch_types = raw.get_channel_types()
+        ch_names = raw.ch_names
+        self.result.channels = pd.DataFrame({"name": ch_names, "type": [ct.upper() for ct in ch_types]})
+
+        # Update metadata params and channels for downstream evaluators/montage
+        meta = self.metadata
+        if isinstance(meta, dict):
+            params_block = meta.get("params") or meta.get("Parameters") or {}
+            if isinstance(params_block, dict):
+                params_block["TriggerChannel"] = len(ch_names)  # 1-based
+                meta.setdefault("Parameters", params_block)
+            channels_block = meta.get("Channels")
+            if isinstance(channels_block, list):
+                channels_block.append({"Channel": channel_name, "Position": channel_name, "Type": "Stim", "Active": True})
+            else:
+                meta["Channels"] = [{"Channel": nm, "Position": nm, "Type": "EEG", "Active": True} for nm in ch_names[:-1]] + [
+                    {"Channel": channel_name, "Position": channel_name, "Type": "Stim", "Active": True}
+                ]
+            self.result.metadata = meta
+
+        return len(raw.ch_names) - 1
 
     # ---- convenience accessors ----
     @property
@@ -430,7 +563,7 @@ class CortiDataset:
             base = {}
 
         base = copy.deepcopy(base)
-        base["Method"] = base.get("Method", method_key.capitalize())
+        base["Method"] = method_key.upper()
         base["data"] = self.result.data
         params_block = base.get("Parameters")
         if not isinstance(params_block, dict):
@@ -561,6 +694,27 @@ def _resolve_channel_types(channel_types: str | Sequence[str] | None, channel_co
     if len(types) < channel_count and types:
         types.extend(types[-1:] * (channel_count - len(types)))
     return types[:channel_count] if types else ["eeg"] * channel_count
+
+
+def _synthetic_sine_trigger_raw(
+    *,
+    sfreq: float,
+    duration_s: float,
+    freq_hz: float,
+    amplitude_uV: float,
+    trigger_interval_s: float,
+    channel: str,
+    stim_label: str,
+) -> mne.io.Raw:
+    samples = int(round(sfreq * duration_s))
+    t = np.arange(samples) / sfreq
+    sine = amplitude_uV * np.sin(2 * np.pi * freq_hz * t)
+    trigger = np.zeros_like(sine)
+    every = max(1, int(round(trigger_interval_s * sfreq)))
+    trigger[::every] = 1.0
+    data = np.vstack([sine, trigger])
+    info = mne.create_info(ch_names=[channel, stim_label], sfreq=sfreq, ch_types=["eeg", "stim"])
+    return mne.io.RawArray(data, info)
 
 
 def _synthesize_eeg_data(

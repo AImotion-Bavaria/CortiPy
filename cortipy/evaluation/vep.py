@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, Dict, MutableMapping, Optional, Sequence, Tuple
 
 import logging
@@ -23,7 +24,8 @@ else:
 
 import matplotlib.pyplot as plt
 
-from cortipy.evaluation.base import EvaluatorBase
+from cortipy.evaluation.base import EvaluatorBase, save_new_figures
+from cortipy.shared import plot_cortipy_topomap
 from cortipy.shared.filtering import filter_vep
 from cortipy.shared.segmentation import seg_sig_fast
 from cortipy.shared.signal import time_vector
@@ -67,8 +69,17 @@ RN_ANALYSIS_WINDOW = (0.020, 0.250)
 class VepEvaluator(EvaluatorBase):
     """Port of the MATLAB EvalVEPmain workflow."""
 
-    def __init__(self, show_plots: bool | None = None) -> None:
+    def __init__(
+        self,
+        show_plots: bool | None = None,
+        save_plots: bool | None = None,
+        save_dir: Path | str | None = None,
+        figure_prefix: str | None = None,
+    ) -> None:
         self.show_plots = show_plots
+        self.save_plots = save_plots
+        self.save_dir = Path(save_dir) if save_dir is not None else None
+        self.figure_prefix = figure_prefix
 
     def evaluate(self, context) -> None:  # type: ignore[override]
         LOGGER.debug("VepEvaluator.evaluate invoked")
@@ -88,15 +99,29 @@ class VepEvaluator(EvaluatorBase):
             raise ValueError("VEP evaluation requires Params.Parameters.fs to be set.")
 
         show_plots = self.show_plots if self.show_plots is not None else not params.get("ReportAnalyzer")
+        save_plots = bool(self.save_plots)
+        render_plots = show_plots or save_plots
+        before_figs = set(plt.get_fignums()) if render_plots else set()
         referenced, trig_idx = _apply_reference(
             np.asarray(data, dtype=float),
             params.get("Device"),
             param_block,
         )
         referenced = _filter_non_trigger_channels(referenced, trig_idx, fs)
-        triggered = trigger_adc(referenced, fs, trig_idx, MAX_TIME, edge=param_block.get("edge", "b"))
-        segments = seg_sig_fast(triggered, fs, MAX_TIME, trig_idx)
-        if segments.size == 0:
+        device_lower = (params.get("Device") or "").lower()
+        segments = None
+        if device_lower == "simulated":
+            segments = _segments_from_metadata(referenced, trig_idx, param_block, fs)
+            if segments is not None:
+                trig_idx = -1
+        if segments is None:
+            triggered = trigger_adc(referenced, fs, trig_idx, MAX_TIME, edge=param_block.get("edge", "b"))
+            segments = seg_sig_fast(triggered, fs, MAX_TIME, trig_idx)
+            if segments.size == 0:
+                segments = _segments_from_metadata(referenced, trig_idx, param_block, fs)
+                if segments is not None:
+                    trig_idx = -1
+        if segments is None or segments.size == 0:
             params.setdefault("Evaluation", {})
             context.params = params
             return
@@ -127,7 +152,10 @@ class VepEvaluator(EvaluatorBase):
 
         params["Evaluation"] = evaluation
 
-        if show_plots:
+        plot_channel_label = param_block.setdefault("PlotChannelLabel", "Oz")
+        topomap_latency_ms = float(param_block.get("TopomapLatencyMs", 100.0))
+
+        if render_plots:
             LOGGER.debug("Rendering VEP evaluation plots")
             _ensure_interactive_backend()
             plt.rcParams["figure.max_open_warning"] = 0
@@ -135,9 +163,10 @@ class VepEvaluator(EvaluatorBase):
             plot_vep(average_signals, params, peak_stats)
             plot_vep_matrix(evaluation, param_block.get("ReferenceChannel", 1), params.get("Channels"), average_signals)
             _plot_vep_all_channels(average_signals, evaluation["average_signals"]["time"], params, peak_stats)
-            _plot_vep_trace_overlay(segments, fs, params)
-            _plot_vep_topomap(context, params, t_ms=100.0)
-            if not _is_streamlit_runtime():
+            _plot_vep_trace_overlay(segments, fs, params, plot_channel_label)
+            _plot_vep_erp_channel(average_signals, fs, params, plot_channel_label)
+            _plot_vep_topomap(context, params, t_ms=topomap_latency_ms)
+            if show_plots and not _is_streamlit_runtime():
                 try:
                     fig_nums = plt.get_fignums()
                     LOGGER.info(
@@ -152,7 +181,13 @@ class VepEvaluator(EvaluatorBase):
                         plt.ion()
                     LOGGER.info("VEP: figures closed by user")
                 except Exception as exc:  # pragma: no cover
-                    LOGGER.debug("plt.show failed", extra={"error": str(exc)})
+                        LOGGER.debug("plt.show failed", extra={"error": str(exc)})
+
+        if save_plots and self.save_dir:
+            prefix = self.figure_prefix or param_block.get("Filename", "vep")
+            saved = save_new_figures(before_figs, self.save_dir, prefix, close=not show_plots)
+            if saved:
+                evaluation["_figures_saved"] = saved
 
         context.params = params
 
@@ -187,6 +222,30 @@ def _filter_non_trigger_channels(data: np.ndarray, trigger_idx: int, fs: float) 
     if mask.any():
         filtered[:, mask] = filter_vep(filtered[:, mask], HP_CUTOFF, fs)
     return filtered
+
+
+def _segments_from_metadata(referenced: np.ndarray, trig_idx: int, param_block: dict, fs: float) -> np.ndarray | None:
+    """Segment data using Epochs/EpochLength metadata (for simulated data)."""
+    try:
+        epoch_len_ms = float(param_block.get("EpochLength", 0))
+        epoch_count = int(param_block.get("Epochs", 0))
+    except Exception:
+        return None
+    if epoch_len_ms <= 0 or epoch_count <= 0:
+        return None
+    samples_per_epoch = int(round(epoch_len_ms / 1000.0 * fs))
+    if samples_per_epoch <= 0:
+        return None
+    total_needed = samples_per_epoch * epoch_count
+    if referenced.shape[0] < total_needed:
+        return None
+    data_no_trig = np.array(referenced, copy=True)
+    if 0 <= trig_idx < data_no_trig.shape[1]:
+        data_no_trig = np.delete(data_no_trig, trig_idx, axis=1)
+    try:
+        return data_no_trig[:total_needed].reshape(epoch_count, samples_per_epoch, data_no_trig.shape[1])
+    except Exception:
+        return None
 
 
 def vep_amplitude_latency(mean_data: np.ndarray, fs: float) -> Dict[str, Dict[str, np.ndarray]]:
@@ -468,6 +527,23 @@ def _channel_labels(channels: Optional[Sequence[Any]], count: int) -> list[str]:
     return result
 
 
+def _channel_index_from_label(label: Any, channels: Optional[Sequence[Any]], count: int) -> int:
+    """Resolve 0-based channel index from a label or numeric string."""
+    if label is None:
+        return 0
+    try:
+        idx = int(label) - 1
+        if 0 <= idx < count:
+            return idx
+    except Exception:
+        pass
+    labels = [str(lab).lower() for lab in _channel_labels(channels, count)]
+    try:
+        return labels.index(str(label).lower())
+    except ValueError:
+        return 0
+
+
 def _ensure_interactive_backend() -> None:
     """Switch to an interactive backend when possible to display pop-up windows."""
     try:
@@ -498,68 +574,15 @@ def _plot_vep_topomaps(
         ("N135", np.asarray(evaluation["N135"]["peak_values"], dtype=float)),
         ("P100 - N135", np.asarray(amplitude, dtype=float)),
     ]
-    info, kept_idx = _topomap_info(channel_labels)
-    kept_idx = np.asarray(kept_idx, dtype=int)
     for name, values in maps:
-        fig, ax = plt.subplots()
-        data = values[kept_idx] if kept_idx.size and kept_idx.size == values.shape[0] else values
-        im, _ = mne.viz.plot_topomap(
-            data,
-            info,
-            axes=ax,
-            show=False,
-            cmap="RdBu_r",
-            contours=4,
-            names=channel_labels,
-            sphere=(0.0, -0.01, 0.0, 0.11),
-            outlines="head",
+        fig, _ = plot_cortipy_topomap(
+            values,
+            ch_names=channel_labels,
+            title=f"{name} topography",
+            cbar_label="Amplitude (µV)",
+            contours=6,
         )
-        ax.set_title(f"{name} topography")
-        cbar = fig.colorbar(im, ax=ax, orientation="vertical", fraction=0.046, pad=0.04)
-        cbar.ax.tick_params(labelsize=9)
-        fig.tight_layout()
         _show_mpl(fig, f"vep_topomap_{name.replace(' ', '_').lower()}")
-
-
-def _topomap_info(channel_labels: Sequence[str]):
-    """Build an MNE Info using only channels with known standard positions."""
-    montage = None
-    for candidate in ("standard_1005", "standard_1020"):
-        try:
-            montage = mne.channels.make_standard_montage(candidate)
-            break
-        except Exception:
-            continue
-
-    known = montage.get_positions().get("ch_pos", {}) if montage is not None else {}
-
-    kept_idx: list[int] = []
-    ch_pos: dict[str, tuple[float, float, float]] = {}
-    for idx, label in enumerate(channel_labels):
-        pos = known.get(label)
-        if pos is None:
-            continue
-        ch_pos[label] = pos
-        kept_idx.append(idx)
-
-    # If nothing matched, fall back to a small circle with all channels.
-    if not ch_pos:
-        total = max(1, len(channel_labels))
-        for idx, label in enumerate(channel_labels):
-            angle = 2 * np.pi * idx / total + 0.1 * idx  # deterministic jitter
-            radius = 0.06 + 0.01 * (idx % total) / max(1, total)
-            ch_pos[label] = (radius * np.cos(angle), radius * np.sin(angle), 0.0)
-            kept_idx.append(idx)
-
-    info = mne.create_info(list(ch_pos.keys()), sfreq=1.0, ch_types="eeg")
-    try:
-        custom_montage = mne.channels.make_dig_montage(ch_pos=ch_pos, coord_frame="head")
-        info.set_montage(custom_montage)
-    except Exception:
-        pass
-    if len(kept_idx) != len(channel_labels):
-        LOGGER.info("VEP: topomap using %d/%d channels with known positions", len(kept_idx), len(channel_labels))
-    return info, kept_idx
 
 
 def _plot_vep_all_channels(avg_signal: np.ndarray, time_ms: np.ndarray, params: dict, peaks: Dict[str, Dict[str, np.ndarray]]) -> None:
@@ -588,7 +611,35 @@ def _plot_vep_all_channels(avg_signal: np.ndarray, time_ms: np.ndarray, params: 
     _show_mpl(fig, "vep_all_channels")
 
 
-def _plot_vep_trace_overlay(segments: np.ndarray, fs: float, params: dict) -> None:
+def _plot_vep_erp_channel(avg_signal: np.ndarray, fs: float, params: dict, plot_channel_label: str) -> None:
+    """Plot ERP vector for a specific channel (e.g., Oz for EEGLAB comparisons)."""
+    try:
+        idx = _channel_index_from_label(plot_channel_label, params.get("Channels"), avg_signal.shape[1])
+        t_ms = time_vector(avg_signal, fs, unit="ms")
+        idx_max = _last_index_less_equal(t_ms, MAX_TIME * 1000.0)
+        fig, ax = plt.subplots(figsize=(8, 4))
+        # Overlay single trials if available
+        segments = params.get("Evaluation", {}).get("average_signals", {}).get("segments_signalSameUnit")
+        if segments is not None and isinstance(segments, np.ndarray) and segments.ndim == 3:
+            data = segments[:, :, idx]
+            b_len = np.searchsorted(t_ms, 50.0)
+            if b_len > 0:
+                data = data - data[:, :b_len].mean(axis=1, keepdims=True)
+            ax.plot(t_ms[: idx_max or None], data[:, : idx_max or None].T, color="gray", alpha=0.2, linewidth=0.6)
+        ax.plot(t_ms[: idx_max or None], avg_signal[: idx_max or None, idx], color="blue", linewidth=1.8, label="Average")
+        ax.set_xlabel("Time (ms)")
+        ax.set_ylabel("Amplitude (uV)")
+        ax.set_title(f"VEP ERP @ {plot_channel_label}")
+        ax.grid(True, alpha=0.3)
+        ax.set_xlim(0.0, MAX_TIME * 1000.0)
+        ax.legend(loc="upper right")
+        fig.tight_layout()
+        _show_mpl(fig, f"vep_erp_{plot_channel_label}")
+    except Exception:
+        return
+
+
+def _plot_vep_trace_overlay(segments: np.ndarray, fs: float, params: dict, plot_channel_label: str) -> None:
     """Plot VEP single trials + mean (Experiment 1 style)."""
     try:
         # segments shape: (n_trials, n_times, n_channels)
@@ -596,10 +647,7 @@ def _plot_vep_trace_overlay(segments: np.ndarray, fs: float, params: dict) -> No
             return
         times_ms = np.arange(segments.shape[1]) / fs * 1000.0
         ch_labels = params.get("Channels") or params.get("ChannelLabels") or []
-        if ch_labels and "Oz" in ch_labels:
-            idx = ch_labels.index("Oz")
-        else:
-            idx = 0
+        idx = _channel_index_from_label(plot_channel_label, ch_labels, segments.shape[2])
         data = segments[:, :, idx]
         # Baseline first 50 ms
         b_len = np.searchsorted(times_ms, 50.0)
@@ -607,12 +655,12 @@ def _plot_vep_trace_overlay(segments: np.ndarray, fs: float, params: dict) -> No
             data = data - data[:, :b_len].mean(axis=1, keepdims=True)
         mean_wave = data.mean(axis=0)
         fig, ax = plt.subplots(figsize=(10, 4))
-        ax.plot(times_ms, data.T, color="gray", alpha=0.15, linewidth=0.6)
-        ax.plot(times_ms, mean_wave, color="blue", linewidth=1.5, label="Mean")
+        ax.plot(times_ms, data.T, color="gray", alpha=0.25, linewidth=0.7)
+        ax.plot(times_ms, mean_wave, color="blue", linewidth=1.6, label="Mean")
         ax.set_xlabel("Time (ms)")
         ax.set_ylabel("Amplitude (uV)")
-        ax.set_title("VEP trace (Oz)")
-        ax.set_xlim(0, 500)
+        ax.set_title(f"VEP trace ({plot_channel_label})")
+        ax.set_xlim(0, MAX_TIME * 1000.0)
         ax.set_ylim(-0.6, 0.7)
         ax.grid(True, alpha=0.3)
         ax.legend()
@@ -625,49 +673,47 @@ def _plot_vep_trace_overlay(segments: np.ndarray, fs: float, params: dict) -> No
 def _plot_vep_topomap(context, params: dict, t_ms: float = 100.0) -> None:
     """Optional VEP topomap at given latency; skips if raw/info missing."""
     try:
-        raw = getattr(context, "raw", None)
+        # Prefer evaluation average (baseline-corrected) to match legacy/EEGLAB
+        eval_avg = params.get("Evaluation", {}).get("average_signals", {}).get("voltage")
+        fs = float(params.get("Parameters", {}).get("fs", 0))
+        ch_labels = params.get("Channels") or params.get("ChannelLabels") or []
         data = None
-        info = None
-        if raw is not None and isinstance(raw, mne.io.BaseRaw):
-            data = raw.get_data(picks="eeg")
-            info = raw.info
-        else:
-            eval_avg = params.get("Evaluation", {}).get("average_signals", {}).get("voltage")
-            fs = float(params.get("Parameters", {}).get("fs", 0))
-            ch_labels = params.get("Channels") or params.get("ChannelLabels") or []
-            if eval_avg is not None and fs > 0:
-                arr = np.asarray(eval_avg, dtype=float)
-                if arr.ndim == 2:
-                    data = arr.T  # samples x ch -> ch x samples
-                if data is not None:
-                    info = mne.create_info(
-                        ch_names=[str(c) for c in ch_labels] if ch_labels else [f"Ch{ii+1}" for ii in range(data.shape[0])],
-                        sfreq=fs,
-                        ch_types="eeg",
-                    )
-        if data is None or info is None:
+        labels: list[str] = []
+        if eval_avg is not None and fs > 0:
+            arr = np.asarray(eval_avg, dtype=float)
+            if arr.ndim == 2:
+                data = arr.T  # samples x ch -> ch x samples
+                labels = [str(c) for c in ch_labels] if ch_labels else [f"Ch{ii+1}" for ii in range(data.shape[0])]
+        if data is None:
+            raw = getattr(context, "raw", None)
+            if raw is not None and isinstance(raw, mne.io.BaseRaw):
+                picks = mne.pick_types(raw.info, eeg=True, stim=False, meg=False, ref_meg=False, misc=False)
+                if picks.size:
+                    data = raw.get_data(picks=picks)
+                    labels = [raw.ch_names[idx] for idx in picks]
+                    fs = float(raw.info["sfreq"])
+        if data is None or fs is None or fs <= 0 or not labels:
             return
-        sample = int(round((t_ms / 1000.0) * info["sfreq"]))
+        sample = int(round((t_ms / 1000.0) * fs))
         if sample < 0 or sample >= data.shape[1]:
             return
         topo_vals = data[:, sample]
-        fig, ax = plt.subplots(figsize=(8, 8), dpi=200)
-        ax.set_axis_off()
-        im, _ = mne.viz.plot_topomap(
+        vlim = (-0.2, 0.8)  # match EEGLAB/legacy scale around P100
+        fig, _ = plot_cortipy_topomap(
             topo_vals,
-            info,
-            axes=ax,
-            show=False,
-            contours=6,
+            ch_names=labels,
+            params=params,
+            title=f"VEP Topography @ {t_ms:.0f} ms",
+            cbar_label="Amplitude (uV)",
+            vlim=vlim,
             cmap="RdBu_r",
-            outlines="head",
+            contours=6,
             sphere=(0.0, -0.01, 0.0, 0.105),
-            extrapolate="head",
+            figsize=(12, 12),
+            dpi=400,
+            colorbar=True,
+            show_names=True,
         )
-        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        cbar.set_label("Amplitude (uV)", fontsize=12)
-        fig.suptitle(f"VEP Topomap @ {t_ms:.0f} ms", fontsize=14)
-        fig.tight_layout()
         _show_mpl(fig, "vep_topomap")
     except Exception:
         return

@@ -27,7 +27,6 @@ class BIDSLoadResult:
     metadata: Dict[str, Any]
     source_path: Path
     ancillary_files: Sequence[tuple[Path, Path]] = field(default_factory=list)
-    ancillary_files: Sequence[tuple[Path, Path]]
 
 
 def _coerce_to_raw_array(
@@ -751,6 +750,10 @@ class ExperimentBinLoader:
         dataset_dir = self._resolve_dataset(dataset)
         params_file = Path(params_path).expanduser() if params_path else dataset_dir / "params.json"
         if not params_file.exists():
+            candidates = sorted(dataset_dir.glob("*.json"))
+            if candidates:
+                params_file = candidates[0]
+        if not params_file.exists():
             raise FileNotFoundError(f"params.json not found at {params_file}")
 
         params = json.loads(params_file.read_text())
@@ -761,7 +764,7 @@ class ExperimentBinLoader:
         resolved_dtype = np.dtype(dtype)
         flat = np.fromfile(data_file, dtype=resolved_dtype)
 
-        n_channels = self._infer_channel_count(params, channel_names, channel_count)
+        n_channels = self._infer_channel_count(params, channel_names, channel_count, data_len=flat.size)
         if n_channels is None or n_channels <= 0:
             raise ValueError("Channel count could not be inferred; pass `channel_count` or `channel_names`.")
         if flat.size % n_channels != 0:
@@ -772,6 +775,35 @@ class ExperimentBinLoader:
 
         samples = flat.size // n_channels
         data = flat.reshape((samples, n_channels))
+
+        param_block = params.get("Parameters", {}) if isinstance(params, dict) else {}
+        epoch_count = param_block.get("Epochs") or params.get("Epochs") if isinstance(params, dict) else None
+        epoch_len_ms = param_block.get("EpochLength") or params.get("EpochLength") if isinstance(params, dict) else None
+
+        # Detect MATLAB-exported 3-D arrays (channels x samples x epochs) saved in column-major order.
+        sfreq = sampling_rate or self._resolve_sampling_rate(params, samples)
+        epoch_events = None
+        if sfreq and epoch_count and epoch_len_ms:
+            try:
+                epoch_count_int = int(epoch_count)
+                epoch_len_ms_f = float(epoch_len_ms)
+                samples_per_epoch = int(round(epoch_len_ms_f / 1000.0 * float(sfreq)))
+            except Exception:
+                samples_per_epoch = 0
+                epoch_count_int = 0
+            expected = n_channels * samples_per_epoch * epoch_count_int
+            if samples_per_epoch > 0 and epoch_count_int > 0 and expected == flat.size:
+                # Reorder from (channels, samples, epochs) Fortran order -> (samples_total, channels) C order.
+                data_epochs = flat.reshape((n_channels, samples_per_epoch, epoch_count_int), order="F")
+                data = data_epochs.transpose(2, 1, 0).reshape(samples_per_epoch * epoch_count_int, n_channels)
+                samples = data.shape[0]
+                epoch_events = pd.DataFrame(
+                    {
+                        "onset_sample": np.arange(epoch_count_int) * samples_per_epoch,
+                        "onset_time": (np.arange(epoch_count_int) * samples_per_epoch) / float(sfreq),
+                        "trial_type": ["epoch"] * epoch_count_int,
+                    }
+                )
 
         names = self._resolve_channel_names(params, channel_names, n_channels)
         sfreq = sampling_rate or self._resolve_sampling_rate(params, samples)
@@ -789,13 +821,22 @@ class ExperimentBinLoader:
                 metadata["sampling_rate_inferred_from_duration"] = samples / float(recording_time)
             except (TypeError, ValueError):
                 pass
+        if epoch_events is not None:
+            metadata["epochs"] = {
+                "count": int(epoch_events.shape[0]),
+                "samples_per_epoch": int(epoch_events["onset_sample"].diff().dropna().iloc[0])
+                if epoch_events.shape[0] > 1
+                else samples,
+                "duration_s": float(samples) / float(sfreq) / max(int(epoch_events.shape[0]), 1),
+            }
+            metadata["data_layout"] = "channels x samples x epochs (Fortran) reshaped to continuous trials"
 
         raw = _coerce_to_raw_array(data, sfreq, names, channel_types)
         return BIDSLoadResult(
             raw=raw,
             data=data,
             sampling_rate=float(sfreq) if sfreq is not None else 0.0,
-            events=None,
+            events=epoch_events,
             channels=channels_df,
             metadata=metadata,
             source_path=data_file,
@@ -874,6 +915,8 @@ class ExperimentBinLoader:
         params: Dict[str, Any],
         channel_names: Optional[Sequence[str]],
         channel_count: Optional[int],
+        *,
+        data_len: int | None = None,
     ) -> Optional[int]:
         if channel_count is not None:
             return int(channel_count)
@@ -887,12 +930,24 @@ class ExperimentBinLoader:
             except (TypeError, ValueError):
                 pass
 
+        for key in ("channel_count", "ChannelCount", "channels", "ChannelsTotal"):
+            if key in params:
+                try:
+                    return int(params[key]) if not isinstance(params[key], list) else len(params[key])
+                except (TypeError, ValueError):
+                    continue
+
         if channel_names is not None:
             return len(channel_names)
 
         channels_meta = params.get("Channels")
         if channels_meta:
             return len(channels_meta)
+
+        if data_len:
+            for guess in (64, 32, 16, 8, 4, 2):
+                if data_len % guess == 0:
+                    return guess
         return None
 
     def _resolve_channel_names(
@@ -908,6 +963,8 @@ class ExperimentBinLoader:
                     if candidate:
                         names.append(str(candidate))
                         break
+            if not names and isinstance(params.get("channels"), list):
+                names = [str(x) for x in params["channels"]]
 
         if not names:
             names = [f"Ch{i+1}" for i in range(expected)]
@@ -924,6 +981,13 @@ class ExperimentBinLoader:
             if key in params_block:
                 try:
                     return float(params_block[key])
+                except (TypeError, ValueError):
+                    continue
+
+        for key in ("srate", "sampling_rate", "fs", "SamplingRate"):
+            if key in params:
+                try:
+                    return float(params[key])
                 except (TypeError, ValueError):
                     continue
 

@@ -913,16 +913,17 @@ def _plot_subset_read_box_bar(results: List[Dict[str, Any]], out_root: Path) -> 
                 mean_val = _get_metric_mean(e, "single_channel_full")
                 break
         if vals:
-            data.append(vals)
-            means.append(mean_val if mean_val is not None else float(np.mean(vals)))
+            vals_ms = [v * 1000.0 for v in vals]
+            mean_ms = (mean_val if mean_val is not None else float(np.mean(vals))) * 1000.0
+            data.append(vals_ms)
+            means.append(mean_ms)
             valid_labels.append(f"{container.upper()}+{fmt}")
     if not data:
         return
     # Boxplot
     plt.figure(figsize=(6, 4))
     plt.boxplot(data, tick_labels=valid_labels, showfliers=False)
-    plt.ylabel("Read latency (s)")
-    plt.title("Streaming latency – full single channel")
+    plt.ylabel("Read latency (ms)")
     plt.tight_layout()
     out_box = out_root / "stream_subset_box_single_channel_full.png"
     plt.savefig(out_box, dpi=150)
@@ -933,8 +934,7 @@ def _plot_subset_read_box_bar(results: List[Dict[str, Any]], out_root: Path) -> 
     plt.figure(figsize=(6, 4))
     plt.bar(range(len(valid_labels)), means, color="steelblue", alpha=0.85)
     plt.xticks(range(len(valid_labels)), valid_labels, rotation=20)
-    plt.ylabel("Read latency (s)")
-    plt.title("Streaming latency – full single channel (means)")
+    plt.ylabel("Read latency (ms)")
     plt.tight_layout()
     out_bar = out_root / "stream_subset_bar_single_channel_full.png"
     plt.savefig(out_bar, dpi=150)

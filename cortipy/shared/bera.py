@@ -47,7 +47,9 @@ def prepro(signal_in: np.ndarray, voltage: float) -> np.ndarray:
     data = np.asarray(signal_in, dtype=float)
     if voltage in {1e-3, 1e-6}:
         return data * 1e6  # volts -> microvolts
-    raise ValueError("Unsupported voltage level; expected 1e-3 or 1e-6.")
+    if voltage == 1.0:
+        return data  # already in microvolts
+    raise ValueError("Unsupported voltage level; expected 1.0, 1e-3, or 1e-6.")
 
 
 def avg_seg_avg(segments: np.ndarray, n_splits: int) -> np.ndarray:
