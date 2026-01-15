@@ -2,17 +2,11 @@
 
 from __future__ import annotations
 
-import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
-ROOT = Path(__file__).resolve().parents[2]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
 from cortipy.core.pipeline import MeasurementPipeline, PipelineHooks
-from cortipy.core.params import load_params_from_file
 
 from .config import load_config, normalize_params
 from .save import SaveManager

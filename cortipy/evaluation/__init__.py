@@ -28,8 +28,6 @@ def _configure_eval_logging() -> logging.Logger:
     return logger
 
 
-_configure_eval_logging()
-
 from .alpha import AlphaEvaluator
 from .assr import AssrEvaluator
 from .base import EvaluatorBase
@@ -47,3 +45,5 @@ __all__ = [
     "AssrEvaluator",
     "P300Evaluator",
 ]
+
+_configure_eval_logging()

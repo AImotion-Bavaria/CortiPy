@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, MutableMapping, Optional, Sequence, Tuple
+from typing import Any, List, MutableMapping, Optional, Sequence, Tuple
 
 import logging
 import matplotlib

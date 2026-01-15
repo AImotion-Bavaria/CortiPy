@@ -7,7 +7,7 @@ import json
 import sys
 import warnings
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Optional
 
 import matplotlib.pyplot as plt
 
@@ -15,7 +15,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from cortipy.shared import CortiDataset  # type: ignore
+from cortipy.shared import CortiDataset  # type: ignore # noqa: E402
 
 
 def _summarize_evaluation(evaluation: dict[str, Any]) -> dict[str, Any]:

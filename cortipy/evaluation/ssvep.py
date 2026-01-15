@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Tuple
-
 import logging
 import matplotlib
 import numpy as np
@@ -25,7 +23,6 @@ import matplotlib.pyplot as plt
 
 from cortipy.evaluation.base import EvaluatorBase, save_new_figures
 from cortipy.shared import (
-    assr_compute_psd,
     calc_fft,
     cca_correlations,
     compute_t2circ,

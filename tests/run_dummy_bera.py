@@ -13,9 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from cortipy.core.context import ModuleContext
-from cortipy.evaluation.bera import BeraEvaluator
-from tests.regression.dummy_params import dummy_params_bera
+from cortipy.core.context import ModuleContext  # noqa: E402
+from cortipy.evaluation.bera import BeraEvaluator  # noqa: E402
+from tests.regression.dummy_params import dummy_params_bera  # noqa: E402
 
 
 def main() -> None:

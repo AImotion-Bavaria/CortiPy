@@ -14,9 +14,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from cortipy.core.context import ModuleContext
-from cortipy.evaluation.p300 import P300Evaluator
-from tests.regression.dummy_params import dummy_params_p300
+from cortipy.core.context import ModuleContext  # noqa: E402
+from cortipy.evaluation.p300 import P300Evaluator  # noqa: E402
+from tests.regression.dummy_params import dummy_params_p300  # noqa: E402
 
 
 def _json_default(obj):

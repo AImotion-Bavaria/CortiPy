@@ -8,7 +8,6 @@ import logging
 import re
 import sys
 import time
-import threading
 from dataclasses import dataclass
 import html
 import math
@@ -89,10 +88,10 @@ def _configure_logging() -> logging.Logger:
 
 LOGGER = _configure_logging()
 
-from cortipy import MeasurementPipeline
-from cortipy.core.pipeline import PipelineHooks
-from cortipy.devices import DeviceFactory, DeviceInterface
-from cortipy.ui import SaveManager, normalize_params
+from cortipy import MeasurementPipeline  # noqa: E402
+from cortipy.core.pipeline import PipelineHooks  # noqa: E402
+from cortipy.devices import DeviceFactory, DeviceInterface  # noqa: E402
+from cortipy.ui import SaveManager, normalize_params  # noqa: E402
 
 DEFAULT_SAVE_DIR = Path.cwd() / "cortipy_runs"
 SCHEMA_DIR = ROOT / "ParameterJSON"
@@ -3106,8 +3105,6 @@ div[data-testid="stExpander"] > details > div[role="group"] {
             issues_md = " • " + "\n • ".join(validation_issues)
             st.error(f"Please fix these configuration issues before starting a run:\n{issues_md}")
             return
-        if st.session_state.get("_live_preview_running"):
-            stop_live_preview_runner()
         channels_for_run = len(assembled_params.get("Channels", [])) or int(
             assembled_params.get("Parameters", {}).get("NumberEEGChannels") or 0
         )

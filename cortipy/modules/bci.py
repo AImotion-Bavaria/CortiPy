@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import contextlib
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 

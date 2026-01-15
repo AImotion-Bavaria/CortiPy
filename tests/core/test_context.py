@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import numpy as np
 
-from cortipy.core.context import ModuleContext
 
 
 def test_append_data_initializes_and_stacks(module_context_factory):

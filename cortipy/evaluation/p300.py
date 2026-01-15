@@ -3,17 +3,52 @@
 from __future__ import annotations
 
 import logging
-import matplotlib.pyplot as plt
-import mne
-
 from pathlib import Path
 
+import matplotlib
+import matplotlib.pyplot as plt
+import mne
 import numpy as np
+
+try:  # pragma: no cover - optional Streamlit integration
+    import streamlit as st
+except Exception:  # pragma: no cover
+    st = None
+    _STREAMLIT_RUNTIME = False
+else:
+    _STREAMLIT_RUNTIME = bool(getattr(st, "runtime", None) and st.runtime.exists())
+    if _STREAMLIT_RUNTIME:
+        matplotlib.use("Agg", force=True)
 
 from cortipy.evaluation.base import EvaluatorBase, save_new_figures
 from cortipy.shared import filter_vep, plot_cortipy_topomap, plot_p300_results, seg_sig_fast, time_vector, trigger_adc
 
 LOGGER = logging.getLogger("cortipy.evaluation.p300")
+
+
+def _show_mpl(fig: plt.Figure, key: str) -> None:
+    if not _is_streamlit_runtime():
+        return
+    placeholders = st.session_state.setdefault("_p300_eval_placeholders", {})
+    placeholder = placeholders.get(key)
+    if placeholder is None:
+        placeholder = st.empty()
+        placeholders[key] = placeholder
+        LOGGER.debug("_show_mpl created placeholder", extra={"key": key})
+    else:
+        LOGGER.debug("_show_mpl reused placeholder", extra={"key": key})
+    try:
+        placeholder.pyplot(fig, clear_figure=False)
+        LOGGER.debug("_show_mpl rendered figure", extra={"key": key, "fig": fig.number})
+    except Exception as exc:  # pragma: no cover
+        LOGGER.warning("_show_mpl failed to render", extra={"key": key, "error": str(exc)})
+
+
+def _is_streamlit_runtime() -> bool:
+    if st is None:
+        return False
+    runtime = getattr(st, "runtime", None)
+    return bool(runtime and runtime.exists())
 
 
 class P300Evaluator(EvaluatorBase):

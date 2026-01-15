@@ -18,9 +18,9 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from cortipy.core.context import ModuleContext
-from cortipy.evaluation.alpha import AlphaEvaluator
-from tests.regression.dummy_params import dummy_params_alpha
+from cortipy.core.context import ModuleContext  # noqa: E402
+from cortipy.evaluation.alpha import AlphaEvaluator  # noqa: E402
+from tests.regression.dummy_params import dummy_params_alpha  # noqa: E402
 
 
 def _json_safe(value: Any) -> Any:

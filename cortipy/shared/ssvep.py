@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Iterable, Sequence, Tuple
+from typing import Sequence, Tuple
 
 import numpy as np
 from scipy import linalg, stats
@@ -50,8 +50,6 @@ def classify_fft(
 
 
 def plot_psd_ssvep(ax, freq: np.ndarray, spectrum: np.ndarray, low_freq: float, high_freq: float) -> None:
-    import matplotlib.pyplot as plt  # local import to avoid mandatory dependency at module import
-
     freq = np.asarray(freq, dtype=float)
     spectrum = np.asarray(spectrum, dtype=float)
     low_idx = int(np.argmin(np.abs(freq - low_freq)))

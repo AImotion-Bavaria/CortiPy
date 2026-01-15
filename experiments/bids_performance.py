@@ -20,7 +20,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from cortipy.shared import BIDSLoader
+from cortipy.shared import BIDSLoader  # noqa: E402
 
 try:
     import matplotlib.pyplot as plt

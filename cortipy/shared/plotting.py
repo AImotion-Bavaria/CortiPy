@@ -26,15 +26,13 @@ from cortipy.shared.signal import time_vector
 
 __all__ = [
     "plot_fft_live",
-    "plot_fft_static",
+    "plot_live_avg_vep",
+    "plot_live_avg_bera",
     "plot_live_erp",
     "plot_p300_results",
-    "plot_bera_live",
     "plot_bera_results",
     "plot_cortipy_topomap",
-    "plot_psd_time",
-    "plot_spectrogram",
-    "plot_alpha_matrix",
+    "plot_assr_spectrum",
     "apply_standard_montage",
     "topomap_info_from_labels",
     "_resolve_channels",

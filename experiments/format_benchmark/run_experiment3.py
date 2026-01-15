@@ -900,7 +900,6 @@ def _plot_subset_read_box_bar(results: List[Dict[str, Any]], out_root: Path) -> 
     if not entries:
         return
     combos = [("sbids", "parquet"), ("sbids", "edf"), ("bids", "edf")]
-    labels = [f"{c.upper()}+{f}" for c, f in combos]
     data = []
     means = []
     valid_labels = []

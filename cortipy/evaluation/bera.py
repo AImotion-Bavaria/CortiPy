@@ -331,8 +331,6 @@ def _plot_abr_topomap(context, params: dict, t_ms: float = 7.0) -> None:
 
         eval_block = params.get("Evaluation", {}) or {}
         time_ms = np.asarray(eval_block.get("time_ms", []), dtype=float)
-        mark_max = np.asarray(eval_block.get("mark_max", []), dtype=float)
-
         # Pick a latency: honor the requested TopomapLatencyMs (legacy/EEGLAB behavior).
         target_ms = t_ms
 

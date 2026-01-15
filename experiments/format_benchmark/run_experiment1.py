@@ -21,15 +21,14 @@ import shutil
 import subprocess
 import warnings
 from pathlib import Path
-from typing import Any, Dict, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import mne
 import numpy as np
 
 from cortipy.shared import CortiDataset  # type: ignore
-from cortipy.shared.bids import ExperimentBinLoader
-from cortipy.shared.plotting import apply_standard_montage, topomap_info_from_labels
+from cortipy.shared.plotting import apply_standard_montage
 
 RESULTS_DIR = Path(__file__).resolve().parent / "results_exp1"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -123,7 +122,6 @@ def _hash_file(path: Path) -> str:
 
 
 def bitwise_identity(bin_dir: Path) -> Dict[str, Any]:
-    loader = ExperimentBinLoader(bin_dir)
     params_path = bin_dir / "params.json"
     data_path = None
     # pick first .bin
@@ -183,7 +181,6 @@ def _epoch_and_metrics(raw: mne.io.BaseRaw, tmin: float = -0.2, tmax: float = 0.
         n_per_seg=min(128, n_times),
     )
     psd_mean = psd.mean(axis=0) if psd.ndim > 1 else psd
-    times = epochs.times
     return evoked, psd_mean, freqs
 
 

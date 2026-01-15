@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Iterable, List, MutableMapping, Optional, Sequence
+from typing import Callable, List, MutableMapping, Optional, Sequence
 
 from .context import ModuleContext
 

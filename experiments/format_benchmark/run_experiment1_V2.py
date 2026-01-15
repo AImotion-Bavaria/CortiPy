@@ -15,22 +15,17 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import shutil
 import subprocess
-import time
 import warnings
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
-import seaborn as sns
 import mne
 import numpy as np
-from mne.channels import make_standard_montage, make_dig_montage
 
 from cortipy.shared import CortiDataset  # type: ignore
-from cortipy.shared.bids import ExperimentBinLoader
 
 RESULTS_DIR = Path(__file__).resolve().parent / "results_exp1"
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -133,7 +128,6 @@ def _hash_file(path: Path) -> str:
 
 
 def bitwise_identity(bin_dir: Path) -> Dict[str, Any]:
-    loader = ExperimentBinLoader(bin_dir)
     params_path = bin_dir / "params.json"
     data_path = None
     # pick first .bin
@@ -195,7 +189,6 @@ def _epoch_and_metrics(raw: mne.io.BaseRaw, tmin: float = -0.2, tmax: float = 0.
         n_per_seg=min(128, n_times),
     )
     psd_mean = psd.mean(axis=0) if psd.ndim > 1 else psd
-    times = epochs.times
     return evoked, psd_mean, freqs
 
 
@@ -215,7 +208,6 @@ def pipeline_equivalence_surrogate() -> Dict[str, Any]:
     #plt.title("Synthetic Evoked (CortiPy)")
     plt.tight_layout()
     avg_path = out_dir / "evoked_cortipy.png"
-    trace_path = ds_dir / f"{name}_trace_{channel}.png"
     plt.savefig(avg_path, dpi=150)
     plt.savefig(avg_path.with_suffix(".pdf"))
     plt.close()

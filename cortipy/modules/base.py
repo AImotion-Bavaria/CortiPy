@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from typing import Iterable, Sequence
+from typing import Iterable
 
 from cortipy.core.context import ModuleContext
 from cortipy.devices.factory import DeviceFactory

@@ -16,7 +16,6 @@ def base_params(method: str, device: str, fs: float) -> dict:
 
 
 def dummy_params_alpha() -> dict:
-    rng = np.random.default_rng(42)
     fs = 100
     duration = 20
     t = np.arange(0, duration, 1 / fs)

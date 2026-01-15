@@ -12,7 +12,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-from cortipy.shared import CortiDataset, to_sbids  # type: ignore
+from cortipy.shared import to_sbids  # type: ignore # noqa: E402
 
 
 def _build_parser() -> argparse.ArgumentParser:

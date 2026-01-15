@@ -22,9 +22,9 @@ def load_axis_data(bin_path: Path, split: str = "interleaved"):
 
 
 def summarize(name: str, axis_ref, data_ref, axis_new, data_new):
-    l = min(len(data_ref), len(data_new))
-    data_ref_c = data_ref[:l]
-    data_new_c = data_new[:l]
+    length = min(len(data_ref), len(data_new))
+    data_ref_c = data_ref[:length]
+    data_new_c = data_new[:length]
     diff = data_new_c - data_ref_c
 
     def stats(label, arr):

@@ -3,21 +3,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 import numpy as np
 import matplotlib.pyplot as plt
 import mne
 
 from cortipy.evaluation.base import EvaluatorBase, save_new_figures
-from cortipy.shared import (
-    assr_calc_snr,
-    assr_compute_psd,
-    assr_f_test,
-    calc_fft,
-    plot_cortipy_topomap,
-    plot_assr_spectrum,
-)
+from cortipy.shared import assr_calc_snr, assr_f_test, calc_fft, plot_cortipy_topomap, plot_assr_spectrum
 
 
 class AssrEvaluator(EvaluatorBase):
@@ -100,8 +93,6 @@ class AssrEvaluator(EvaluatorBase):
         before_figs = set(plt.get_fignums()) if render_plots else set()
 
         evaluation = params.setdefault("Evaluation", {})
-        f_resolution = fs / data_array.shape[0] if data_array.shape[0] > 0 else 0.0
-
         ipsi_idx = int(param_block.get("ChannelIpsi", 1)) - 1
         if ipsi_idx < 0 or ipsi_idx >= data_array.shape[1]:
             raise IndexError("ChannelIpsi is out of bounds.")
@@ -208,7 +199,6 @@ class AssrEvaluator(EvaluatorBase):
             freq_welch = freq_welch[:-1]
 
         # PSD for SNR/metrics (keep existing helper)
-        psd_result = assr_compute_psd(signal, fs)
         snr_45 = assr_calc_snr(fft_vals, freq, stim_freq, f_min_noise, 45.0, f_signal_band)
         snr_max = assr_calc_snr(fft_vals, freq, stim_freq, f_min_noise, fs / 2.0, f_signal_band)
         f_value, critical = assr_f_test(

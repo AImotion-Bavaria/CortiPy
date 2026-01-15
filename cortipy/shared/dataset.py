@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Iterable, Optional, Sequence
+from typing import Any, Optional, Sequence
 import copy
 
 import mne
@@ -12,7 +12,7 @@ import numpy as np
 import importlib
 
 from .bids import BIDSLoader, BIDSLoadResult, ExperimentBinLoader
-from .sbids import SBIDSLoader, read_sbids, to_sbids
+from .sbids import read_sbids
 
 
 class CortiDataset:
