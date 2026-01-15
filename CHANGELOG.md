@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 - Nothing yet.
 
+## [v0.1.1] - 2026-01-15
+### Highlights
+- Added comprehensive experiment documentation with linked readmes and example outputs.
+- Fixed lint issues across core modules, experiments, scripts, and tests; aligned plotting exports.
+- Improved Streamlit/evaluator plotting helpers and resolved missing references in tests.
+- Updated CI dependency constraints for `pybv` across Python 3.9–3.12.
+- Marked test packages for reliable imports during pytest collection.
+
 ## [v0.1.0] - 2025-12-16
 ### Highlights
 - Added Apache-2.0 license and citation metadata.
