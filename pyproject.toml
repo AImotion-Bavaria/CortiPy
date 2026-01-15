@@ -45,7 +45,7 @@ bids = [
     "fastparquet>=2024.2.0",
     "h5py>=3.9",
     "zarr>=2.15",
-    "pybv>=0.8",
+    "pybv>=0.7.6",
     "eeglabio>=0.0.5",
 ]
 sbids = [

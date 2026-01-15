@@ -18,7 +18,7 @@ dependencies:
   - fastparquet>=2024.2.0   # Parquet alternative
   - h5py>=3.9               # HDF5 BIDS files
   - zarr>=2.15              # Zarr BIDS files
-  - pybv>=0.8               # BrainVision export
+  - pybv>=0.7.6             # BrainVision export
   - eeglabio>=0.0.5         # EEGLAB export
   - streamlit>=1.26         # optional UI
   - plotly>=5.24            # optional UI
