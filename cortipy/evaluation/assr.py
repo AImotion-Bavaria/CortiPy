@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 import mne
 
 from cortipy.evaluation.base import EvaluatorBase, save_new_figures
-from cortipy.shared import assr_calc_snr, assr_f_test, calc_fft, plot_cortipy_topomap, plot_assr_spectrum
+from cortipy.shared import assr_calc_snr, assr_compute_psd, assr_f_test, calc_fft, plot_cortipy_topomap, plot_assr_spectrum
 
 
 class AssrEvaluator(EvaluatorBase):
