@@ -5,6 +5,23 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+from .alpha import AlphaEvaluator
+from .assr import AssrEvaluator
+from .base import EvaluatorBase
+from .bera import BeraEvaluator
+from .p300 import P300Evaluator
+from .ssvep import SsvepEvaluator
+from .vep import VepEvaluator
+
+__all__ = [
+    "EvaluatorBase",
+    "AlphaEvaluator",
+    "BeraEvaluator",
+    "SsvepEvaluator",
+    "VepEvaluator",
+    "AssrEvaluator",
+    "P300Evaluator",
+]
 
 def _configure_eval_logging() -> logging.Logger:
     """Attach a shared file handler for evaluation modules."""
@@ -27,23 +44,5 @@ def _configure_eval_logging() -> logging.Logger:
         logger.addHandler(handler)
     return logger
 
-
-from .alpha import AlphaEvaluator
-from .assr import AssrEvaluator
-from .base import EvaluatorBase
-from .bera import BeraEvaluator
-from .p300 import P300Evaluator
-from .ssvep import SsvepEvaluator
-from .vep import VepEvaluator
-
-__all__ = [
-    "EvaluatorBase",
-    "AlphaEvaluator",
-    "BeraEvaluator",
-    "SsvepEvaluator",
-    "VepEvaluator",
-    "AssrEvaluator",
-    "P300Evaluator",
-]
 
 _configure_eval_logging()
