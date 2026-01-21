@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 ## Unreleased
 - Nothing yet.
 
+## [v0.1.2] - 2026-01-21
+### Highlights
+- Restructured experiment data/layout: moved curated/synthetic datasets under `experiments/datasets/` (including D2/D3/D4), updated experiment READMEs/scripts to match, and cleaned up legacy result artifacts.
+- Added `experiments/run_all_experiments.py` to generate paper outputs across experiments and consolidated documentation for running experiments.
+- Relocated `ParameterJSON` assets under `apps/assets/` and updated Streamlit UI schema lookup accordingly.
+- Refined ignore rules and repo hygiene (streamlined `.gitignore`, removed stale `cortipy_runs` placeholder).
+- Updated BIDS dataset path reference in `cortipy/shared/bids.py` and added CI badge to `README.md`.
+
 ## [v0.1.1] - 2026-01-15
 ### Highlights
 - Added comprehensive experiment documentation with linked readmes and example outputs.
