@@ -1,5 +1,7 @@
 # cortipy package
 
+[![CI](https://github.com/AwesomeEEGTools/CortiPy/actions/workflows/ci.yml/badge.svg)](https://github.com/AwesomeEEGTools/CortiPy/actions/workflows/ci.yml)
+
 `cortipy` is the pure-Python implementation of the EEG Analysis Tool that used to live
 inside MATLAB. It bundles the measurement pipeline, acquisition modules, device
 adapters, evaluators, and a Streamlit UI so the stack can be installed as a standard
