@@ -745,7 +745,7 @@ class ExperimentBinLoader:
 
         The expected layout is a folder containing `params.json` plus a `.bin`
         matrix with shape (samples x channels). This is the structure used in
-        `experiments/synData/*_scalpdata.bin`.
+        `experiments/datasets/D4_sereega_evoked_potentials/*_scalpdata.bin` (and similar folders).
         """
         dataset_dir = self._resolve_dataset(dataset)
         params_file = Path(params_path).expanduser() if params_path else dataset_dir / "params.json"
