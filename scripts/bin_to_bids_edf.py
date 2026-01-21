@@ -1,6 +1,6 @@
 """Convert CortiPy experiment `.bin` datasets into per-dataset BIDS folders with EDF files.
 
-Defaults to the synthetic datasets under `experiments/synData`, writing siblings like
+Defaults to the D4 synthetic datasets under `experiments/datasets/D4_sereega_evoked_potentials`, writing siblings like
 `Oddball_bids` with an EDF export inside the `eeg/` modality directory.
 """
 
@@ -144,7 +144,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument(
         "--root",
         type=Path,
-        default=Path("experiments/synData"),
+        default=Path("experiments/datasets/D4_sereega_evoked_potentials"),
         help="Folder containing dataset subdirectories (each with params.json + *.bin)",
     )
     parser.add_argument("--format", default="edf", choices=["edf", "bdf", "fif"], help="BIDS data format to export")

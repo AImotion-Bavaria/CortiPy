@@ -57,7 +57,7 @@ def main(argv: Iterable[str] | None = None) -> int:
     parser.add_argument(
         "--root",
         type=Path,
-        default=Path("experiments/synData"),
+        default=Path("experiments/datasets/D4_sereega_evoked_potentials"),
         help="Folder containing dataset subdirectories (each with params.json + *.bin)",
     )
     parser.add_argument(

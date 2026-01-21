@@ -1,5 +1,7 @@
 # cortipy package
 
+[![CI](https://github.com/AwesomeEEGTools/CortiPy/actions/workflows/ci.yml/badge.svg)](https://github.com/AwesomeEEGTools/CortiPy/actions/workflows/ci.yml)
+
 `cortipy` is the pure-Python implementation of the EEG Analysis Tool that used to live
 inside MATLAB. It bundles the measurement pipeline, acquisition modules, device
 adapters, evaluators, and a Streamlit UI so the stack can be installed as a standard
@@ -56,9 +58,9 @@ cortipy/
 
 ## Format benchmark experiments
 
-- **Experiment 1 – Streaming & numerical validation** (`experiments/format_benchmark/run_experiment1.py`): `PYTHONPATH=. python ...` with no flags. Checks bitwise identity of BIN exports, runs a synthetic sine pipeline surrogate, and renders CortiPy plots for ABR/ASSR/Oddball/VEP/SSVEP/Sine10Hz to compare against EEGLAB references. Outputs live under `experiments/format_benchmark/results_exp1/` (JSON + PNG/PDFs). Hardware/EEGLAB numeric correlations are documented as manual placeholders.
-- **Experiment 2 – File format storage & latency** (`.../run_experiment2.py`): measures export size and read/write latency across BIDS/SBIDS containers and formats (parquet/edf/zarr/hdf5) using synthetic 1 h datasets (19/64/256 ch). Default: run all datasets, containers, and formats; results saved to `results_exp2/experiment2_results.json` with plots. Key flags: `--datasets` labels, `--containers` bids|sbids, `--formats` parquet|edf|zarr|hdf5, `--runs` N, `--keep-artifacts`, `--no-purge`, `--plot-scope all|synthetic|bin`, `--plots-only`, `--results-json PATH`.
-- **Experiment 3 – Streaming access benchmark** (`.../run_experiment3.py`): times streaming-style reads (open handle, single channel, random windows) for the same synthetic datasets exported to BIDS/SBIDS formats. Default: all datasets, containers, formats; results to `results_exp3/experiment3_results.json` with plots. Key flags: `--datasets`, `--containers`, `--formats`, `--runs`, `--window-s` (window duration), `--channel-idx` (0-based), `--keep-artifacts`, `--no-purge`, `--plots-only`, `--results-json PATH`.
+- **Experiment 1 – Streaming & numerical validation** (`experiments/experiment1/run_experiment1.py`): `PYTHONPATH=. python ...` with no flags. Checks bitwise identity of BIN exports, runs a synthetic sine pipeline surrogate, and renders CortiPy plots for ABR/ASSR/Oddball/VEP/SSVEP/Sine10Hz to compare against EEGLAB references. Outputs live under `experiments/experiment1/results/` (JSON + PNG/PDFs). Hardware/EEGLAB numeric correlations are documented as manual placeholders.
+- **Experiment 2 – File format storage & latency** (`experiments/experiment2/run_experiment2.py`): measures export size and read/write latency across BIDS/SBIDS containers and formats (parquet/edf/zarr/hdf5) using synthetic 1 h datasets (19/64/256 ch). Default: run all datasets, containers, and formats; results saved to `experiments/experiment2/results/experiment2_results.json` with plots. Key flags: `--datasets` labels, `--containers` bids|sbids, `--formats` parquet|edf|zarr|hdf5, `--runs` N, `--keep-artifacts`, `--no-purge`, `--plot-scope all|synthetic|bin`, `--plots-only`, `--results-json PATH`.
+- **Experiment 3 – Streaming access benchmark** (`experiments/experiment3/run_experiment3.py`): times streaming-style reads (open handle, single channel, random windows) for the same synthetic datasets exported to BIDS/SBIDS formats. Default: all datasets, containers, formats; results to `experiments/experiment3/results/experiment3_results.json` with plots. Key flags: `--datasets`, `--containers`, `--formats`, `--runs`, `--window-s` (window duration), `--channel-idx` (0-based), `--keep-artifacts`, `--no-purge`, `--plots-only`, `--results-json PATH`.
 
 ## Documentation
 
@@ -157,14 +159,14 @@ Open `http://localhost:8501` (default Streamlit port) and configure a run:
 ### BIDS import/export
 
 - `cortipy.shared.BIDSLoader` can read/write BIDS datasets. Supported inputs include EDF/BDF, BrainVision (`.vhdr/.eeg`), EEGLAB (`.set`), FIF, Parquet, HDF5, and Zarr.
-- `cortipy.shared.ExperimentBinLoader` reads/writes the `.bin` + `params.json` pairs used in `experiments/synData`, returning a `BIDSLoadResult` so you can analyse or re-export them.
+- `cortipy.shared.ExperimentBinLoader` reads/writes the `.bin` + `params.json` pairs used in `experiments/datasets/D2_software_curated_signals` and `experiments/datasets/D4_sereega_evoked_potentials`, returning a `BIDSLoadResult` so you can analyse or re-export them.
 - Extra dependencies for non-default formats: `pyedflib` (EDF/BDF export), `pyarrow` or `fastparquet` (Parquet), `h5py` (HDF5), `zarr` (Zarr), `pybv` (BrainVision export), and `eeglabio` (EEGLAB export).
 - Install them via `pip install -e .[bids]` (or combine with `[ui]`) to enable all BIDS I/O features.
 
 ```python
 from cortipy.shared import BIDSLoader, ExperimentBinLoader
 
-bin_loader = ExperimentBinLoader("experiments/synData")
+bin_loader = ExperimentBinLoader("experiments/datasets/D4_sereega_evoked_potentials")
 result = bin_loader.read_bin("Oddball")  # loads params.json + Oddball_scalpdata.bin
 
 # Convert to BIDS

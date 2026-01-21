@@ -94,7 +94,7 @@ from cortipy.devices import DeviceFactory, DeviceInterface  # noqa: E402
 from cortipy.ui import SaveManager, normalize_params  # noqa: E402
 
 DEFAULT_SAVE_DIR = Path.cwd() / "cortipy_runs"
-SCHEMA_DIR = ROOT / "ParameterJSON"
+SCHEMA_DIR = ROOT / "apps" / "assets" / "ParameterJSON"
 SUPPORTED_EXTRA_DEVICES = ["LSL", "Offline", "Dummy"]
 DEVICE_CONFIG_SCHEMA = {
     "UNICORN": [
