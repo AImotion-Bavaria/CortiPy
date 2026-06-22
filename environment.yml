@@ -2,7 +2,7 @@ name: cortipy
 channels:
   - conda-forge
 dependencies:
-  - python>=3.9
+  - python>=3.9,<3.13
   - numpy==1.26.4
   - scipy>=1.13.1
   - matplotlib==3.9.2

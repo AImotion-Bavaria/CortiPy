@@ -69,10 +69,15 @@ cortipy/
 
 ## Installation
 
-Install in editable mode with optional UI extras:
+Install with Python 3.9-3.12 in editable mode with optional UI extras:
 
 ```bash
+# Windows example with the Python launcher:
+py -3.12 -m venv .venv
+
+# macOS/Linux example:
 python -m venv .venv
+
 source .venv/bin/activate   # PowerShell: .venv\Scripts\Activate.ps1
 pip install --upgrade pip
 pip install -e .            # core toolkit

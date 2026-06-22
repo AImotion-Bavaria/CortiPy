@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "cortipy"
 description = "Python EEG acquisition and analysis toolkit"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.9,<3.13"
 authors = [{ name = "CortiPy developers" }]
 license = { text = "Apache-2.0" }
 classifiers = [
