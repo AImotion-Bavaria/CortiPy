@@ -20,8 +20,8 @@ dependencies:
   - zarr>=2.15              # Zarr BIDS files
   - pybv>=0.7.6             # BrainVision export
   - eeglabio>=0.0.5         # EEGLAB export
-  - streamlit>=1.26         # optional UI
-  - plotly>=5.24            # optional UI
+  - streamlit>=1.38,<1.50  # optional UI
+  - plotly>=5.24,<6        # optional UI
   - pip
   - pip:
       - ".[ui,bids,sbids]"
