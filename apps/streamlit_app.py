@@ -92,10 +92,12 @@ from cortipy import MeasurementPipeline  # noqa: E402
 from cortipy.core.pipeline import PipelineHooks  # noqa: E402
 from cortipy.devices import DeviceFactory, DeviceInterface  # noqa: E402
 from cortipy.ui import SaveManager, normalize_params  # noqa: E402
+from cortipy.ui_streamlit.styles import inject_global_styles  # noqa: E402
 
 DEFAULT_SAVE_DIR = Path.cwd() / "cortipy_runs"
 SCHEMA_DIR = ROOT / "apps" / "assets" / "ParameterJSON"
 SUPPORTED_EXTRA_DEVICES = ["LSL", "Offline", "Dummy"]
+VIEW_OPTIONS = ["Session configuration", "Electrodes", "Live preview", "Preview", "Charts", "Saved sessions"]
 DEVICE_CONFIG_SCHEMA = {
     "UNICORN": [
         {
@@ -158,6 +160,15 @@ class ChartData:
     y_label: str
     series: List[ChartSeries]
     description: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class SidebarControls:
+    default_save: str
+    simulate: bool
+    live_view_enabled: bool
+    live_view_window: int
+    start_button: bool
 
 
 def device_default_values(device: str) -> Dict[str, Any]:
@@ -2528,7 +2539,13 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
 
         with map_col:
             st.caption("Scalp map")
-            if plotly_events is not None and go is not None:
+            enable_click_placement = st.checkbox(
+                "Enable click placement",
+                value=False,
+                key=f"enable_topo_click_{device}",
+                help="Loads an optional custom Streamlit component for placing electrodes by clicking the map.",
+            )
+            if enable_click_placement and plotly_events is not None and go is not None:
                 channel_labels = [row.get("Channel") or f"Ch {idx+1}" for idx, row in enumerate(edited)]
                 target = st.selectbox("Channel to place", options=channel_labels, key=f"topo_target_{device}")
                 fig = _plotly_topography(edited)
@@ -2554,8 +2571,10 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                         st.rerun()
                 if msg := st.session_state.get("_topo_last_message"):
                     st.info(msg)
-            else:
+            elif enable_click_placement:
                 st.info("Install optional deps `plotly` and `streamlit-plotly-events` for click placement.")
+            else:
+                st.caption("Click placement is off. Use the coordinate columns to edit positions, or enable it here.")
             _plot_topography(edited, st.empty())
     return edited
 
@@ -2929,8 +2948,8 @@ def render_saved_sessions(base_dir: Path) -> tuple[Optional[tuple[str, Dict[str,
     return primary_payload, compare_payloads
 
 
-def handle_upload() -> None:
-    with st.sidebar.expander("Import config / Params", expanded=False):
+def handle_upload(target) -> None:
+    with target.expander("Import config / params", expanded=False):
         uploaded = st.file_uploader(
             "Load JSON/TOML config or params.json",
             type=["json", "toml", "tml"],
@@ -2965,101 +2984,122 @@ def handle_upload() -> None:
                 st.success(f"Attached data from '{data_upload.name}'.")
 
 
-def main() -> None:
-    st.set_page_config(page_title="cortipy UI", layout="wide")
-    st.markdown(
-        """
-<style>
-:root {
-    --expander-bg: #f8fafc;
-    --expander-border: #e5e7eb;
-    --expander-summary: #f1f5f9;
-    --expander-summary-hover: #e2e8f0;
-    --expander-text: #0f172a;
-}
-@media (prefers-color-scheme: dark) {
-    :root {
-        --expander-bg: #0f172a;
-        --expander-border: #1f2937;
-        --expander-summary: #111827;
-        --expander-summary-hover: #152238;
-        --expander-text: #e5e7eb;
-    }
-}
-div[data-testid="stExpander"] > details {
-    border-radius: 12px;
-    border: 1px solid var(--expander-border);
-    background-color: var(--expander-bg);
-    color: var(--expander-text);
-}
-div[data-testid="stExpander"] > details > summary {
-    background-color: var(--expander-summary);
-    color: var(--expander-text);
-}
-div[data-testid="stExpander"] > details > summary p,
-div[data-testid="stExpander"] > details > summary span {
-    color: var(--expander-text);
-}
-div[data-testid="stExpander"] > details > summary:hover {
-    background-color: var(--expander-summary-hover);
-}
-div[data-testid="stExpander"] > details > div[role="group"] {
-    padding-top: 0.5rem;
-    color: var(--expander-text);
-}
-</style>
-        """,
-        unsafe_allow_html=True,
+def render_sidebar_controls() -> SidebarControls:
+    sidebar = st.sidebar
+    sidebar.title("Controls")
+
+    with sidebar.container(border=True):
+        st.subheader("Measurement")
+        default_save = st.text_input(
+            "Save directory",
+            value=str(DEFAULT_SAVE_DIR),
+            help="Folder where run outputs are written.",
+        )
+        simulate = st.toggle(
+            "Simulate run",
+            value=False,
+            help="Save generated zero data without connecting to hardware.",
+        )
+
+    with sidebar.container(border=True):
+        st.subheader("Data source")
+        handle_upload(st)
+        imported_data = st.session_state.get("imported_data")
+        default_use_imported = st.session_state.get("use_imported_data", False) or bool(imported_data)
+        use_imported_data = st.checkbox(
+            "Use imported data for offline replay",
+            value=default_use_imported and imported_data is not None,
+            disabled=imported_data is None,
+        )
+        st.session_state["use_imported_data"] = use_imported_data and imported_data is not None
+
+    with sidebar.container(border=True):
+        st.subheader("Live view")
+        live_view_enabled = st.toggle("During measurement", value=True)
+        live_view_window = st.slider(
+            "Window (s)",
+            min_value=1,
+            max_value=60,
+            value=5,
+            disabled=not live_view_enabled,
+        )
+
+    with sidebar.container(border=True):
+        st.subheader("Run")
+        start_button = st.button("Start measurement", type="primary", width="stretch")
+
+    return SidebarControls(
+        default_save=default_save,
+        simulate=simulate,
+        live_view_enabled=live_view_enabled,
+        live_view_window=int(live_view_window),
+        start_button=start_button,
     )
-    st.title("cortipy – EEG Measurement UI")
-    st.warning(
+
+
+def render_footer() -> None:
+    st.divider()
+    st.caption(
         "Research use only: CortiPy is not a medical device and must not be used for diagnosis or patient care. "
         "Validate latency/trigger behavior and device compatibility in your lab before clinical evaluation."
     )
-    st.info(
+    st.caption(
         "Protect privacy: avoid uploading or storing identifiable participant data. "
-        "Keep run folders on secured systems and use anonymized or synthetic data when sharing. "
-        "Contacts: joh1391@thi.de, Rahul.Mondal@thi.de, Laurens.Kreilinger@thi.de."
+        "Keep run folders on secured systems and use anonymized or synthetic data when sharing."
     )
+
+
+def main() -> None:
+    st.set_page_config(page_title="cortipy UI", layout="wide")
+    inject_global_styles(st)
+    st.title("cortipy – EEG Measurement UI")
     ensure_state()
 
-    sidebar = st.sidebar
-    sidebar.header("Run controls")
-    handle_upload()
-    default_save = sidebar.text_input("Save directory", value=str(DEFAULT_SAVE_DIR))
-    simulate = sidebar.checkbox("Simulate run (no device)", value=False)
-    live_view_enabled = sidebar.checkbox("Live view during measurement", value=True)
-    live_view_window = sidebar.slider("Live view window (s)", min_value=1, max_value=60, value=5)
+    controls = render_sidebar_controls()
+    default_save = controls.default_save
+    simulate = controls.simulate
+    live_view_enabled = controls.live_view_enabled
+    live_view_window = controls.live_view_window
+    start_button = controls.start_button
     imported_data = st.session_state.get("imported_data")
-    default_use_imported = st.session_state.get("use_imported_data", False) or bool(imported_data)
-    use_imported_data = sidebar.checkbox(
-        "Use imported data for offline replay",
-        value=default_use_imported and imported_data is not None,
-        disabled=imported_data is None,
-    )
-    st.session_state["use_imported_data"] = use_imported_data and imported_data is not None
-    start_button = sidebar.button("Start measurement")
 
-    session_tab, electrodes_tab, live_tab, preview_tab, charts_tab, saved_tab = st.tabs(
-        ["Session configuration", "Electrodes", "Live preview", "Preview", "Charts", "Saved sessions"]
+    page = st.segmented_control(
+        "Section",
+        VIEW_OPTIONS,
+        default="Session configuration",
+        key="active_view",
+        label_visibility="collapsed",
+        width="stretch",
     )
+    if page is None:
+        page = "Session configuration"
 
-    with session_tab:
+    general_values = dict(st.session_state["general_form"])
+    device_values = dict(st.session_state.setdefault("device_forms", {}).get(general_values.get("Device"), {}))
+    method_values = dict(
+        st.session_state["method_forms"].get(
+            general_values.get("Method"),
+            default_values(METHOD_SCHEMAS.get(general_values.get("Method"), [])),
+        )
+    )
+    participant_values = dict(st.session_state["participant"])
+
+    if page == "Session configuration":
         general_values = render_general_form()
         device_values = render_device_config(general_values["Device"])
         method_values = render_method_form(general_values["Method"])
         participant_values = render_participant_form()
 
-    with electrodes_tab:
+    if page == "Electrodes":
         render_channel_editor(general_values["Device"])
 
     assembled_params = assemble_params(general_values, method_values, participant_values, device_values)
     validation_issues = validate_params(assembled_params)
 
-    with live_tab:
+    if page == "Live preview":
         render_live_preview_tab(assembled_params, validation_issues)
 
-    with preview_tab:
+    if page == "Preview":
         if validation_issues:
             st.warning(" • ".join(validation_issues))
         st.json(assembled_params)
@@ -3070,7 +3110,7 @@ div[data-testid="stExpander"] > details > div[role="group"] {
             mime="application/json",
         )
 
-    with charts_tab:
+    if page == "Charts":
         current_results = st.session_state.get("last_results")
         chart_label: Optional[str] = None
         chart_params: Optional[Dict[str, Any]] = None
@@ -3092,7 +3132,7 @@ div[data-testid="stExpander"] > details > div[role="group"] {
         else:
             st.info("Run a measurement or load a saved session to see charts.")
 
-    with saved_tab:
+    if page == "Saved sessions":
         primary_payload, compare_payloads = render_saved_sessions(Path(default_save).expanduser())
         if primary_payload:
             label, params_loaded, data_loaded = primary_payload
@@ -3104,6 +3144,7 @@ div[data-testid="stExpander"] > details > div[role="group"] {
         if validation_issues:
             issues_md = " • " + "\n • ".join(validation_issues)
             st.error(f"Please fix these configuration issues before starting a run:\n{issues_md}")
+            render_footer()
             return
         channels_for_run = len(assembled_params.get("Channels", [])) or int(
             assembled_params.get("Parameters", {}).get("NumberEEGChannels") or 0
@@ -3160,6 +3201,7 @@ div[data-testid="stExpander"] > details > div[role="group"] {
                 params_to_run["data"] = imported_data
             elif use_imported and imported_data is None:
                 st.error("No imported data attached. Upload a data file or select a saved session first.")
+                render_footer()
                 return
             try:
                 run_params, saved_path = run_pipeline_once(params_to_run, save_dir, live_view=live_view_service)
@@ -3177,6 +3219,8 @@ div[data-testid="stExpander"] > details > div[role="group"] {
                 st.session_state["_live_view_banner"] = None
                 if live_view_service is not None:
                     live_view_service.reset()
+
+    render_footer()
 
 
 if __name__ == "__main__":
