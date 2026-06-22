@@ -1963,6 +1963,8 @@ def ensure_state() -> None:
         st.session_state["_actichamp_impedance_status"] = None
     if "_live_view_active" not in st.session_state:
         st.session_state["_live_view_active"] = False
+    if "_channel_editor_revision" not in st.session_state:
+        st.session_state["_channel_editor_revision"] = {}
 
 
 def get_live_view_placeholder():
@@ -1996,6 +1998,11 @@ def _actichamp_channel_count(rows: List[Dict[str, Any]]) -> int:
     return sum(1 for row in rows if row.get("Channel") not in extras)
 
 
+def _bump_channel_editor_revision(device: str) -> None:
+    revisions = st.session_state.setdefault("_channel_editor_revision", {})
+    revisions[device] = int(revisions.get(device, 0)) + 1
+
+
 def _map_impedances_to_channels(rows: List[Dict[str, Any]], values: List[float]) -> List[Dict[str, Any]]:
     if len(values) < 3:
         return rows
@@ -2014,6 +2021,13 @@ def _map_impedances_to_channels(rows: List[Dict[str, Any]], values: List[float])
 
 def _has_measured_impedance(values: List[float]) -> bool:
     return any(value > 0 for value in values)
+
+
+def _impedance_range_kohm(values: List[float]) -> Optional[tuple[float, float]]:
+    measured = [float(value) / 1000.0 for value in values if value > 0]
+    if not measured:
+        return None
+    return min(measured), max(measured)
 
 
 def _fetch_actichamp_impedances(fs_value: Any) -> None:
@@ -2043,7 +2057,7 @@ def _fetch_actichamp_impedances(fs_value: Any) -> None:
             device = DeviceFactory.create(params)
             try:
                 reader = getattr(device, "read_impedances", None)
-                values = reader(wait_seconds=5.0) if callable(reader) else []
+                values = reader(wait_seconds=7.0, settle_seconds=1.5) if callable(reader) else []
             finally:
                 device.disconnect()
     except Exception as exc:  # pragma: no cover
@@ -2067,8 +2081,16 @@ def _fetch_actichamp_impedances(fs_value: Any) -> None:
 
     LOGGER.info("Loaded %d ActiCHamp impedance values", len(values))
     channel_tables["ActiCHamp"] = _map_impedances_to_channels(rows, values)
+    _bump_channel_editor_revision("ActiCHamp")
     st.session_state["_actichamp_impedance_loaded"] = True
-    st.session_state["_actichamp_impedance_status"] = f"Loaded {len(values)} impedance values."
+    range_kohm = _impedance_range_kohm(values)
+    if range_kohm is None:
+        st.session_state["_actichamp_impedance_status"] = f"Loaded {len(values)} impedance values."
+    else:
+        low, high = range_kohm
+        st.session_state["_actichamp_impedance_status"] = (
+            f"Loaded {len(values)} impedance values ({low:.1f}-{high:.1f} kΩ)."
+        )
     st.session_state["_actichamp_impedance_timestamp"] = time.time()
 
 
@@ -2467,6 +2489,7 @@ def ensure_channel_rows(device: str, existing: Optional[List[Dict[str, Any]]] = 
 def render_channel_editor(device: str) -> List[Dict[str, Any]]:
     channel_state = st.session_state["channel_tables"]
     rows = ensure_channel_rows(device, channel_state.get(device))
+    editor_revision = int(st.session_state.setdefault("_channel_editor_revision", {}).get(device, 0))
     with st.expander(f"Electrodes ({device})", expanded=True):
         st.caption(
             "Toggle the channels you intend to record, set the 10-20 name (Position), adjust coordinates, and choose "
@@ -2481,10 +2504,16 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 st.session_state["_actichamp_impedance_loaded"] = False
                 _fetch_actichamp_impedances(fs_value)
                 rows = st.session_state["channel_tables"].get("ActiCHamp", rows)
+                editor_revision = int(st.session_state["_channel_editor_revision"].get(device, 0))
             if btn_cols[1].button("Clear impedances", key="actichamp_impedance_clear"):
                 st.session_state["_actichamp_impedance_loaded"] = False
                 st.session_state["_actichamp_impedance_timestamp"] = None
                 st.session_state["_actichamp_impedance_status"] = "Cleared previously loaded impedances."
+                for row in rows:
+                    row["Impedance"] = 0.0
+                channel_state["ActiCHamp"] = rows
+                _bump_channel_editor_revision("ActiCHamp")
+                editor_revision = int(st.session_state["_channel_editor_revision"].get(device, 0))
             with btn_cols[2]:
                 if status:
                     st.info(status)
@@ -2498,7 +2527,7 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 rows,
                 num_rows="fixed",
                 hide_index=True,
-                key=f"channels_{device}",
+                key=f"channels_{device}_{editor_revision}",
                 column_config={
                     "Channel": st.column_config.TextColumn("Channel", disabled=True, width="small"),
                     "Position": st.column_config.TextColumn(

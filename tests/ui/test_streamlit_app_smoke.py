@@ -71,6 +71,8 @@ def test_impedance_mapping_uses_measured_positive_values() -> None:
 
     assert module._has_measured_impedance([0.0, -1.0, 0.0]) is False
     assert module._has_measured_impedance([0.0, -1.0, 12000.0]) is True
+    assert module._impedance_range_kohm([0.0, -1.0, 12000.0, 5000.0]) == (5.0, 12.0)
+    assert module._impedance_range_kohm([0.0, -1.0]) is None
 
     mapped = module._map_impedances_to_channels(rows, [5000.0, 6000.0, 12000.0, -1.0])
 

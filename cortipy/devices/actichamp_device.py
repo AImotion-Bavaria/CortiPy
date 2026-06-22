@@ -268,7 +268,12 @@ class ActiChampDevice(DeviceInterface):
     def prime(self, duration_seconds: float, aux_channels: int = 0) -> np.ndarray:
         return self.acquire(duration_seconds, aux_channels)
 
-    def read_impedances(self, wait_seconds: float = 3.0, poll_interval: float = 0.1) -> list[float]:
+    def read_impedances(
+        self,
+        wait_seconds: float = 6.0,
+        poll_interval: float = 0.1,
+        settle_seconds: float = 1.0,
+    ) -> list[float]:
         """Return impedance values from the shared control block.
 
         Impedance data is produced before a sampling rate is written to the
@@ -285,16 +290,15 @@ class ActiChampDevice(DeviceInterface):
                     self._start_producer()
                     self._map_shared_buffer()
 
-                buf = self._buf
-                if self._spawned_producer:
-                    buf.control.stopRequested = False
-                    buf.control.targetSamplingRate = 0.0
-                    buf.impSize = 0
-                    for idx in range(MAX_CHANNELS + 2):
-                        buf.impedances[idx] = -1.0
-
             buf = self._buf
+            buf.control.stopRequested = False
+            buf.control.targetSamplingRate = 0.0
+            buf.impSize = 0
+            for idx in range(MAX_CHANNELS + 2):
+                buf.impedances[idx] = -1.0
+
             deadline = time.time() + max(0.0, float(wait_seconds))
+            first_positive_at: float | None = None
             last_values: list[float] = []
 
             while True:
@@ -303,7 +307,10 @@ class ActiChampDevice(DeviceInterface):
                     limit = min(size, MAX_CHANNELS + 2)
                     last_values = [float(buf.impedances[i]) for i in range(limit)]
                     if any(value > 0 for value in last_values):
-                        return last_values
+                        if first_positive_at is None:
+                            first_positive_at = time.time()
+                        if (time.time() - first_positive_at) >= max(0.0, float(settle_seconds)):
+                            return last_values
 
                 if time.time() >= deadline:
                     break
