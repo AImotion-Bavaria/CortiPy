@@ -149,41 +149,6 @@ int SearchForAmps()
     return nRes;
 }
 
-void PrepareImpedanceMeasurement()
-{
-    int gain = 100;
-    int nRet = amp.SetProperty(gain, DPROP_I32_ActiveShieldGain);
-    if (nRet != AMP_OK) {
-        std::cout << "ERROR setting DPROP_I32_ActiveShieldGain: " << nRet << "\n";
-    }
-
-    int nAvailableModules = 0;
-    amp.GetProperty(nAvailableModules, DPROP_I32_AvailableModules);
-    for (int moduleID = 0; moduleID < nAvailableModules; moduleID++) {
-        BOOL supportsImpedance = FALSE;
-        nRet = amp.GetProperty(supportsImpedance, moduleID, MPROP_B32_ImpedanceMeasurement);
-        if (nRet >= 0 && supportsImpedance) {
-            int enableImpedance = 1;
-            int setRet = amp.SetProperty(enableImpedance, moduleID, MPROP_B32_ImpedanceMeasurement);
-            if (setRet < 0) {
-                std::cout << "Failed to enable impedance measurement for module "
-                          << moduleID << ". Error code: " << setRet << "\n";
-            }
-        }
-    }
-
-    int nAvailableChannels = 0;
-    amp.GetProperty(nAvailableChannels, DPROP_I32_AvailableChannels);
-    for (int channelID = 0; channelID < nAvailableChannels; channelID++) {
-        ElectrodeType electrodeType = EL_PASSIVE;
-        int setRet = amp.SetProperty(electrodeType, channelID, CPROP_I32_Electrode);
-        if (setRet < 0) {
-            std::cout << "Failed to set passive electrode mode for channel "
-                      << channelID << ". Error code: " << setRet << "\n";
-        }
-    }
-}
-
 void ConnectToAmp(int nIdx)
 {
     if (isConnected) amp.Close();
@@ -278,10 +243,6 @@ int main() {
     shm->control.targetSamplingRate.store(0);
     shm->control.stopRequested.store(false);
     shm->lostSamples.store(0, std::memory_order_release);
-    shm->impSize.store(0, std::memory_order_release);
-    for (int i = 0; i < MAX_CHANNELS + 2; i++) {
-        shm->impedances[i] = -1.0f;
-    }
 
 
 
@@ -337,7 +298,6 @@ if (shm) {
     int nDevs = SearchForAmps();
     if (nDevs <= 0) return -1;
     ConnectToAmp(0);
-    PrepareImpedanceMeasurement();
 
 // --- 4. Start impedance acquisition ---
 amp.StartAcquisition(RM_IMPEDANCE);
@@ -360,14 +320,8 @@ std::thread impedanceThread([&]() {
             impedanceValues[1] = vfImpData[1]; // REF
 
             int row = 2;
-            for (size_t i = 2; i + 1 < vfImpData.size(); i += 2, row++) {
-                if (vfImpData[i] < 0) {
-                    impedanceValues[row] = -1.0f;
-                } else if (vfImpData[i + 1] < 0) {
-                    impedanceValues[row] = vfImpData[i];
-                } else {
-                    impedanceValues[row] = vfImpData[i] - vfImpData[i + 1];
-                }
+            for (size_t i = 2; i < vfImpData.size(); i += 2, row++) {
+                impedanceValues[row] = (vfImpData[i] >= 0) ? vfImpData[i] : -1.0f;
             }
 
             int nImp = static_cast<int>(impedanceValues.size());
@@ -375,7 +329,6 @@ std::thread impedanceThread([&]() {
                 shm->impedances[i] = impedanceValues[i];
 
             shm->impSize.store(nImp, std::memory_order_release);
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
         } else {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
