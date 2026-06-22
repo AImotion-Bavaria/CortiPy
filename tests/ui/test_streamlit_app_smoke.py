@@ -15,7 +15,7 @@ from cortipy.ui_streamlit.styles import GLOBAL_CSS
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_streamlit_app_imports() -> None:
+def load_streamlit_app():
     app_path = ROOT / "apps" / "streamlit_app.py"
     spec = importlib.util.spec_from_file_location("streamlit_app_smoke", app_path)
     assert spec is not None
@@ -23,6 +23,11 @@ def test_streamlit_app_imports() -> None:
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
+    return module
+
+
+def test_streamlit_app_imports() -> None:
+    module = load_streamlit_app()
 
     assert callable(module.main)
     assert module.GENERAL_SCHEMA
@@ -54,3 +59,21 @@ def test_ui_dependencies_are_bounded() -> None:
     assert "streamlit>=1.38,<1.50" in ui_deps
     assert "plotly>=5.24,<6" in ui_deps
     assert "streamlit-plotly-events==0.0.6" in ui_deps
+
+
+def test_impedance_mapping_uses_measured_positive_values() -> None:
+    module = load_streamlit_app()
+    rows = [
+        {"Channel": "GND", "Impedance": 0.0},
+        {"Channel": "Ch 1", "Impedance": 0.0},
+        {"Channel": "Ch 2", "Impedance": 0.0},
+    ]
+
+    assert module._has_measured_impedance([0.0, -1.0, 0.0]) is False
+    assert module._has_measured_impedance([0.0, -1.0, 12000.0]) is True
+
+    mapped = module._map_impedances_to_channels(rows, [5000.0, 6000.0, 12000.0, -1.0])
+
+    assert mapped[0]["Impedance"] == 5.0
+    assert mapped[1]["Impedance"] == 12.0
+    assert mapped[2]["Impedance"] == 0.0

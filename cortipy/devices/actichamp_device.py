@@ -268,19 +268,48 @@ class ActiChampDevice(DeviceInterface):
     def prime(self, duration_seconds: float, aux_channels: int = 0) -> np.ndarray:
         return self.acquire(duration_seconds, aux_channels)
 
-    def read_impedances(self) -> list[float]:
-        """Return impedance values from the shared control block."""
+    def read_impedances(self, wait_seconds: float = 3.0, poll_interval: float = 0.1) -> list[float]:
+        """Return impedance values from the shared control block.
+
+        Impedance data is produced before a sampling rate is written to the
+        shared control block.  The normal ``connect`` path sets that sampling
+        rate and switches the producer into acquisition mode, so this method
+        maps or starts the producer without calling ``connect`` when needed.
+        """
         with self._lock:
             if self._buffer is None:
-                raise RuntimeError("ActiChamp shared memory is not mapped.")
+                try:
+                    self._map_shared_buffer()
+                except RuntimeError as exc:
+                    logger.info("Shared memory not available for impedance read; starting producer: %s", exc)
+                    self._start_producer()
+                    self._map_shared_buffer()
+
+                buf = self._buf
+                if self._spawned_producer:
+                    buf.control.stopRequested = False
+                    buf.control.targetSamplingRate = 0.0
+                    buf.impSize = 0
+                    for idx in range(MAX_CHANNELS + 2):
+                        buf.impedances[idx] = -1.0
 
             buf = self._buf
-            size = int(buf.impSize)
-            if size <= 0:
-                return []
+            deadline = time.time() + max(0.0, float(wait_seconds))
+            last_values: list[float] = []
 
-            limit = min(size, MAX_CHANNELS + 2)
-            return [float(buf.impedances[i]) for i in range(limit)]
+            while True:
+                size = int(buf.impSize)
+                if size > 0:
+                    limit = min(size, MAX_CHANNELS + 2)
+                    last_values = [float(buf.impedances[i]) for i in range(limit)]
+                    if any(value > 0 for value in last_values):
+                        return last_values
+
+                if time.time() >= deadline:
+                    break
+                time.sleep(max(0.01, float(poll_interval)))
+
+            return last_values
 
     # ------------------------------------------------------------------
     def _channel_limit(self, aux_channels: int) -> int:

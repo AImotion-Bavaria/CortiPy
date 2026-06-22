@@ -2012,6 +2012,10 @@ def _map_impedances_to_channels(rows: List[Dict[str, Any]], values: List[float])
     return rows
 
 
+def _has_measured_impedance(values: List[float]) -> bool:
+    return any(value > 0 for value in values)
+
+
 def _fetch_actichamp_impedances(fs_value: Any) -> None:
     if st.session_state.get("_actichamp_impedance_loaded"):
         return
@@ -2036,9 +2040,12 @@ def _fetch_actichamp_impedances(fs_value: Any) -> None:
 
     try:
         with st.spinner("Checking ActiCHamp impedances..."):
-            with DeviceFactory.create(params) as device:
+            device = DeviceFactory.create(params)
+            try:
                 reader = getattr(device, "read_impedances", None)
-                values = reader() if callable(reader) else []
+                values = reader(wait_seconds=5.0) if callable(reader) else []
+            finally:
+                device.disconnect()
     except Exception as exc:  # pragma: no cover
         LOGGER.exception("ActiCHamp impedance read failed")
         st.warning(f"ActiCHamp impedance read failed: {exc}")
@@ -2048,6 +2055,14 @@ def _fetch_actichamp_impedances(fs_value: Any) -> None:
     if not values:
         LOGGER.warning("ActiCHamp impedance read returned no values.")
         st.session_state["_actichamp_impedance_status"] = "ActiCHamp impedance read returned no values."
+        return
+
+    if not _has_measured_impedance(values):
+        LOGGER.warning("ActiCHamp impedance read returned only zero or unavailable values: %s", values)
+        st.session_state["_actichamp_impedance_status"] = (
+            "ActiCHamp impedance read returned only zero/unavailable values. "
+            "Check that the producer is in impedance mode and electrodes are connected."
+        )
         return
 
     LOGGER.info("Loaded %d ActiCHamp impedance values", len(values))
@@ -2333,9 +2348,6 @@ def render_general_form() -> Dict[str, Any]:
         st.session_state["_actichamp_impedance_loaded"] = False
         st.session_state["_actichamp_impedance_status"] = None
         st.session_state["_actichamp_impedance_timestamp"] = None
-
-    if device == "ActiCHamp" and device_changed:
-        _fetch_actichamp_impedances(general.get("fs"))
 
     return dict(general)
 
