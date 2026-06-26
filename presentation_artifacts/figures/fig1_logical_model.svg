@@ -1,0 +1,185 @@
+<?xml version="1.0" encoding="utf-8" standalone="no"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN"
+  "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">
+<svg xmlns:xlink="http://www.w3.org/1999/xlink" width="753.4152pt" height="430.2pt" viewBox="0 0 753.4152 430.2" xmlns="http://www.w3.org/2000/svg" version="1.1">
+ <metadata>
+  <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+   <cc:Work>
+    <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
+    <dc:date>2026-06-26T13:39:26.978240</dc:date>
+    <dc:format>image/svg+xml</dc:format>
+    <dc:creator>
+     <cc:Agent>
+      <dc:title>Matplotlib v3.9.2, https://matplotlib.org/</dc:title>
+     </cc:Agent>
+    </dc:creator>
+   </cc:Work>
+  </rdf:RDF>
+ </metadata>
+ <defs>
+  <style type="text/css">*{stroke-linejoin: round; stroke-linecap: butt}</style>
+ </defs>
+ <g id="figure_1">
+  <g id="patch_1">
+   <path d="M 0 430.2 
+L 753.4152 430.2 
+L 753.4152 0 
+L 0 0 
+z
+" style="fill: #ffffff"/>
+  </g>
+  <g id="axes_1">
+   <g id="patch_2">
+    <path d="M 273.245472 230.856048 
+L 480.169728 230.856048 
+L 480.169728 142.174224 
+L 273.245472 142.174224 
+z
+" clip-path="url(#pd87fcca013)" style="fill: #ffffff; stroke: #16222b; stroke-width: 2.6; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_3">
+    <path d="M 554.071248 171.734832 
+L 731.434896 171.734832 
+L 731.434896 83.053008 
+L 554.071248 83.053008 
+z
+" clip-path="url(#pd87fcca013)" style="fill: #e6f3ed; stroke: #1f7a5a; stroke-width: 2.4; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_4">
+    <path d="M 554.071248 275.19696 
+L 731.434896 275.19696 
+L 731.434896 186.515136 
+L 554.071248 186.515136 
+z
+" clip-path="url(#pd87fcca013)" style="fill: #fbf1da; stroke: #bf7d12; stroke-width: 2.4; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_5">
+    <path d="M 21.980304 171.734832 
+L 199.343952 171.734832 
+L 199.343952 83.053008 
+L 21.980304 83.053008 
+z
+" clip-path="url(#pd87fcca013)" style="fill: #ece8f6; stroke: #5a4b8a; stroke-width: 2.4; stroke-linejoin: miter"/>
+   </g>
+   <g id="patch_6">
+    <path d="M 21.980304 275.19696 
+L 199.343952 275.19696 
+L 199.343952 186.515136 
+L 21.980304 186.515136 
+z
+" clip-path="url(#pd87fcca013)" style="fill: #fbe9ef; stroke: #a32c52; stroke-width: 2.4; stroke-linejoin: miter"/>
+   </g>
+   <g id="text_1">
+    <text style="fill: #16222b; font: 700 23px 'DejaVu Sans'; text-anchor: start" x="25.67538" y="40.934741" transform="rotate(-0 25.67538 40.934741)">One recording object, several physical containers</text>
+   </g>
+   <g id="text_2">
+    <text style="fill: #5b6b75; font: 14.5px 'DejaVu Sans'; text-anchor: start" x="25.67538" y="62.558646" transform="rotate(-0 25.67538 62.558646)">CortiPy keeps the analysis object (MNE RawArray) stable while the on-disk bytes change.</text>
+   </g>
+   <g id="patch_7">
+    <path d="M 481.517128 169.073823 
+Q 510.516967 137.664044 549.511694 128.457097 
+" clip-path="url(#pd87fcca013)" style="fill: none; stroke: #1f7a5a; stroke-width: 2.4; stroke-linecap: round"/>
+    <path d="M 542.547629 126.81338 
+L 549.511694 128.457097 
+L 544.018281 133.042118 
+z
+" clip-path="url(#pd87fcca013)" style="fill: #1f7a5a; stroke: #1f7a5a; stroke-width: 2.4; stroke-linecap: round"/>
+   </g>
+   <g id="patch_8">
+    <path d="M 481.765166 205.459791 
+Q 513.064684 228.81599 549.389062 230.635762 
+" clip-path="url(#pd87fcca013)" style="fill: none; stroke: #bf7d12; stroke-width: 2.4; stroke-linecap: round"/>
+    <path d="M 543.15719 227.119546 
+L 549.389062 230.635762 
+L 542.836966 233.51153 
+z
+" clip-path="url(#pd87fcca013)" style="fill: #bf7d12; stroke: #bf7d12; stroke-width: 2.4; stroke-linecap: round"/>
+   </g>
+   <g id="patch_9">
+    <path d="M 271.898072 169.073823 
+Q 242.898233 137.664044 203.903506 128.457097 
+" clip-path="url(#pd87fcca013)" style="fill: none; stroke: #5a4b8a; stroke-width: 2.4; stroke-linecap: round"/>
+    <path d="M 209.396919 133.042118 
+L 203.903506 128.457097 
+L 210.867571 126.81338 
+z
+" clip-path="url(#pd87fcca013)" style="fill: #5a4b8a; stroke: #5a4b8a; stroke-width: 2.4; stroke-linecap: round"/>
+   </g>
+   <g id="patch_10">
+    <path d="M 271.650034 205.459791 
+Q 240.350516 228.81599 204.026138 230.635762 
+" clip-path="url(#pd87fcca013)" style="fill: none; stroke: #a32c52; stroke-width: 2.4; stroke-linecap: round"/>
+    <path d="M 210.578234 233.51153 
+L 204.026138 230.635762 
+L 210.25801 227.119546 
+z
+" clip-path="url(#pd87fcca013)" style="fill: #a32c52; stroke: #a32c52; stroke-width: 2.4; stroke-linecap: round"/>
+   </g>
+   <g id="text_3">
+    <text style="fill: #16222b; font: 700 16px 'DejaVu Sans'; text-anchor: middle" x="376.7076" y="170.17521" transform="rotate(-0 376.7076 170.17521)">EEG recording (logical)</text>
+   </g>
+   <g id="text_4">
+    <text style="fill: #5b6b75; font: 14px 'DejaVu Sans'; text-anchor: middle" x="376.7076" y="192.595307" transform="rotate(-0 376.7076 192.595307)">MNE RawArray</text>
+   </g>
+   <g id="text_5">
+    <text style="fill: #5b6b75; font: 12.5px 'DejaVu Sans'; text-anchor: middle" x="376.7076" y="215.090872" transform="rotate(-0 376.7076 215.090872)">7500 samples x 8 ch @ 250 Hz</text>
+   </g>
+   <g id="text_6">
+    <text style="fill: #1f7a5a; font: 700 14px 'DejaVu Sans'; text-anchor: start" x="570.329582" y="107.553871" transform="rotate(-0 570.329582 107.553871)">Parquet  (signal)</text>
+   </g>
+   <g id="text_7">
+    <text style="fill: #16222b; font: 11px 'DejaVu Sans'; text-anchor: start" x="570.329582" y="130.429232" transform="rotate(-0 570.329582 130.429232)">columnar table</text>
+   </g>
+   <g id="text_8">
+    <text style="fill: #16222b; font: 11px 'DejaVu Sans'; text-anchor: start" x="570.329582" y="148.904612" transform="rotate(-0 570.329582 148.904612)">footer + statistics</text>
+   </g>
+   <g id="text_9">
+    <text style="fill: #16222b; font: 11px 'DejaVu Sans'; text-anchor: start" x="570.329582" y="167.379992" transform="rotate(-0 570.329582 167.379992)">projection pushdown</text>
+   </g>
+   <g id="text_10">
+    <text style="fill: #bf7d12; font: 700 14px 'DejaVu Sans'; text-anchor: start" x="570.329582" y="211.015999" transform="rotate(-0 570.329582 211.015999)">EDF  (signal)</text>
+   </g>
+   <g id="text_11">
+    <text style="fill: #16222b; font: 11px 'DejaVu Sans'; text-anchor: start" x="570.329582" y="233.89136" transform="rotate(-0 570.329582 233.89136)">fixed header</text>
+   </g>
+   <g id="text_12">
+    <text style="fill: #16222b; font: 11px 'DejaVu Sans'; text-anchor: start" x="570.329582" y="252.36674" transform="rotate(-0 570.329582 252.36674)">interleaved records</text>
+   </g>
+   <g id="text_13">
+    <text style="fill: #16222b; font: 11px 'DejaVu Sans'; text-anchor: start" x="570.329582" y="270.84212" transform="rotate(-0 570.329582 270.84212)">16-bit integers</text>
+   </g>
+   <g id="text_14">
+    <text style="fill: #5a4b8a; font: 700 14px 'DejaVu Sans'; text-anchor: start" x="38.238638" y="107.608559" transform="rotate(-0 38.238638 107.608559)">BIDS  (metadata)</text>
+   </g>
+   <g id="text_15">
+    <text style="fill: #16222b; font: 11px 'DejaVu Sans'; text-anchor: start" x="38.238638" y="130.429232" transform="rotate(-0 38.238638 130.429232)">folder + filename</text>
+   </g>
+   <g id="text_16">
+    <text style="fill: #16222b; font: 11px 'DejaVu Sans'; text-anchor: start" x="38.238638" y="148.904612" transform="rotate(-0 38.238638 148.904612)">scattered sidecars</text>
+   </g>
+   <g id="text_17">
+    <text style="fill: #16222b; font: 11px 'DejaVu Sans'; text-anchor: start" x="38.238638" y="167.379992" transform="rotate(-0 38.238638 167.379992)">.json / .tsv</text>
+   </g>
+   <g id="text_18">
+    <text style="fill: #a32c52; font: 700 14px 'DejaVu Sans'; text-anchor: start" x="38.238638" y="211.070687" transform="rotate(-0 38.238638 211.070687)">SBIDS  (metadata)</text>
+   </g>
+   <g id="text_19">
+    <text style="fill: #16222b; font: 11px 'DejaVu Sans'; text-anchor: start" x="38.238638" y="233.89136" transform="rotate(-0 38.238638 233.89136)">one JSON-LD graph</text>
+   </g>
+   <g id="text_20">
+    <text style="fill: #16222b; font: 11px 'DejaVu Sans'; text-anchor: start" x="38.238638" y="252.36674" transform="rotate(-0 38.238638 252.36674)">typed nodes + links</text>
+   </g>
+   <g id="text_21">
+    <text style="fill: #16222b; font: 11px 'DejaVu Sans'; text-anchor: start" x="38.238638" y="270.84212" transform="rotate(-0 38.238638 270.84212)">contentUrl -&gt; raw</text>
+   </g>
+   <g id="text_22">
+    <text style="fill: #5b6b75; font: 13px 'DejaVu Sans'; text-anchor: middle" x="376.7076" y="352.685667" transform="rotate(-0 376.7076 352.685667)">Same recording, different bytes.   Part B: how is the signal stored?   Part C: how is its meaning stored?</text>
+   </g>
+  </g>
+ </g>
+ <defs>
+  <clipPath id="pd87fcca013">
+   <rect x="7.2" y="7.2" width="739.0152" height="415.8"/>
+  </clipPath>
+ </defs>
+</svg>
