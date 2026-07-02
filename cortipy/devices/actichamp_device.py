@@ -198,8 +198,24 @@ class ActiChampDevice(DeviceInterface):
 
             buf = self._buf
 
+            # Wall-clock safety cap: sized from the requested duration so a producer that
+            # streams at a different rate than `self.sampling_rate` cannot make a short
+            # recording block for minutes (see RecordingTime overshoot reports).
+            start_time = time.perf_counter()
+            deadline = start_time + max(1.0, duration_seconds) * 3.0 + 5.0
+
             copied = 0
             while copied < samples_needed:
+                if time.perf_counter() > deadline:
+                    logger.warning(
+                        "ActiChamp.acquire timed out: got %d/%d samples in %.1fs for a %.1fs "
+                        "request @ %.0f Hz (effective ~%.0f Hz). Check that the producer honors "
+                        "the requested sampling rate.",
+                        copied, samples_needed, time.perf_counter() - start_time,
+                        duration_seconds, self.sampling_rate,
+                        copied / max(time.perf_counter() - start_time, 1e-6),
+                    )
+                    break
                 write_idx = int(buf.writeIndex)
                 read_idx = int(buf.readIndex)
                 available = write_idx - read_idx
@@ -229,6 +245,18 @@ class ActiChampDevice(DeviceInterface):
                     read_idx += remaining
 
                 buf.readIndex = read_idx
+
+            elapsed = time.perf_counter() - start_time
+            effective_fs = copied / elapsed if elapsed > 0 else self.sampling_rate
+            if self.sampling_rate > 0 and abs(effective_fs - self.sampling_rate) > 0.15 * self.sampling_rate:
+                logger.warning(
+                    "ActiChamp.acquire delivered %d samples in %.2fs (~%.0f Hz) but fs is set to "
+                    "%.0f Hz; RecordingTime will be off by ~%.1fx.",
+                    copied, elapsed, effective_fs, self.sampling_rate,
+                    self.sampling_rate / max(effective_fs, 1e-6),
+                )
+            else:
+                logger.debug("ActiChamp.acquire: %d samples in %.2fs (~%.0f Hz)", copied, elapsed, effective_fs)
 
             return out[:copied]
 
