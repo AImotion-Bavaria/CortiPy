@@ -3132,6 +3132,10 @@ def main() -> None:
     if page is None:
         page = "Session configuration"
 
+    # Elevated run-status + live-view region: measurement feedback renders here at the top of the
+    # page (vivid start/end via st.status) instead of at the bottom where the run block executes.
+    run_region = st.container()
+
     general_values = dict(st.session_state["general_form"])
     device_values = dict(st.session_state.setdefault("device_forms", {}).get(general_values.get("Device"), {}))
     method_values = dict(
@@ -3224,53 +3228,53 @@ def main() -> None:
         params_to_run = dict(assembled_params)
         params_to_run.pop("Evaluation", None)
         params_to_run.pop("data", None)
-        live_view_service: Optional[LiveViewService] = None
-        if live_view_enabled:
-            live_view_service = LiveViewService(
-                get_live_view_placeholder(),
-                window_seconds=float(live_view_window),
-                channel_indices=selected_indices,
-                fft_placeholder=st.session_state.get("_live_preview_fft_placeholder"),
-            )
-            st.session_state["_live_view_active"] = True
-            st.session_state["_live_view_banner"] = "Measurement running: live EEG and FFT updating below."
-        if simulate:
-            fs = int(assembled_params["Parameters"].get("fs", 250))
-            n_channels = int(
-                assembled_params["Parameters"].get("NumberEEGChannels", len(assembled_params.get("Channels", [])) or 8)
-            )
-            n_channels = max(1, n_channels)
-            params_to_run["data"] = np.zeros((fs, n_channels))
-            saved_path = SaveManager(save_dir)(params_to_run)
-            st.session_state["last_results"] = {
-                "label": getattr(saved_path, "name", "Simulated run"),
-                "params": params_to_run,
-                "data": params_to_run.get("data"),
-            }
-            st.success("Simulated data saved. Charts available in the Charts tab.")
-            if live_view_service is not None:
-                live_view_service.reset()
-            st.session_state["_live_view_active"] = False
-        else:
-            imported_data = st.session_state.get("imported_data")
-            use_imported = st.session_state.get("use_imported_data", False)
-            if use_imported and imported_data is not None:
-                params_to_run["Device"] = "Offline"
-                params_to_run["data"] = imported_data
-            elif use_imported and imported_data is None:
-                st.error("No imported data attached. Upload a data file or select a saved session first.")
-                render_footer()
-                return
+        # Position the live view inside the elevated top region (recreated each run).
+        st.session_state["_live_view_placeholder"] = None
+        with run_region, st.status("🔴 Measurement running…", expanded=True) as run_status:
+            live_view_service: Optional[LiveViewService] = None
+            if live_view_enabled:
+                live_view_service = LiveViewService(
+                    get_live_view_placeholder(),
+                    window_seconds=float(live_view_window),
+                    channel_indices=selected_indices,
+                    fft_placeholder=st.session_state.get("_live_preview_fft_placeholder"),
+                )
+                st.session_state["_live_view_active"] = True
+                st.session_state["_live_view_banner"] = "Measurement running: live EEG and FFT updating below."
             try:
-                run_params, saved_path = run_pipeline_once(params_to_run, save_dir, live_view=live_view_service)
-                st.session_state["last_results"] = {
-                    "label": getattr(saved_path, "name", "Last run"),
-                    "params": run_params,
-                    "data": run_params.get("data"),
-                }
-                st.success("Measurement finished and saved. Charts available in the Charts tab.")
+                if simulate:
+                    fs = int(assembled_params["Parameters"].get("fs", 250))
+                    n_channels = max(1, int(
+                        assembled_params["Parameters"].get("NumberEEGChannels", len(assembled_params.get("Channels", [])) or 8)
+                    ))
+                    params_to_run["data"] = np.zeros((fs, n_channels))
+                    saved_path = SaveManager(save_dir)(params_to_run)
+                    st.session_state["last_results"] = {
+                        "label": getattr(saved_path, "name", "Simulated run"),
+                        "params": params_to_run,
+                        "data": params_to_run.get("data"),
+                    }
+                    run_status.update(label="✅ Simulated data saved — open the Charts tab", state="complete")
+                else:
+                    imported_data = st.session_state.get("imported_data")
+                    use_imported = st.session_state.get("use_imported_data", False)
+                    if use_imported and imported_data is None:
+                        run_status.update(label="❌ No imported data attached", state="error")
+                        st.error("Upload a data file or select a saved session first.")
+                    else:
+                        if use_imported and imported_data is not None:
+                            params_to_run["Device"] = "Offline"
+                            params_to_run["data"] = imported_data
+                        run_params, saved_path = run_pipeline_once(params_to_run, save_dir, live_view=live_view_service)
+                        st.session_state["last_results"] = {
+                            "label": getattr(saved_path, "name", "Last run"),
+                            "params": run_params,
+                            "data": run_params.get("data"),
+                        }
+                        run_status.update(label="✅ Measurement finished and saved — open the Charts tab", state="complete")
             except Exception as exc:  # pragma: no cover
                 LOGGER.exception("Measurement failed")
+                run_status.update(label="❌ Measurement failed", state="error")
                 st.error(f"Measurement failed: {exc}")
             finally:
                 st.session_state["_live_view_active"] = False
