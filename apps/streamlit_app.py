@@ -1919,6 +1919,17 @@ def load_params_into_state(params: Dict[str, Any], data_override: Optional[np.nd
     if participant_meta:
         st.session_state["participant"].update(participant_meta)
 
+    # The loaded values live in the backing dicts above. Clear the stale *widget* state so the
+    # widgets re-initialise from those dicts on the next run: Streamlit ignores value=/index=
+    # once a keyed widget has been instantiated, so without this import/load silently no-ops.
+    for f in GENERAL_SCHEMA:
+        st.session_state.pop(f"general_{f.name}", None)
+    for f in METHOD_SCHEMAS.get(method, []):
+        st.session_state.pop(f"{method}_{f.name}", None)
+    for f in DEVICE_CONFIG_SCHEMA.get(device, []):
+        st.session_state.pop(f"device_{device}_{f['name']}", None)
+    _bump_channel_editor_revision(device)
+
     data_array = data_override
     if data_array is None and params.get("data") is not None:
         data_array = np.asarray(params["data"])
@@ -2958,7 +2969,8 @@ def render_saved_sessions(base_dir: Path) -> tuple[Optional[tuple[str, Dict[str,
                     "params": normalize_params(params_content),
                     "data": data_array,
                 }
-                st.success("Session loaded. Review settings before running.")
+                st.session_state["_flash"] = "Session loaded. Review settings before running."
+                st.rerun()
         else:
             st.warning("params.json missing.")
     with cols[1]:
@@ -3015,7 +3027,8 @@ def handle_upload(target) -> None:
             else:
                 params = normalize_params(config)
                 load_params_into_state(params)
-                st.success(f"Imported parameters from '{uploaded.name}'.")
+                st.session_state["_flash"] = f"Imported parameters from '{uploaded.name}'."
+                st.rerun()
 
         if data_upload:
             data_array = _load_npz_array(data_upload)
@@ -3095,6 +3108,10 @@ def main() -> None:
     inject_global_styles(st)
     st.title("cortipy – EEG Measurement UI")
     ensure_state()
+
+    flash = st.session_state.pop("_flash", None)
+    if flash:
+        st.success(flash)
 
     controls = render_sidebar_controls()
     default_save = controls.default_save
