@@ -115,7 +115,8 @@ class SsvepEvaluator(EvaluatorBase):
         evaluation["rho"] = rho
         evaluation["f_CCA"] = f_cca
 
-        f_test = ssvep_f_test(psd_result.psd, psd_result.freq, float(stim_freqs[0]))
+        # psd_result.psd is (channels, freqs); ssvep_f_test expects (freqs, channels)
+        f_test = ssvep_f_test(psd_result.psd.T, psd_result.freq, float(stim_freqs[0]))
         if f_test:
             evaluation["F_Test"] = f_test
 
@@ -317,7 +318,10 @@ def plot_ssvep_power_db(
         k = max(3, int(round(smooth_win / step)))
         k = k + (k + 1) % 2  # enforce odd length
         kernel = np.ones(k) / k
-        power_db = np.convolve(power_db, kernel, mode="same")
+        # convolve along the last (frequency) axis so multichannel input stays 2-D
+        power_db = np.apply_along_axis(
+            lambda row: np.convolve(row, kernel, mode="same"), -1, power_db
+        )
     if power_db.size == freqs.size + 1:
         freqs = freqs[:-1]
         power_db = power_db[:-1]
@@ -391,7 +395,10 @@ def _compute_ssvep_psd(data_ref: np.ndarray, fs: float) -> SpectralResult:
         k = max(3, int(round(1 / (freqs[1] - freqs[0]))))
         k = k + (k + 1) % 2  # enforce odd
         kernel = np.ones(k) / k
-        power_db = np.convolve(power_db, kernel, mode="same")
+        # power_db is (channels, freqs); smooth each channel along the frequency axis.
+        power_db = np.apply_along_axis(
+            lambda row: np.convolve(row, kernel, mode="same"), -1, power_db
+        )
     if power_db.shape[1] > 1:
         power_db = power_db[:, :-1]
         freqs = freqs[:-1]
