@@ -2876,6 +2876,23 @@ def params_to_json(params: Dict[str, Any]) -> str:
     return json.dumps(params, indent=2, default=default)
 
 
+def current_params_snapshot() -> Optional[Dict[str, Any]]:
+    """Assemble the current editor state into a params dict for export (None if incomplete)."""
+    general = dict(st.session_state.get("general_form", {}) or {})
+    if not general.get("Method") or not general.get("Device"):
+        return None
+    method = general["Method"]
+    device = general["Device"]
+    method_values = dict(st.session_state.get("method_forms", {}).get(method, {}) or {})
+    device_values = dict(st.session_state.get("device_forms", {}).get(device, {}) or {})
+    participant = dict(st.session_state.get("participant", {}) or {})
+    try:
+        return assemble_params(general, method_values, participant, device_values)
+    except Exception:  # pragma: no cover - defensive: never break the sidebar over export
+        LOGGER.exception("Failed to assemble params snapshot for export")
+        return None
+
+
 @st.cache_data
 def list_saved_sessions(base_dir: Path) -> List[Path]:
     if not base_dir.exists():
@@ -3056,7 +3073,17 @@ def render_sidebar_controls() -> SidebarControls:
         )
 
     with sidebar.container(border=True):
-        st.subheader("Data source")
+        st.subheader("Configuration & data")
+        snapshot = current_params_snapshot()
+        st.download_button(
+            "⬇ Export settings (params.json)",
+            data=params_to_json(snapshot) if snapshot else "{}",
+            file_name=f"{(snapshot or {}).get('Method', 'cortipy')}_params.json",
+            mime="application/json",
+            disabled=snapshot is None,
+            width="stretch",
+            help="Download the current method/device/electrode configuration to reuse later.",
+        )
         handle_upload(st)
         imported_data = st.session_state.get("imported_data")
         default_use_imported = st.session_state.get("use_imported_data", False) or bool(imported_data)
