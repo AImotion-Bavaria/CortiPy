@@ -93,7 +93,9 @@ class VepModule(ModuleBase):
             return
 
         referenced = self._apply_reference(params, data)
-        referenced[:, live_channel] = filter_vep(referenced[:, [live_channel]], 0.5, fs)
+        # filter_vep returns a 2-D (N, 1) column; flatten it to fit the 1-D channel slice
+        # (otherwise: "could not broadcast (N,1) into (N,)" on the first live update).
+        referenced[:, live_channel] = filter_vep(referenced[:, [live_channel]], 0.5, fs).ravel()
         triggered = trigger_adc(referenced, fs, trigger_channel, self.max_time, edge=param_block.get("edge", "b"))
         segments = seg_sig_fast(triggered, fs, self.max_time, trigger_channel)
         if segments.size == 0:
