@@ -3243,6 +3243,26 @@ def render_footer() -> None:
     )
 
 
+def render_workflow_progress(slot, params: Dict[str, Any], validation_issues: List[str]) -> None:
+    """Compact top-of-page checklist guiding the user through a measurement workflow."""
+    parameters = params.get("Parameters", {}) if isinstance(params, dict) else {}
+    participant = (params.get("Metadata", {}) or {}).get("Participant", {}) or {}
+    steps = [
+        ("Method & device", bool(params.get("Method") and params.get("Device"))),
+        ("Sampling rate", bool(parameters.get("fs"))),
+        ("Electrodes", len(params.get("Channels", []) or []) > 0),
+        ("Participant", bool(participant.get("Code"))),
+    ]
+    done = sum(1 for _, ok in steps if ok)
+    ready = not validation_issues
+    with slot:
+        caption = "Ready to run — press Start measurement" if ready else "Complete the required fields to run"
+        st.progress(done / len(steps), text=f"Setup {done}/{len(steps)} · {caption}")
+        cols = st.columns(len(steps))
+        for col, (label, ok) in zip(cols, steps):
+            col.markdown(f"{'✅' if ok else '⬜'} {label}")
+
+
 def main() -> None:
     st.set_page_config(page_title="cortipy UI", layout="wide")
     inject_global_styles(st)
@@ -3275,6 +3295,7 @@ def main() -> None:
     # Elevated run-status + live-view region: measurement feedback renders here at the top of the
     # page (vivid start/end via st.status) instead of at the bottom where the run block executes.
     run_region = st.container()
+    progress_slot = st.container()
 
     general_values = dict(st.session_state["general_form"])
     device_values = dict(st.session_state.setdefault("device_forms", {}).get(general_values.get("Device"), {}))
@@ -3297,6 +3318,7 @@ def main() -> None:
 
     assembled_params = assemble_params(general_values, method_values, participant_values, device_values)
     validation_issues = validate_params(assembled_params)
+    render_workflow_progress(progress_slot, assembled_params, validation_issues)
 
     if page == "Live preview":
         render_live_preview_tab(assembled_params, validation_issues)
