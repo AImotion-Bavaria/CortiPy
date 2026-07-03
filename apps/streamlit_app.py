@@ -88,6 +88,14 @@ def _configure_logging() -> logging.Logger:
 
 LOGGER = _configure_logging()
 
+
+def _tail_log(path: Path, n: int = 60) -> List[str]:
+    """Return the last ``n`` lines of the app log (empty list if unreadable)."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").splitlines()[-n:]
+    except Exception:
+        return []
+
 from cortipy import MeasurementPipeline  # noqa: E402
 from cortipy.core.pipeline import PipelineHooks  # noqa: E402
 from cortipy.devices import DeviceFactory, DeviceInterface  # noqa: E402
@@ -3108,6 +3116,18 @@ def render_sidebar_controls() -> SidebarControls:
     with sidebar.container(border=True):
         st.subheader("Run")
         start_button = st.button("Start measurement", type="primary", width="stretch")
+
+    with sidebar.expander("🩺 Diagnostics (logs)", expanded=False):
+        st.caption(f"Log file: {LOG_PATH}")
+        st.button("Refresh", key="refresh_logs")  # click triggers a rerun -> re-reads the log
+        log_lines = _tail_log(LOG_PATH, 60)
+        errs = [ln for ln in log_lines if "[ERROR]" in ln]
+        warns = [ln for ln in log_lines if "[WARNING]" in ln]
+        if errs:
+            st.error("Recent errors:\n\n" + "\n".join(errs[-4:]))
+        elif warns:
+            st.warning("Recent warnings:\n\n" + "\n".join(warns[-4:]))
+        st.code("\n".join(log_lines) if log_lines else "(log is empty)", language="log")
 
     return SidebarControls(
         default_save=default_save,
