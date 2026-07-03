@@ -223,6 +223,14 @@ DEVICE_EXTRA_LABELS = {
     "UNICORN": ["GND", "Ref"],
 }
 
+# Sampling rates actually offered per device. Others fall back to the general schema list.
+# Requesting a rate the hardware can't do gets clamped by the producer, which makes a recording
+# run longer than RecordingTime (see the acquire() wall-time cap) — so constrain the choices here.
+DEVICE_FS_OPTIONS = {
+    "ActiCHamp": ["250", "500", "1000", "2000", "5000", "10000", "25000", "50000", "100000"],
+    "UNICORN": ["250"],
+}
+
 INT_FIELD_NAMES = {
     "NumberEEGChannels",
     "NumberAUXChannels",
@@ -2361,6 +2369,21 @@ def render_general_form() -> Dict[str, Any]:
                 help="UNICORN sampling rate is fixed to 250 Hz.",
                 key=key,
                 disabled=True,
+            )
+        elif field.name == "fs":
+            options = DEVICE_FS_OPTIONS.get(device, field.options or [""]) or [""]
+            if st.session_state.get(key) not in options:
+                st.session_state.pop(key, None)  # previous device's rate may be unavailable here
+            resolved = resolve_choice(options, current)
+            fs_help = field.tooltip or None
+            if device == "ActiCHamp":
+                fs_help = "ActiCHamp-supported rates. An unsupported rate is clamped by the hardware and makes the recording run longer than RecordingTime."
+            value = target.selectbox(
+                field.name,
+                options=options,
+                index=options.index(resolved),
+                help=fs_help,
+                key=key,
             )
         elif field.kind == "dropdown":
             options = field.options or [""]
