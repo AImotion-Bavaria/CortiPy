@@ -1128,7 +1128,9 @@ def _plot_live_buffer(
         time_axis = time_axis - time_axis[-1]  # align so 0 is "now" on the right
         time_axis = np.round(time_axis, 3)
     if window_seconds is not None and fs > 0:
-        time_axis_min = -float(window_seconds)
+        # Fit the left edge to the data actually captured so far so the plot isn't padded with an
+        # empty region (looks like "missing points") until the buffer fills the whole window.
+        time_axis_min = max(-float(window_seconds), float(time_axis[0]))
         time_axis_max = 0.0
     else:
         time_axis_min = time_axis[0]
