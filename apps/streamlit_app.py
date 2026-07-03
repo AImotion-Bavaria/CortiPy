@@ -2540,6 +2540,39 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                     ts_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_ts))
                     st.caption(f"Last read: {ts_str}")
 
+        # Quick setup: fill the standard montage / bulk-toggle active channels without hand-editing.
+        extras_set = set(DEVICE_EXTRA_LABELS.get(device, []))
+        qs = st.columns(3)
+        if qs[0].button("Fill standard positions", key=f"fill_pos_{device}",
+                        help="Set each channel's Position from the device's standard montage and activate it."):
+            preset = DEVICE_POSITION_DEFAULTS.get(device, [])
+            eeg_idx = 0
+            for row in rows:
+                if row["Channel"] in extras_set:
+                    continue
+                if eeg_idx < len(preset):
+                    row["Position"] = preset[eeg_idx]
+                    row["PosX"], row["PosY"] = _channel_default_coords(preset[eeg_idx])
+                row["Active"] = True
+                eeg_idx += 1
+            channel_state[device] = rows
+            _bump_channel_editor_revision(device)
+            st.rerun()
+        if qs[1].button("Activate all", key=f"activate_all_{device}"):
+            for row in rows:
+                row["Active"] = True
+            channel_state[device] = rows
+            _bump_channel_editor_revision(device)
+            st.rerun()
+        if qs[2].button("Deactivate EEG", key=f"deactivate_eeg_{device}",
+                        help="Turn off all EEG channels (Ground/Reference stay on)."):
+            for row in rows:
+                if row["Channel"] not in extras_set:
+                    row["Active"] = False
+            channel_state[device] = rows
+            _bump_channel_editor_revision(device)
+            st.rerun()
+
         table_col, map_col = st.columns((2, 1))
         with table_col:
             edited = st.data_editor(
