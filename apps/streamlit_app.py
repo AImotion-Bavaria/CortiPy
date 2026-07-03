@@ -2901,6 +2901,45 @@ def current_params_snapshot() -> Optional[Dict[str, Any]]:
         return None
 
 
+def export_recording(data: Any, params: Dict[str, Any], out_dir: Path, container: str, raw_format: str) -> Path:
+    """Export a recording as BIDS or SBIDS with a Parquet/EDF raw layer. Returns the output folder."""
+    from cortipy.shared.bids import BIDSLoader, BIDSLoadResult, _coerce_to_raw_array
+
+    arr = np.asarray(data, dtype=float)
+    if arr.ndim != 2:
+        raise ValueError("Recording data must be 2-D (samples x channels).")
+    pblock = params.get("Parameters", {}) if isinstance(params, dict) else {}
+    fs = float(pblock.get("fs") or 250) or 250.0
+    chans = params.get("Channels") or []
+    ch_names = [(c.get("Position") or c.get("Channel")) for c in chans] or None
+    if ch_names and len(ch_names) != arr.shape[1]:
+        ch_names = None  # fall back to Ch1..N when the montage doesn't match the data width
+    part = (params.get("Metadata") or {}).get("Participant") or {}
+    subject = (str(part.get("Code") or "01").replace(" ", "") or "01")
+    task = str(params.get("Method") or "task").lower()
+    fmt = raw_format.lower()
+    out_dir = Path(out_dir)
+
+    if container.upper() == "BIDS":
+        root = out_dir / "bids_export"
+        BIDSLoader(root).to_bids(
+            arr, sampling_rate=fs, ch_names=ch_names, subject=subject, task=task,
+            format=fmt, overwrite=True, dataset_description={"Name": params.get("Method") or "CortiPy export"},
+        )
+        return root
+
+    from cortipy.shared.dataset import CortiDataset  # SBIDS path
+    raw = _coerce_to_raw_array(arr, fs, ch_names, None)
+    result = BIDSLoadResult(
+        raw=raw, data=arr, sampling_rate=fs, events=None, channels=None,
+        metadata={"params": params}, source_path=Path(f"sub-{subject}_{task}_scalpdata"), ancillary_files=[],
+    )
+    out = out_dir / "sbids_export" / f"sbids_meta_sub-{subject}.jsonld"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    CortiDataset(result).to_sbids(out, export_format=fmt)
+    return out.parent
+
+
 @st.cache_data
 def list_saved_sessions(base_dir: Path) -> List[Path]:
     if not base_dir.exists():
