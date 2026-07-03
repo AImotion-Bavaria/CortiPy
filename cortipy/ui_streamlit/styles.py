@@ -3,13 +3,14 @@
 GLOBAL_CSS = """
 <style>
 :root {
-    --app-top-padding: 1.9rem;
+    --app-top-padding: 2.1rem;
     --sidebar-width: 21rem;
     --expander-bg: #f8fafc;
     --expander-border: #e5e7eb;
     --expander-summary: #f1f5f9;
     --expander-summary-hover: #e2e8f0;
     --expander-text: #0f172a;
+    --accent: #0d9488;
 }
 @media (prefers-color-scheme: dark) {
     :root {
@@ -18,6 +19,7 @@ GLOBAL_CSS = """
         --expander-summary: #111827;
         --expander-summary-hover: #152238;
         --expander-text: #e5e7eb;
+        --accent: #2dd4bf;
     }
 }
 [data-testid="stSidebar"] {
@@ -39,11 +41,14 @@ GLOBAL_CSS = """
 [data-testid="stAppViewContainer"] .main h1,
 [data-testid="stMain"] h1,
 .main h1 {
-    font-size: 1.9rem;
-    line-height: 1.2;
-    padding-top: 0 !important;
+    font-size: 1.95rem;
+    line-height: 1.4;
+    padding-top: 0.15rem !important;
     margin-top: 0 !important;
-    margin-bottom: 0.8rem;
+    margin-bottom: 0.9rem;
+    padding-bottom: 0.3rem;
+    border-bottom: 3px solid var(--accent);
+    display: inline-block;
 }
 [data-testid="stSidebar"] h1 {
     font-size: 1.9rem;
@@ -56,6 +61,7 @@ GLOBAL_CSS = """
     font-size: 1rem;
     line-height: 1.25;
     margin-bottom: 0.35rem;
+    color: var(--accent);
 }
 [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {
     border-radius: 8px;
