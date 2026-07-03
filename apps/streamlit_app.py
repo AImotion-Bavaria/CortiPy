@@ -2992,6 +2992,31 @@ def current_params_snapshot() -> Optional[Dict[str, Any]]:
         return None
 
 
+def verify_device_connection(params: Dict[str, Any]) -> tuple[bool, str]:
+    """Connect to the configured device and confirm it streams a short window.
+
+    Returns (ok, message). Used as a pre-flight 'first-connect confirm' so a recording
+    isn't started against a device that hasn't actually come up / is still settling.
+    """
+    device = DeviceFactory.create(params)
+    aux = 0
+    if params.get("Device") == "ActiCHamp":
+        aux = int(params.get("Parameters", {}).get("NumberAUXChannels", 0) or 0)
+    try:
+        device.connect()
+        probe_s = 0.5
+        sample = np.asarray(device.acquire(probe_s, aux), dtype=float)
+        if sample.size == 0 or sample.shape[0] == 0:
+            return False, "Connected, but no samples were received (device may still be settling)."
+        eff_fs = sample.shape[0] / probe_s
+        return True, f"Streaming — {sample.shape[1]} channels, ~{eff_fs:.0f} Hz over {probe_s:.1f}s."
+    finally:
+        try:
+            device.disconnect()
+        except Exception:  # pragma: no cover - best-effort cleanup
+            LOGGER.debug("Device disconnect after verify raised", exc_info=True)
+
+
 def export_recording(data: Any, params: Dict[str, Any], out_dir: Path, container: str, raw_format: str) -> Path:
     """Export a recording as BIDS or SBIDS with a Parquet/EDF raw layer. Returns the output folder."""
     from cortipy.shared.bids import BIDSLoader, BIDSLoadResult, _coerce_to_raw_array
@@ -3299,7 +3324,27 @@ def render_sidebar_controls() -> SidebarControls:
 
     with sidebar.container(border=True):
         st.subheader("Run")
+        if st.button("🔌 Test device connection", width="stretch",
+                     help="Connect and confirm the device is streaming before starting a recording."):
+            snap = current_params_snapshot()
+            if snap is None:
+                st.session_state["_device_check"] = ("warn", "Choose a method and device first.")
+            else:
+                with st.spinner("Connecting…"):
+                    try:
+                        ok, msg = verify_device_connection(snap)
+                        st.session_state["_device_check"] = ("ok" if ok else "err", msg)
+                    except Exception as exc:  # pragma: no cover - surfaced to the user
+                        LOGGER.exception("Device connection test failed")
+                        st.session_state["_device_check"] = ("err", str(exc))
+        check = st.session_state.get("_device_check")
+        if check:
+            kind, msg = check
+            {"ok": st.success, "warn": st.warning}.get(kind, st.error)(
+                {"ok": "✅ ", "warn": "", "err": "❌ "}.get(kind, "") + msg
+            )
         start_button = st.button("Start measurement", type="primary", width="stretch")
+        st.caption("Tip: run **Test device connection** first, then Start. Use **Simulate run** above to try the flow without hardware.")
 
     with sidebar.expander("🩺 Diagnostics (logs)", expanded=False):
         st.caption(f"Log file: {LOG_PATH}")
