@@ -2679,6 +2679,11 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                     pos_x, pos_y = _channel_default_coords(row["Position"])
                     row["PosX"] = pos_x
                     row["PosY"] = pos_y
+                # Keep Model consistent with the chosen electrode type (Rubrik) using electrodes.json:
+                # if the model isn't valid for that type, snap it to the first valid one.
+                models_for_type = ELECTRODE_LIBRARY.get(row.get("Rubrik") or "", [])
+                if models_for_type and row.get("Model") not in models_for_type:
+                    row["Model"] = models_for_type[0]
             channel_state[device] = edited
 
         with map_col:
