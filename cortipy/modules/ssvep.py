@@ -32,14 +32,16 @@ class SsvepModule(ModuleBase):
         fs = float(param_block.get("fs", 250))
 
         while True:
-            if (elapsed + self.time_step + self.first_second_duration) > recording_time:
+            remaining = recording_time - (elapsed + self.first_second_duration)
+            if remaining <= 0:
                 break
-            data_step = self._ensure_array(device.acquire(self.time_step, aux_ch))
+            duration = min(self.time_step, remaining)
+            data_step = self._ensure_array(device.acquire(duration, aux_ch))
             data = np.vstack([data, data_step])
             data_ref = self._apply_reference(params, data)
             spectrum, freq = calc_fft(data_ref, fs)
             plot_fft_live(freq, spectrum, "Amplitude (uV)", "Periodogram Using FFT", params)
-            elapsed += self.time_step
+            elapsed += duration
 
         info_end_live()
         context.data_buffer = data
