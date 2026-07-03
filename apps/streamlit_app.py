@@ -1125,13 +1125,12 @@ def _plot_live_buffer(
     samples = buffer.shape[0]
     time_axis = np.arange(samples) / fs if fs > 0 else np.arange(samples)
     if fs > 0:
-        time_axis = time_axis - time_axis[-1]  # align so 0 is "now" on the right
-        time_axis = np.round(time_axis, 3)
+        time_axis = np.round(time_axis, 3)  # positive elapsed seconds from the start of the buffer
     if window_seconds is not None and fs > 0:
-        # Fit the left edge to the data actually captured so far so the plot isn't padded with an
-        # empty region (looks like "missing points") until the buffer fills the whole window.
-        time_axis_min = max(-float(window_seconds), float(time_axis[0]))
-        time_axis_max = 0.0
+        # Show elapsed time with "now" on the right, clipped to the most recent `window` seconds.
+        # No padding: early on the view just spans the data captured so far.
+        time_axis_max = float(time_axis[-1])
+        time_axis_min = max(0.0, time_axis_max - float(window_seconds))
     else:
         time_axis_min = time_axis[0]
         time_axis_max = time_axis[-1]
@@ -1173,7 +1172,7 @@ def _plot_live_buffer(
             color = colors[plot_idx % len(colors)]
             ax.plot(time_axis, buffer[:, ch], label=f"Ch {ch + 1}", color=color)
         ax.set_xlim(time_axis_min, time_axis_max)
-        ax.set_xlabel("Time (s, left = -window, right = 0)" if fs > 0 else "Samples")
+        ax.set_xlabel("Time (s) — newest on the right" if fs > 0 else "Samples")
         ax.set_ylabel("Amplitude (uV)")
         label_part = "All channels" if len(indices) == total_channels else ", ".join(f"{ch + 1}" for ch in indices)
         ax.set_title(f"Live preview – {label_part}")
@@ -1316,10 +1315,13 @@ def _plot_individual_channels(
         return
     time_axis = np.arange(buffer.shape[0]) / fs if fs > 0 else np.arange(buffer.shape[0])
     if fs > 0:
-        time_axis = time_axis - time_axis[-1]
-        time_axis = np.round(time_axis, 3)
-    time_axis_min = -float(window_seconds) if window_seconds is not None and fs > 0 else time_axis[0]
-    time_axis_max = 0.0 if window_seconds is not None and fs > 0 else time_axis[-1]
+        time_axis = np.round(time_axis, 3)  # positive elapsed seconds, newest on the right
+    if window_seconds is not None and fs > 0:
+        time_axis_max = float(time_axis[-1])
+        time_axis_min = max(0.0, time_axis_max - float(window_seconds))
+    else:
+        time_axis_min = float(time_axis[0])
+        time_axis_max = float(time_axis[-1])
     palette = list(getattr(plt.cm, "tab10").colors) if hasattr(plt.cm, "tab10") else []
     default_color = (0.2, 0.4, 0.8)
     for plot_idx, ch in enumerate(indices):
@@ -1333,7 +1335,7 @@ def _plot_individual_channels(
             fig, ax = plt.subplots(figsize=(14, 3))
             ax.plot(time_axis, buffer[:, ch], color=color, linewidth=1.0)
             ax.set_xlim(time_axis_min, time_axis_max)
-            ax.set_xlabel("Time (s, left = -window, right = 0)" if fs > 0 else "Samples")
+            ax.set_xlabel("Time (s) — newest on the right" if fs > 0 else "Samples")
             ax.set_ylabel("Amplitude (uV)")
             ax.set_title(f"Channel {ch + 1}")
             ax.grid(True, alpha=0.25)
