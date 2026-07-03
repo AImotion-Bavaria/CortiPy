@@ -3070,10 +3070,34 @@ def render_sidebar_controls() -> SidebarControls:
     with sidebar.container(border=True):
         st.subheader("Measurement")
         default_save = st.text_input(
-            "Save directory",
+            "Experiment / save directory",
             value=str(DEFAULT_SAVE_DIR),
-            help="Folder where run outputs are written.",
+            help="Folder where run outputs are written. Point it at an existing experiment to continue it.",
         )
+        # Continuity: if this experiment folder already holds sessions, offer to resume its settings
+        # so a new subject can be recorded next day without re-entering every parameter.
+        exp_dir = Path(default_save).expanduser()
+        prior_sessions = list_saved_sessions(exp_dir) if exp_dir.exists() else []
+        if prior_sessions:
+            latest = prior_sessions[0]
+            st.caption(f"📁 {len(prior_sessions)} prior session(s) — latest: {latest.name}")
+            if st.button(
+                "🔁 Continue experiment (load latest settings)",
+                key="continue_experiment",
+                width="stretch",
+                help="Load the most recent session's parameters (not its data) so you can record the next subject.",
+            ):
+                params_content, _ = _load_session_contents(latest)
+                if params_content:
+                    load_params_into_state(normalize_params(params_content))
+                    st.session_state["imported_data"] = None
+                    st.session_state["use_imported_data"] = False
+                    st.session_state["_flash"] = (
+                        f"Loaded settings from {latest.name}. Update the participant, then start the recording."
+                    )
+                    st.rerun()
+                else:
+                    st.warning("Latest session has no params.json to resume from.")
         simulate = st.toggle(
             "Simulate run",
             value=False,
