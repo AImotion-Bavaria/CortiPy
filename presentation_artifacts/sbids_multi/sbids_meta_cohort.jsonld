@@ -1,0 +1,562 @@
+{
+  "@context": {
+    "schema": "https://schema.org/",
+    "prov": "http://www.w3.org/ns/prov#",
+    "xsd": "http://www.w3.org/2001/XMLSchema#",
+    "rdfs": "http://www.w3.org/2000/01/rdf-schema#",
+    "nemo": "http://purl.bioontology.org/ontology/NEMO/",
+    "sbids": "urn:sbids:",
+    "EEGChannel": "sbids:EEGChannel",
+    "AUXChannel": "sbids:AUXChannel",
+    "columnName": {
+      "@id": "sbids:columnName",
+      "@type": "xsd:string"
+    },
+    "impedance": {
+      "@id": "sbids:impedance",
+      "@type": "xsd:float"
+    },
+    "signalUnit": {
+      "@id": "sbids:signalUnit",
+      "@type": "xsd:string"
+    },
+    "impedanceUnit": {
+      "@id": "sbids:impedanceUnit",
+      "@type": "xsd:string"
+    }
+  },
+  "@id": "urn:dataset:BIDS_MULTI",
+  "@graph": [
+    {
+      "@id": "urn:dataset:BIDS_MULTI",
+      "@type": "schema:Dataset",
+      "schema:name": "bids_multi"
+    },
+    {
+      "@id": "urn:subject:01",
+      "@type": "schema:Patient",
+      "schema:identifier": "01"
+    },
+    {
+      "@id": "urn:device:Unknown",
+      "@type": [
+        "schema:MedicalDevice",
+        "prov:Agent"
+      ],
+      "schema:name": "Unknown"
+    },
+    {
+      "@id": "urn:recording:01_sub-01_ses-01_task-rest_run-01_eeg",
+      "@type": [
+        "schema:CreateAction",
+        "prov:Activity"
+      ],
+      "schema:name": "EEG Recording Session (BIDS import)",
+      "schema:instrument": {
+        "@id": "urn:device:Unknown"
+      },
+      "schema:object": {
+        "@id": "urn:subject:01"
+      },
+      "schema:result": {
+        "@id": "urn:file:01_sub-01_ses-01_task-rest_run-01_eeg"
+      },
+      "signalUnit": "microvolt",
+      "impedanceUnit": "KOHM",
+      "schema:additionalProperty": [
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "SamplingRate",
+          "schema:value": 250.0,
+          "schema:unitCode": "HZ"
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "NumberEEGChannels",
+          "schema:value": 8
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "NumberAUXChannels",
+          "schema:value": 0
+        }
+      ],
+      "schema:duration": "PT10S",
+      "schema:measurementTechnique": "BIDS import",
+      "schema:variableMeasured": [
+        {
+          "@id": "urn:channel:01_sub-01_ses-01_task-rest_run-01_eeg_Fp1",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "Fp1",
+          "columnName": "Fp1"
+        },
+        {
+          "@id": "urn:channel:01_sub-01_ses-01_task-rest_run-01_eeg_Fp2",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "Fp2",
+          "columnName": "Fp2"
+        },
+        {
+          "@id": "urn:channel:01_sub-01_ses-01_task-rest_run-01_eeg_F3",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "F3",
+          "columnName": "F3"
+        },
+        {
+          "@id": "urn:channel:01_sub-01_ses-01_task-rest_run-01_eeg_F4",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "F4",
+          "columnName": "F4"
+        },
+        {
+          "@id": "urn:channel:01_sub-01_ses-01_task-rest_run-01_eeg_C3",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "C3",
+          "columnName": "C3"
+        },
+        {
+          "@id": "urn:channel:01_sub-01_ses-01_task-rest_run-01_eeg_C4",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "C4",
+          "columnName": "C4"
+        },
+        {
+          "@id": "urn:channel:01_sub-01_ses-01_task-rest_run-01_eeg_P3",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "P3",
+          "columnName": "P3"
+        },
+        {
+          "@id": "urn:channel:01_sub-01_ses-01_task-rest_run-01_eeg_P4",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "P4",
+          "columnName": "P4"
+        }
+      ]
+    },
+    {
+      "@id": "urn:file:01_sub-01_ses-01_task-rest_run-01_eeg",
+      "@type": [
+        "schema:DigitalDocument",
+        "prov:Entity"
+      ],
+      "schema:name": "sub-01_ses-01_task-rest_run-01_eeg.parquet",
+      "schema:encodingFormat": "application/vnd.apache.parquet",
+      "schema:contentUrl": "raw_data\\sub-01_ses-01_task-rest_run-01_eeg.parquet",
+      "prov:wasGeneratedBy": {
+        "@id": "urn:recording:01_sub-01_ses-01_task-rest_run-01_eeg"
+      },
+      "schema:fileSize": 195437
+    },
+    {
+      "@id": "urn:recording:01_sub-01_ses-01_task-rest_run-02_eeg",
+      "@type": [
+        "schema:CreateAction",
+        "prov:Activity"
+      ],
+      "schema:name": "EEG Recording Session (BIDS import)",
+      "schema:instrument": {
+        "@id": "urn:device:Unknown"
+      },
+      "schema:object": {
+        "@id": "urn:subject:01"
+      },
+      "schema:result": {
+        "@id": "urn:file:01_sub-01_ses-01_task-rest_run-02_eeg"
+      },
+      "signalUnit": "microvolt",
+      "impedanceUnit": "KOHM",
+      "schema:additionalProperty": [
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "SamplingRate",
+          "schema:value": 250.0,
+          "schema:unitCode": "HZ"
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "NumberEEGChannels",
+          "schema:value": 8
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "NumberAUXChannels",
+          "schema:value": 0
+        }
+      ],
+      "schema:duration": "PT10S",
+      "schema:measurementTechnique": "BIDS import",
+      "schema:variableMeasured": [
+        {
+          "@id": "urn:channel:01_sub-01_ses-01_task-rest_run-02_eeg_Fp1",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "Fp1",
+          "columnName": "Fp1"
+        },
+        {
+          "@id": "urn:channel:01_sub-01_ses-01_task-rest_run-02_eeg_Fp2",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "Fp2",
+          "columnName": "Fp2"
+        },
+        {
+          "@id": "urn:channel:01_sub-01_ses-01_task-rest_run-02_eeg_F3",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "F3",
+          "columnName": "F3"
+        },
+        {
+          "@id": "urn:channel:01_sub-01_ses-01_task-rest_run-02_eeg_F4",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "F4",
+          "columnName": "F4"
+        },
+        {
+          "@id": "urn:channel:01_sub-01_ses-01_task-rest_run-02_eeg_C3",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "C3",
+          "columnName": "C3"
+        },
+        {
+          "@id": "urn:channel:01_sub-01_ses-01_task-rest_run-02_eeg_C4",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "C4",
+          "columnName": "C4"
+        },
+        {
+          "@id": "urn:channel:01_sub-01_ses-01_task-rest_run-02_eeg_P3",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "P3",
+          "columnName": "P3"
+        },
+        {
+          "@id": "urn:channel:01_sub-01_ses-01_task-rest_run-02_eeg_P4",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "P4",
+          "columnName": "P4"
+        }
+      ]
+    },
+    {
+      "@id": "urn:file:01_sub-01_ses-01_task-rest_run-02_eeg",
+      "@type": [
+        "schema:DigitalDocument",
+        "prov:Entity"
+      ],
+      "schema:name": "sub-01_ses-01_task-rest_run-02_eeg.parquet",
+      "schema:encodingFormat": "application/vnd.apache.parquet",
+      "schema:contentUrl": "raw_data\\sub-01_ses-01_task-rest_run-02_eeg.parquet",
+      "prov:wasGeneratedBy": {
+        "@id": "urn:recording:01_sub-01_ses-01_task-rest_run-02_eeg"
+      },
+      "schema:fileSize": 195437
+    },
+    {
+      "@id": "urn:subject:02",
+      "@type": "schema:Patient",
+      "schema:identifier": "02"
+    },
+    {
+      "@id": "urn:recording:02_sub-02_ses-01_task-rest_run-01_eeg",
+      "@type": [
+        "schema:CreateAction",
+        "prov:Activity"
+      ],
+      "schema:name": "EEG Recording Session (BIDS import)",
+      "schema:instrument": {
+        "@id": "urn:device:Unknown"
+      },
+      "schema:object": {
+        "@id": "urn:subject:02"
+      },
+      "schema:result": {
+        "@id": "urn:file:02_sub-02_ses-01_task-rest_run-01_eeg"
+      },
+      "signalUnit": "microvolt",
+      "impedanceUnit": "KOHM",
+      "schema:additionalProperty": [
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "SamplingRate",
+          "schema:value": 250.0,
+          "schema:unitCode": "HZ"
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "NumberEEGChannels",
+          "schema:value": 8
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "NumberAUXChannels",
+          "schema:value": 0
+        }
+      ],
+      "schema:duration": "PT10S",
+      "schema:measurementTechnique": "BIDS import",
+      "schema:variableMeasured": [
+        {
+          "@id": "urn:channel:02_sub-02_ses-01_task-rest_run-01_eeg_Fp1",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "Fp1",
+          "columnName": "Fp1"
+        },
+        {
+          "@id": "urn:channel:02_sub-02_ses-01_task-rest_run-01_eeg_Fp2",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "Fp2",
+          "columnName": "Fp2"
+        },
+        {
+          "@id": "urn:channel:02_sub-02_ses-01_task-rest_run-01_eeg_F3",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "F3",
+          "columnName": "F3"
+        },
+        {
+          "@id": "urn:channel:02_sub-02_ses-01_task-rest_run-01_eeg_F4",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "F4",
+          "columnName": "F4"
+        },
+        {
+          "@id": "urn:channel:02_sub-02_ses-01_task-rest_run-01_eeg_C3",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "C3",
+          "columnName": "C3"
+        },
+        {
+          "@id": "urn:channel:02_sub-02_ses-01_task-rest_run-01_eeg_C4",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "C4",
+          "columnName": "C4"
+        },
+        {
+          "@id": "urn:channel:02_sub-02_ses-01_task-rest_run-01_eeg_P3",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "P3",
+          "columnName": "P3"
+        },
+        {
+          "@id": "urn:channel:02_sub-02_ses-01_task-rest_run-01_eeg_P4",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "P4",
+          "columnName": "P4"
+        }
+      ]
+    },
+    {
+      "@id": "urn:file:02_sub-02_ses-01_task-rest_run-01_eeg",
+      "@type": [
+        "schema:DigitalDocument",
+        "prov:Entity"
+      ],
+      "schema:name": "sub-02_ses-01_task-rest_run-01_eeg.parquet",
+      "schema:encodingFormat": "application/vnd.apache.parquet",
+      "schema:contentUrl": "raw_data\\sub-02_ses-01_task-rest_run-01_eeg.parquet",
+      "prov:wasGeneratedBy": {
+        "@id": "urn:recording:02_sub-02_ses-01_task-rest_run-01_eeg"
+      },
+      "schema:fileSize": 195437
+    },
+    {
+      "@id": "urn:recording:02_sub-02_ses-01_task-rest_run-02_eeg",
+      "@type": [
+        "schema:CreateAction",
+        "prov:Activity"
+      ],
+      "schema:name": "EEG Recording Session (BIDS import)",
+      "schema:instrument": {
+        "@id": "urn:device:Unknown"
+      },
+      "schema:object": {
+        "@id": "urn:subject:02"
+      },
+      "schema:result": {
+        "@id": "urn:file:02_sub-02_ses-01_task-rest_run-02_eeg"
+      },
+      "signalUnit": "microvolt",
+      "impedanceUnit": "KOHM",
+      "schema:additionalProperty": [
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "SamplingRate",
+          "schema:value": 250.0,
+          "schema:unitCode": "HZ"
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "NumberEEGChannels",
+          "schema:value": 8
+        },
+        {
+          "@type": "schema:PropertyValue",
+          "schema:name": "NumberAUXChannels",
+          "schema:value": 0
+        }
+      ],
+      "schema:duration": "PT10S",
+      "schema:measurementTechnique": "BIDS import",
+      "schema:variableMeasured": [
+        {
+          "@id": "urn:channel:02_sub-02_ses-01_task-rest_run-02_eeg_Fp1",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "Fp1",
+          "columnName": "Fp1"
+        },
+        {
+          "@id": "urn:channel:02_sub-02_ses-01_task-rest_run-02_eeg_Fp2",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "Fp2",
+          "columnName": "Fp2"
+        },
+        {
+          "@id": "urn:channel:02_sub-02_ses-01_task-rest_run-02_eeg_F3",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "F3",
+          "columnName": "F3"
+        },
+        {
+          "@id": "urn:channel:02_sub-02_ses-01_task-rest_run-02_eeg_F4",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "F4",
+          "columnName": "F4"
+        },
+        {
+          "@id": "urn:channel:02_sub-02_ses-01_task-rest_run-02_eeg_C3",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "C3",
+          "columnName": "C3"
+        },
+        {
+          "@id": "urn:channel:02_sub-02_ses-01_task-rest_run-02_eeg_C4",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "C4",
+          "columnName": "C4"
+        },
+        {
+          "@id": "urn:channel:02_sub-02_ses-01_task-rest_run-02_eeg_P3",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "P3",
+          "columnName": "P3"
+        },
+        {
+          "@id": "urn:channel:02_sub-02_ses-01_task-rest_run-02_eeg_P4",
+          "@type": [
+            "schema:PropertyValue",
+            "EEGChannel"
+          ],
+          "schema:name": "P4",
+          "columnName": "P4"
+        }
+      ]
+    },
+    {
+      "@id": "urn:file:02_sub-02_ses-01_task-rest_run-02_eeg",
+      "@type": [
+        "schema:DigitalDocument",
+        "prov:Entity"
+      ],
+      "schema:name": "sub-02_ses-01_task-rest_run-02_eeg.parquet",
+      "schema:encodingFormat": "application/vnd.apache.parquet",
+      "schema:contentUrl": "raw_data\\sub-02_ses-01_task-rest_run-02_eeg.parquet",
+      "prov:wasGeneratedBy": {
+        "@id": "urn:recording:02_sub-02_ses-01_task-rest_run-02_eeg"
+      },
+      "schema:fileSize": 195437
+    }
+  ]
+}
