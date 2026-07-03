@@ -2573,6 +2573,32 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
             _bump_channel_editor_revision(device)
             st.rerun()
 
+        # Reference electrode (#8): designate which EEG channel is the reference. ReferenceChannel is
+        # a 1-based index over the EEG channels (excluding Ground/Reference extras), matching analysis.
+        method = st.session_state.get("general_form", {}).get("Method")
+        method_has_ref = any(f.name == "ReferenceChannel" for f in METHOD_SCHEMAS.get(method, []))
+        eeg_rows = [row for row in rows if row["Channel"] not in extras_set]
+        if method and method_has_ref and eeg_rows:
+            ref_labels = [f"{i + 1}: {row.get('Position') or row['Channel']}" for i, row in enumerate(eeg_rows)]
+            current_ref = st.session_state.get("method_forms", {}).get(method, {}).get("ReferenceChannel")
+            try:
+                cur_idx = int(current_ref) - 1
+            except (TypeError, ValueError):
+                cur_idx = 0
+            cur_idx = cur_idx if 0 <= cur_idx < len(ref_labels) else 0
+            choice = st.selectbox(
+                "Reference electrode",
+                options=list(range(len(ref_labels))),
+                format_func=lambda i: ref_labels[i],
+                index=cur_idx,
+                key=f"ref_electrode_{device}",
+                help="Channel used as the reference (ReferenceChannel) during analysis.",
+            )
+            new_ref = choice + 1
+            if str(new_ref) != str(current_ref):
+                st.session_state.setdefault("method_forms", {}).setdefault(method, {})["ReferenceChannel"] = new_ref
+                st.session_state.pop(f"{method}_ReferenceChannel", None)  # keep the method form in sync
+
         table_col, map_col = st.columns((2, 1))
         with table_col:
             edited = st.data_editor(
