@@ -3155,6 +3155,36 @@ def render_sidebar_controls() -> SidebarControls:
             width="stretch",
             help="Download the current method/device/electrode configuration to reuse later.",
         )
+
+        # Explicit recording export: container (BIDS/SBIDS) x raw format (Parquet/EDF).
+        last = st.session_state.get("last_results") or {}
+        can_export = last.get("data") is not None
+        st.markdown("**Export recording**")
+        exp_cols = st.columns(2)
+        export_container = exp_cols[0].selectbox(
+            "Container", ["SBIDS", "BIDS"], key="export_container", disabled=not can_export
+        )
+        export_fmt = exp_cols[1].selectbox(
+            "Raw format", ["Parquet", "EDF"], key="export_raw_format", disabled=not can_export
+        )
+        if st.button(
+            f"⬇ Export as {export_container} + {export_fmt}",
+            disabled=not can_export,
+            width="stretch",
+            key="export_recording_btn",
+        ):
+            try:
+                out = export_recording(
+                    last.get("data"), last.get("params") or {}, Path(default_save).expanduser(),
+                    export_container, export_fmt,
+                )
+                st.success(f"Exported {export_container} + {export_fmt} → {out}")
+            except Exception as exc:  # pragma: no cover - surfaced to the user
+                LOGGER.exception("Recording export failed")
+                st.error(f"Export failed: {exc}")
+        if not can_export:
+            st.caption("Run or load a session first to enable recording export.")
+
         handle_upload(st)
         imported_data = st.session_state.get("imported_data")
         default_use_imported = st.session_state.get("use_imported_data", False) or bool(imported_data)
