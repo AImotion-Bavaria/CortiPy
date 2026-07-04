@@ -155,21 +155,13 @@ from cortipy.ui_streamlit.fields import (  # noqa: E402
 )
 
 
-@dataclass(frozen=True)
-class ChartSeries:
-    name: str
-    x: np.ndarray
-    y: np.ndarray
-
-
-@dataclass
-class ChartData:
-    key: str
-    title: str
-    x_label: str
-    y_label: str
-    series: List[ChartSeries]
-    description: Optional[str] = None
+# Chart data model + renderer live in cortipy.ui_streamlit.charts (modularization).
+from cortipy.ui_streamlit.charts import (  # noqa: E402
+    ChartSeries,
+    ChartData,
+    downsample_series as _downsample_series,
+    render_chart,
+)
 
 
 @dataclass(frozen=True)
@@ -489,13 +481,6 @@ def _load_npz_array(source: Union[Path, Any]) -> Optional[np.ndarray]:
     finally:
         if hasattr(npz, "close"):
             npz.close()
-
-
-def _downsample_series(x: np.ndarray, y: np.ndarray, max_points: int = 2000) -> tuple[np.ndarray, np.ndarray]:
-    if len(x) <= max_points:
-        return x, y
-    step = max(1, math.ceil(len(x) / max_points))
-    return x[::step], y[::step]
 
 
 def _chart_from_raw_data(label: str, params: Dict[str, Any], data: np.ndarray, aggregate: bool = False) -> Optional[ChartData]:
@@ -1506,29 +1491,6 @@ def run_live_preview(
     finally:
         device.disconnect()
         LOGGER.info("run_live_preview finished")
-
-
-def render_chart(chart: ChartData) -> None:
-    fig, ax = plt.subplots(figsize=(8, 3))
-    for series in chart.series:
-        ax.plot(series.x, series.y, label=series.name)
-    ax.set_title(chart.title)
-    ax.set_xlabel(chart.x_label)
-    ax.set_ylabel(chart.y_label)
-    if len(chart.series) > 1:
-        ax.legend(loc="best")
-    if chart.description:
-        ax.text(
-            0.01,
-            0.02,
-            chart.description,
-            transform=ax.transAxes,
-            fontsize=8,
-            color="gray",
-            ha="left",
-        )
-    st.pyplot(fig, clear_figure=True)
-    plt.close(fig)
 
 
 def render_chart_section(label: str, params: Dict[str, Any], data: Optional[np.ndarray], aggregate: bool = False) -> None:
