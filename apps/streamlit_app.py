@@ -3181,8 +3181,12 @@ def main() -> None:
 
     if page == "Session configuration":
         general_values = render_general_form()
-        device_values = render_device_config(general_values["Device"])
-        method_values = render_method_form(general_values["Method"])
+        # Device + Method side by side to cut vertical scrolling on the home page.
+        cfg_left, cfg_right = st.columns(2)
+        with cfg_left:
+            device_values = render_device_config(general_values["Device"])
+        with cfg_right:
+            method_values = render_method_form(general_values["Method"])
         participant_values = render_participant_form()
 
     if page == "Electrodes":
