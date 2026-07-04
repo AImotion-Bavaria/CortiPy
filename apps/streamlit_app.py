@@ -169,6 +169,13 @@ from cortipy.ui_streamlit.charts import (  # noqa: E402
     _chart_from_average_signals,
     _chart_from_metric_vector,
 )
+from cortipy.ui_streamlit.electrodes import (  # noqa: E402
+    actichamp_channel_count as _actichamp_channel_count,
+    bump_channel_editor_revision as _bump_channel_editor_revision,
+    map_impedances_to_channels as _map_impedances_to_channels,
+    has_measured_impedance as _has_measured_impedance,
+    impedance_range_kohm as _impedance_range_kohm,
+)
 
 
 @dataclass(frozen=True)
@@ -1583,43 +1590,6 @@ def _render_live_preview_frame(
     _plot_fft_spectrum(buf, fs, fft_placeholder, channel_indices=indices)
     if channel_placeholders:
         _plot_individual_channels(buf, fs, channel_placeholders, indices or [])
-
-
-def _actichamp_channel_count(rows: List[Dict[str, Any]]) -> int:
-    extras = set(DEVICE_EXTRA_LABELS.get("ActiCHamp", []))
-    return sum(1 for row in rows if row.get("Channel") not in extras)
-
-
-def _bump_channel_editor_revision(device: str) -> None:
-    revisions = st.session_state.setdefault("_channel_editor_revision", {})
-    revisions[device] = int(revisions.get(device, 0)) + 1
-
-
-def _map_impedances_to_channels(rows: List[Dict[str, Any]], values: List[float]) -> List[Dict[str, Any]]:
-    if len(values) < 3:
-        return rows
-
-    labels = ["GND", "REF"] + [f"Ch {idx}" for idx in range(1, len(values) - 1)]
-    mapping = {label: values[idx] for idx, label in enumerate(labels) if idx < len(values)}
-
-    for row in rows:
-        value = mapping.get(row.get("Channel"))
-        if value is None or value < 0:
-            continue
-        row["Impedance"] = round(float(value) / 1000.0, 1)
-
-    return rows
-
-
-def _has_measured_impedance(values: List[float]) -> bool:
-    return any(value > 0 for value in values)
-
-
-def _impedance_range_kohm(values: List[float]) -> Optional[tuple[float, float]]:
-    measured = [float(value) / 1000.0 for value in values if value > 0]
-    if not measured:
-        return None
-    return min(measured), max(measured)
 
 
 def _fetch_actichamp_impedances(fs_value: Any) -> None:
