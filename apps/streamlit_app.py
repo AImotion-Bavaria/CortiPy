@@ -1837,9 +1837,10 @@ def render_general_form() -> Dict[str, Any]:
 
     other_fields = [field for field in GENERAL_SCHEMA if field.name not in {"Method", "Device"}]
     device_is_unicorn = device.lower() == "unicorn"
-    cols = form_col.columns(2)
+    ncols = 3 if len(other_fields) > 4 else 2  # denser grid = fewer rows to scroll
+    cols = form_col.columns(ncols)
     for idx, field in enumerate(other_fields):
-        target = cols[idx % 2]
+        target = cols[idx % ncols]
         key = f"general_{field.name}"
         current = general.get(field.name)
         if field.name == "fs" and device_is_unicorn:
