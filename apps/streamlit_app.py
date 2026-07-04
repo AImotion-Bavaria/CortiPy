@@ -210,114 +210,25 @@ ELECTRODE_LIBRARY: Dict[str, List[str]] = json.loads((SCHEMA_DIR / "electrodes.j
 ELECTRODE_RUBRICS = list(ELECTRODE_LIBRARY.keys())
 ELECTRODE_MODELS = sorted({model for models in ELECTRODE_LIBRARY.values() for model in models})
 
-DEVICE_DEFAULT_CHANNELS = {
-    "ActiCHamp": 32,
-    "UNICORN": 8,
-    "BIOPACK": 16,
-    "LSL": 8,
-    "Offline": 8,
-    "Dummy": 8,
-}
-DEVICE_EXTRA_LABELS = {
-    "ActiCHamp": ["GND"],
-    "UNICORN": ["GND", "Ref"],
-}
-
-# Sampling rates actually offered per device. Others fall back to the general schema list.
-# Requesting a rate the hardware can't do gets clamped by the producer, which makes a recording
-# run longer than RecordingTime (see the acquire() wall-time cap) — so constrain the choices here.
-DEVICE_FS_OPTIONS = {
-    "ActiCHamp": ["250", "500", "1000", "2000", "5000", "10000", "25000", "50000", "100000"],
-    "UNICORN": ["250"],
-}
-
-INT_FIELD_NAMES = {
-    "NumberEEGChannels",
-    "NumberAUXChannels",
-    "ReferenceChannel",
-    "TriggerChannel",
-    "LivePlotCH",
-    "ChannelIpsi",
-    "ChannelContra",
-    "TestSubjectNo",
-    "RecordingTime",
-    "TriggerTime",
-    "RepeatMeasCount",
-}
-INT_FIELD_PREFIXES = ("Number",)
-INT_FIELD_SUFFIXES = ("Channel", "Channels", "Trials", "Count", "No")
-
-TEN_TWENTY_32 = [
-    "Fp1",
-    "Fpz",
-    "Fp2",
-    "AF3",
-    "AFz",
-    "AF4",
-    "F7",
-    "F3",
-    "Fz",
-    "F4",
-    "F8",
-    "FC5",
-    "FC1",
-    "FC2",
-    "FC6",
-    "T7",
-    "C3",
-    "Cz",
-    "C4",
-    "T8",
-    "CP5",
-    "CP1",
-    "CP2",
-    "CP6",
-    "P7",
-    "P3",
-    "Pz",
-    "P4",
-    "P8",
-    "PO3",
-    "PO4",
-    "Oz",
-]
-UNICORN_8 = ["Fp1", "Fp2", "C3", "C4", "P3", "P4", "O1", "O2"]
-BIOPACK_16 = TEN_TWENTY_32[:16]
+# Device / montage / field configuration lives in cortipy.ui_streamlit.constants (modularization).
+from cortipy.ui_streamlit.constants import (  # noqa: E402
+    DEVICE_DEFAULT_CHANNELS,
+    DEVICE_EXTRA_LABELS,
+    DEVICE_FS_OPTIONS,
+    INT_FIELD_NAMES,
+    INT_FIELD_PREFIXES,
+    INT_FIELD_SUFFIXES,
+    DEVICE_POSITION_DEFAULTS,
+    normalize_position_label as _normalize_position_label,
+    STANDARD_POSITION_ORDER as _STANDARD_POSITION_ORDER,
+    POSITION_ANGLE_LOOKUP as _POSITION_ANGLE_LOOKUP,
+)
 
 # 10-20 scalp coordinates + lookup live in cortipy.ui_streamlit.coords (first modularization step).
 from cortipy.ui_streamlit.coords import (  # noqa: E402
     TEN_TWENTY_COORDS,
     channel_default_coords as _channel_default_coords,
 )
-
-DEVICE_POSITION_DEFAULTS = {
-    "ActiCHamp": TEN_TWENTY_32,
-    "UNICORN": UNICORN_8,
-    "BIOPACK": BIOPACK_16,
-    "LSL": UNICORN_8,
-    "Offline": UNICORN_8,
-    "Dummy": UNICORN_8,
-}
-
-
-def _normalize_position_label(label: str) -> str:
-    return re.sub(r"\s+", "", str(label or "").strip()).upper()
-
-
-_STANDARD_POSITION_ORDER: List[str] = []
-for positions in DEVICE_POSITION_DEFAULTS.values():
-    for pos in positions:
-        normalized = _normalize_position_label(pos)
-        if normalized and normalized not in _STANDARD_POSITION_ORDER:
-            _STANDARD_POSITION_ORDER.append(normalized)
-for extras in DEVICE_EXTRA_LABELS.values():
-    for label in extras:
-        normalized = _normalize_position_label(label)
-        if normalized and normalized not in _STANDARD_POSITION_ORDER:
-            _STANDARD_POSITION_ORDER.append(normalized)
-if not _STANDARD_POSITION_ORDER:
-    _STANDARD_POSITION_ORDER = [f"CH{idx+1}" for idx in range(32)]
-_POSITION_ANGLE_LOOKUP = {label: idx for idx, label in enumerate(_STANDARD_POSITION_ORDER)}
 
 METHOD_FULL_NAMES: Dict[str, str] = {
     "Alpha": "Alpha Relaxation",
