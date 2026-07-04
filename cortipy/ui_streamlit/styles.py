@@ -121,11 +121,7 @@ textarea,
 [data-testid="stMain"] [data-testid="stSelectbox"],
 [data-testid="stMain"] [data-testid="stNumberInput"],
 [data-testid="stMain"] [data-testid="stTextInput"] {
-    max-width: 320px;
-}
-/* Tighten vertical rhythm so long forms need less scrolling. */
-[data-testid="stMain"] [data-testid="stVerticalBlock"] {
-    gap: 0.55rem;
+    max-width: 340px;
 }
 </style>
 """

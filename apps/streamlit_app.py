@@ -1982,9 +1982,10 @@ def render_method_form(method: str) -> Dict[str, Any]:
         return {}
 
     with st.expander(f"{method} parameters", expanded=True):
-        cols = st.columns(2)
+        ncols = 3 if len(schema) > 4 else 2  # denser grid for long method forms (less scrolling)
+        cols = st.columns(ncols)
         for idx, field in enumerate(schema):
-            target = cols[idx % 2]
+            target = cols[idx % ncols]
             key = f"{method}_{field.name}"
             current = method_state.get(field.name)
             if field.kind == "dropdown":
@@ -2956,12 +2957,8 @@ def main() -> None:
 
     if page == "Session configuration":
         general_values = render_general_form()
-        # Device + Method side by side to cut vertical scrolling on the home page.
-        cfg_left, cfg_right = st.columns(2)
-        with cfg_left:
-            device_values = render_device_config(general_values["Device"])
-        with cfg_right:
-            method_values = render_method_form(general_values["Method"])
+        device_values = render_device_config(general_values["Device"])
+        method_values = render_method_form(general_values["Method"])
         participant_values = render_participant_form()
 
     if page == "Electrodes":
