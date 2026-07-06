@@ -125,6 +125,7 @@ cython_debug/
 /cortipy_runs/*
 !/cortipy_runs/README.md
 results.json
+.plot_windows/
 AGENTS.md
 TODO.md
 /datasets

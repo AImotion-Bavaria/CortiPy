@@ -12,9 +12,18 @@ from typing import Any, Dict, List, Optional
 
 import matplotlib.pyplot as plt
 import numpy as np
-import streamlit as st
 
 from cortipy.ui_streamlit.fields import coerce_number
+from cortipy.ui_streamlit.plot_windows import (
+    render_matplotlib_window_launcher,
+    render_plotly_window_launcher,
+    safe_window_key,
+)
+
+try:  # pragma: no cover - optional UI dependency
+    import plotly.graph_objects as go
+except Exception:  # pragma: no cover
+    go = None
 
 
 @dataclass(frozen=True)
@@ -41,7 +50,55 @@ def downsample_series(x: np.ndarray, y: np.ndarray, max_points: int = 2000) -> t
     return x[::step], y[::step]
 
 
+def _chart_to_plotly(chart: ChartData) -> Optional["go.Figure"]:
+    if go is None:
+        return None
+    fig = go.Figure()
+    for series in chart.series:
+        fig.add_trace(
+            go.Scatter(
+                x=series.x,
+                y=series.y,
+                mode="lines",
+                line=dict(width=1.5),
+                name=series.name,
+            )
+        )
+    fig.update_layout(
+        title=chart.title,
+        xaxis_title=chart.x_label,
+        yaxis_title=chart.y_label,
+        hovermode="x unified",
+        height=560,
+        margin=dict(l=70, r=25, t=70, b=70),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+        template="plotly_white",
+    )
+    if chart.description:
+        fig.add_annotation(
+            x=0,
+            y=0,
+            xref="paper",
+            yref="paper",
+            text=chart.description,
+            showarrow=False,
+            align="left",
+            font=dict(size=11, color="#6b7280"),
+        )
+    return fig
+
+
 def render_chart(chart: ChartData) -> None:
+    plotly_fig = _chart_to_plotly(chart)
+    if plotly_fig is not None:
+        render_plotly_window_launcher(
+            plotly_fig,
+            chart.title,
+            f"chart_{safe_window_key(chart.key)}",
+            button_label="Open chart",
+        )
+        return
+
     fig, ax = plt.subplots(figsize=(8, 3))
     for series in chart.series:
         ax.plot(series.x, series.y, label=series.name)
@@ -60,7 +117,12 @@ def render_chart(chart: ChartData) -> None:
             color="gray",
             ha="left",
         )
-    st.pyplot(fig, clear_figure=True)
+    render_matplotlib_window_launcher(
+        fig,
+        chart.title,
+        f"chart_{safe_window_key(chart.key)}",
+        button_label="Open chart",
+    )
     plt.close(fig)
 
 

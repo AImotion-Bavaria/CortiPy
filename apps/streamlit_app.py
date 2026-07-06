@@ -170,6 +170,14 @@ from cortipy.ui_streamlit.charts import (  # noqa: E402
     _chart_from_average_signals,
     _chart_from_metric_vector,
 )
+from cortipy.ui_streamlit.plot_windows import (  # noqa: E402
+    open_window_once as _open_plot_window_once,
+    render_matplotlib_window_launcher as _render_matplotlib_window_launcher,
+    render_plotly_window_launcher as _render_plotly_window_launcher,
+    safe_window_key as _safe_window_key,
+    write_matplotlib_window as _write_matplotlib_window,
+    write_plotly_window as _write_plotly_window,
+)
 from cortipy.ui_streamlit.electrodes import (  # noqa: E402
     actichamp_channel_count as _actichamp_channel_count,
     bump_channel_editor_revision as _bump_channel_editor_revision,
@@ -931,6 +939,21 @@ def _selected_recording_seconds(params: Dict[str, Any]) -> Optional[float]:
     return None
 
 
+def _plot_window_status(placeholder: Optional["st.delta_generator.DeltaGenerator"], title: str, path: Optional[Path]) -> None:
+    if placeholder is None:
+        return
+    try:
+        suffix = f" ({path.name})" if path is not None else ""
+        placeholder.caption(f"{title} is in a plot window{suffix}.")
+    except Exception:
+        return
+
+
+def _reset_plot_window_open_state(*keys: str) -> None:
+    for key in keys:
+        st.session_state.pop(f"_plot_window_opened_{_safe_window_key(key)}", None)
+
+
 def _plot_live_buffer(
     buffer: np.ndarray,
     fs: float,
@@ -984,7 +1007,17 @@ def _plot_live_buffer(
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             template="plotly_dark" if st.get_option("theme.base") == "dark" else "plotly_white",
         )
-        placeholder.plotly_chart(go.Figure(data=traces, layout=layout), width="stretch")
+        title = f"Live preview - {label_part}"
+        fig = go.Figure(data=traces, layout=layout)
+        path = _write_plotly_window(
+            fig,
+            title,
+            "live_preview_signal",
+            auto_refresh=not interactive,
+            refresh_seconds=0.75,
+        )
+        _open_plot_window_once(path, "live_preview_signal")
+        _plot_window_status(placeholder, title, path)
     else:
         fig, ax = plt.subplots(figsize=(10, 4))
         colors = plt.cm.tab10.colors
@@ -999,7 +1032,10 @@ def _plot_live_buffer(
         ax.legend(loc="upper right", fontsize=8)
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
-        placeholder.pyplot(fig)
+        title = f"Live preview - {label_part}"
+        path = _write_matplotlib_window(fig, title, "live_preview_signal")
+        _open_plot_window_once(path, "live_preview_signal")
+        _plot_window_status(placeholder, title, path)
         plt.close(fig)
 
 
@@ -1076,7 +1112,17 @@ def _plot_fft_spectrum(
             template="plotly_dark" if st.get_option("theme.base") == "dark" else "plotly_white",
             shapes=shapes,
         )
-        placeholder.plotly_chart(go.Figure(data=traces, layout=layout), width="stretch")
+        title = f"FFT - {label_part}"
+        fig = go.Figure(data=traces, layout=layout)
+        path = _write_plotly_window(
+            fig,
+            title,
+            "live_preview_fft",
+            auto_refresh=not interactive,
+            refresh_seconds=0.75,
+        )
+        _open_plot_window_once(path, "live_preview_fft")
+        _plot_window_status(placeholder, title, path)
     else:
         colors = plt.cm.tab10.colors
         fig, ax = plt.subplots(figsize=(10, 4))
@@ -1119,7 +1165,10 @@ def _plot_fft_spectrum(
         ax.legend(loc="upper right", fontsize=8, ncol=2)
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
-        placeholder.pyplot(fig)
+        title = f"FFT - {label_part}"
+        path = _write_matplotlib_window(fig, title, "live_preview_fft")
+        _open_plot_window_once(path, "live_preview_fft")
+        _plot_window_status(placeholder, title, path)
         plt.close(fig)
 
 
@@ -1160,7 +1209,11 @@ def _plot_individual_channels(
             ax.set_title(f"Channel {ch + 1}")
             ax.grid(True, alpha=0.25)
             fig.tight_layout()
-            placeholder.pyplot(fig)
+            title = f"Channel {ch + 1}"
+            key = f"live_channel_{ch + 1}"
+            path = _write_matplotlib_window(fig, title, key)
+            _open_plot_window_once(path, key)
+            _plot_window_status(placeholder, title, path)
             plt.close(fig)
         else:
             trace = go.Scatter(
@@ -1180,7 +1233,11 @@ def _plot_individual_channels(
                 yaxis=dict(title="Amplitude (uV)"),
                 template="plotly_dark" if st.get_option("theme.base") == "dark" else "plotly_white",
             )
-            placeholder.plotly_chart(go.Figure(data=[trace], layout=layout), width="stretch")
+            title = f"Channel {ch + 1}"
+            key = f"live_channel_{ch + 1}"
+            path = _write_plotly_window(go.Figure(data=[trace], layout=layout), title, key)
+            _open_plot_window_once(path, key)
+            _plot_window_status(placeholder, title, path)
 
 
 def _plot_topography(rows: List[Dict[str, Any]], placeholder: "st.delta_generator.DeltaGenerator") -> None:
@@ -1245,7 +1302,26 @@ def _plot_topography(rows: List[Dict[str, Any]], placeholder: "st.delta_generato
     ax.axis("off")
     ax.set_title("Scalp topography (positions + impedances)")
     fig.tight_layout()
-    placeholder.pyplot(fig)
+    if hasattr(placeholder, "container"):
+        plotly_fig = _plotly_topography(rows)
+        if plotly_fig is not None:
+            _render_plotly_window_launcher(
+                plotly_fig,
+                "Scalp topography",
+                "scalp_topography",
+                target=placeholder,
+                button_label="Open scalp map",
+            )
+        else:
+            _render_matplotlib_window_launcher(
+                fig,
+                "Scalp topography",
+                "scalp_topography",
+                target=placeholder,
+                button_label="Open scalp map",
+            )
+    else:
+        placeholder.pyplot(fig)
     plt.close(fig)
 
 
@@ -1417,10 +1493,12 @@ class LiveViewService:
         self.max_update_seconds = max(0.1, float(max_update_seconds))
         self.buffer: np.ndarray = np.empty((0, 0))
         self.samples_seen = 0
+        self.fs = 0.0
 
     def wrap_device(self, device: DeviceInterface, params: Dict[str, Any]) -> LiveViewDevice:
         fs_value = coerce_number(params.get("Parameters", {}).get("fs"))
         fs = float(fs_value) if fs_value else 0.0
+        self.fs = fs
         self.reset(clear_progress=False)
         return LiveViewDevice(device, self, fs)
 
@@ -1438,6 +1516,24 @@ class LiveViewService:
     def mark_complete(self) -> None:
         if self.progress_placeholder is not None and self.total_seconds > 0:
             self.progress_placeholder.progress(1.0, text=f"Recording {self.total_seconds:.1f}s / {self.total_seconds:.1f}s")
+        if self.placeholder is not None and self.buffer.size:
+            indices = _normalize_channel_indices(self.channel_indices, self.buffer.shape[1])
+            _plot_live_buffer(
+                self.buffer,
+                self.fs,
+                self.placeholder,
+                channel_indices=indices,
+                interactive=True,
+                window_seconds=self.window_seconds,
+            )
+            if self.fft_placeholder is not None:
+                _plot_fft_spectrum(
+                    self.buffer,
+                    self.fs,
+                    self.fft_placeholder,
+                    channel_indices=indices,
+                    interactive=True,
+                )
 
     def _update_progress(self, fs: float) -> None:
         if self.progress_placeholder is None:
@@ -1523,7 +1619,7 @@ def run_live_preview(
             buffer = np.vstack([buffer, prime_chunk])
         if max_window and buffer.shape[0] > max_window:
             buffer = buffer[-max_window:]
-        # Live view uses lightweight (matplotlib) rendering to avoid flicker; interactive Plotly drawn after loop.
+        # Live view writes auto-refreshing pop-out windows; the page stays as a control surface.
         _plot_live_buffer(buffer, fs, placeholder, channel_indices=indices, interactive=False, window_seconds=window)
         _plot_fft_spectrum(buffer, fs, fft_placeholder, channel_indices=indices, interactive=False)
         # To keep UI smooth, only show the aggregated view + FFT during streaming.
@@ -1545,7 +1641,7 @@ def run_live_preview(
                 _plot_fft_spectrum(buffer, fs, fft_placeholder, channel_indices=indices, interactive=False)
             else:
                 time.sleep(update_interval)
-        # After capture, replace with interactive Plotly charts if available.
+        # After capture, replace auto-refreshing windows with editable final plot windows.
         if final_interactive:
             _plot_live_buffer(buffer, fs, placeholder, channel_indices=indices, interactive=True, window_seconds=window)
             _plot_fft_spectrum(buffer, fs, fft_placeholder, channel_indices=indices, interactive=True)
@@ -1574,8 +1670,13 @@ def render_chart_section(label: str, params: Dict[str, Any], data: Optional[np.n
     st.subheader(f"Charts – {label}")
     if eval_figures:
         st.caption("Evaluation plots")
-        for fig in eval_figures:
-            st.pyplot(fig, clear_figure=False)
+        for idx, fig in enumerate(eval_figures, start=1):
+            _render_matplotlib_window_launcher(
+                fig,
+                f"{label} evaluation plot {idx}",
+                f"eval_{_safe_window_key(label)}_{idx}",
+                button_label="Open evaluation plot",
+            )
         plt.close("all")
     for key in sorted(charts.keys()):
         render_chart(charts[key])
@@ -2602,6 +2703,11 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
     stop_clicked = st.button("Stop live preview", type="secondary", disabled=not active)
 
     if start_clicked:
+        _reset_plot_window_open_state(
+            "live_preview_signal",
+            "live_preview_fft",
+            *[f"live_channel_{idx + 1}" for idx in selected_indices],
+        )
         state["_live_preview_active"] = True
         state["_live_preview_unlimited"] = bool(unlimited)
         state["_live_preview_args"] = {
@@ -3451,6 +3557,11 @@ def main() -> None:
         params_to_run = dict(assembled_params)
         params_to_run.pop("Evaluation", None)
         params_to_run.pop("data", None)
+        _reset_plot_window_open_state(
+            "live_preview_signal",
+            "live_preview_fft",
+            *[f"live_channel_{idx + 1}" for idx in selected_indices],
+        )
         # Position the live view inside the elevated top region (recreated each run).
         st.session_state["_live_view_placeholder"] = None
         with run_region, st.status("🔴 Measurement running…", expanded=True) as run_status:
