@@ -169,9 +169,16 @@ class SsvepEvaluator(EvaluatorBase):
     def _apply_reference(self, params: dict, data: np.ndarray) -> np.ndarray:
         device = str(params.get("Device", "")).lower()
         param_block = params.get("Parameters", {})
-        num_channels = int(param_block.get("NumberEEGChannels", data.shape[1]))
+        try:
+            num_channels = int(param_block.get("NumberEEGChannels", data.shape[1]))
+        except (TypeError, ValueError):
+            num_channels = data.shape[1]
+        if num_channels <= 0:
+            num_channels = data.shape[1]
         if device == "actichamp":
             ref_idx = int(param_block.get("ReferenceChannel", 1)) - 1
+            if ref_idx < 0 or ref_idx >= data.shape[1]:
+                ref_idx = 0
             referenced = data - data[:, [ref_idx]]
             if referenced.shape[1] > num_channels:
                 referenced = referenced[:, :num_channels]
