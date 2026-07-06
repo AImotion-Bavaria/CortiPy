@@ -2344,20 +2344,37 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
             )
             refresh_interval = auto_cols[1].number_input(
                 "Refresh interval (s)",
-                min_value=2,
+                min_value=5,
                 max_value=60,
-                value=int(st.session_state.get("_actichamp_impedance_interval", 5) or 5),
+                value=max(5, int(st.session_state.get("_actichamp_impedance_interval", 10) or 10)),
                 step=1,
                 key="_actichamp_impedance_interval",
                 disabled=not continuous_impedance,
             )
             if continuous_impedance:
-                now = time.time()
-                if not last_ts or now - float(last_ts) >= float(refresh_interval):
-                    _fetch_actichamp_impedances(fs_value, force=True)
-                    rows = st.session_state["channel_tables"].get("ActiCHamp", rows)
-                    editor_revision = int(st.session_state["_channel_editor_revision"].get(device, 0))
-                auto_cols[2].caption("Updates whenever Streamlit reruns while the toggle is enabled.")
+                run_every = float(refresh_interval)
+                fragment = getattr(st, "fragment", None)
+                if callable(fragment):
+                    @fragment(run_every=run_every)
+                    def _poll_actichamp_impedance() -> None:
+                        before = st.session_state.get("_actichamp_impedance_timestamp")
+                        _fetch_actichamp_impedances(fs_value, force=True)
+                        after = st.session_state.get("_actichamp_impedance_timestamp")
+                        message = st.session_state.get("_actichamp_impedance_status")
+                        if message:
+                            st.caption(message)
+                        if after and after != before:
+                            st.rerun()
+
+                    _poll_actichamp_impedance()
+                    auto_cols[2].caption(f"Polling every {int(run_every)}s while this page is open.")
+                else:
+                    now = time.time()
+                    if not last_ts or now - float(last_ts) >= run_every:
+                        _fetch_actichamp_impedances(fs_value, force=True)
+                        rows = st.session_state["channel_tables"].get("ActiCHamp", rows)
+                        editor_revision = int(st.session_state["_channel_editor_revision"].get(device, 0))
+                    auto_cols[2].caption("Updates whenever Streamlit reruns while the toggle is enabled.")
 
         # Quick setup: fill the standard montage / bulk-toggle active channels without hand-editing.
         extras_set = set(DEVICE_EXTRA_LABELS.get(device, []))
