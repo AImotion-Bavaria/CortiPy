@@ -6,7 +6,51 @@ no Streamlit or app dependencies.
 from __future__ import annotations
 
 import re
-from typing import List
+from typing import Any, Dict, List
+
+SUPPORTED_EXTRA_DEVICES = ["LSL", "Offline", "Dummy"]
+VIEW_OPTIONS = ["Session configuration", "Electrodes", "Live preview", "Preview", "Charts", "Saved sessions"]
+DEVICE_CONFIG_SCHEMA: Dict[str, List[Dict[str, Any]]] = {
+    "UNICORN": [
+        {
+            "name": "UNICORNPort",
+            "label": "UNICORN Port / Address",
+            "kind": "text",
+            "placeholder": "COM7 or /dev/tty.Unicorn-DevB",
+            "help": "Enter the virtual COM port (USB/Bluetooth serial) exposed by the UNICORN.",
+            "default": "",
+            "aliases": ["UnicornPort", "UNICORNAddress", "UnicornAddress"],
+        },
+        {
+            "name": "UNICORNDeviceName",
+            "label": "Device Name (optional)",
+            "kind": "text",
+            "placeholder": "EEG-Headset-01",
+            "help": "Friendly name stored alongside the recording (appears in logs).",
+            "default": "",
+            "aliases": ["UnicornDeviceName"],
+        },
+        {
+            "name": "UnicornTimeout",
+            "label": "Connection timeout (s)",
+            "kind": "number",
+            "default": 5.0,
+            "min": 0.5,
+            "max": 30.0,
+            "step": 0.5,
+            "help": "Maximum time to wait for the UNICORN stream handshake.",
+            "aliases": ["UNICORNTimeout"],
+        },
+    ]
+}
+DEVICE_FIELD_ALIASES: Dict[str, List[str]] = {}
+for _fields in DEVICE_CONFIG_SCHEMA.values():
+    for _field in _fields:
+        DEVICE_FIELD_ALIASES[_field["name"]] = _field.get("aliases", [])
+
+
+def device_default_values(device: str) -> Dict[str, Any]:
+    return {field["name"]: field.get("default") for field in DEVICE_CONFIG_SCHEMA.get(device, [])}
 
 DEVICE_DEFAULT_CHANNELS = {
     "ActiCHamp": 32,
