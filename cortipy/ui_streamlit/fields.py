@@ -5,8 +5,10 @@ constants module — no Streamlit or app dependencies.
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
+from numbers import Real
 from typing import Any, Dict, Iterable, List, Optional
 
 from cortipy.ui_streamlit.constants import (
@@ -60,8 +62,11 @@ def is_integer_field(name: str) -> bool:
 def coerce_number(value: Any) -> Optional[float | int]:
     if value is None or value == "":
         return None
-    if isinstance(value, (int, float)):
-        return int(value) if float(value).is_integer() else float(value)
+    if isinstance(value, Real):
+        number = float(value)
+        if not math.isfinite(number):
+            return None
+        return int(number) if number.is_integer() else number
     if isinstance(value, str):
         text = value.strip()
         if not text:
@@ -69,6 +74,8 @@ def coerce_number(value: Any) -> Optional[float | int]:
         try:
             number = float(text)
         except ValueError:
+            return None
+        if not math.isfinite(number):
             return None
         return int(number) if number.is_integer() else number
     return None

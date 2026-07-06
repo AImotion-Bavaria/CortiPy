@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import math
 import sys
 from pathlib import Path
 
@@ -79,3 +80,33 @@ def test_impedance_mapping_uses_measured_positive_values() -> None:
     assert mapped[0]["Impedance"] == 5.0
     assert mapped[1]["Impedance"] == 12.0
     assert mapped[2]["Impedance"] == 0.0
+
+
+def test_topography_replaces_non_finite_coordinates() -> None:
+    module = load_streamlit_app()
+
+    class Placeholder:
+        def __init__(self) -> None:
+            self.fig = None
+
+        def pyplot(self, fig) -> None:
+            self.fig = fig
+
+        def info(self, _message: str) -> None:
+            raise AssertionError("topography should render")
+
+    placeholder = Placeholder()
+    module._plot_topography(
+        [
+            {"Channel": "Ch 1", "Position": "Fp1", "PosX": float("nan"), "PosY": float("nan"), "Impedance": 5.0},
+            {"Channel": "Ch 2", "Position": "NotA10-20", "PosX": "inf", "PosY": "-inf", "Impedance": 12.0},
+        ],
+        placeholder,
+    )
+
+    assert placeholder.fig is not None
+    for ax in placeholder.fig.axes:
+        for text in ax.texts:
+            x, y = text.get_position()
+            assert math.isfinite(float(x))
+            assert math.isfinite(float(y))

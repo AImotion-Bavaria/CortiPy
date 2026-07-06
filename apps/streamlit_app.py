@@ -2160,10 +2160,12 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                     row["Active"] = True
                 if not row.get("Position"):
                     row["Position"] = row["Channel"].replace(" ", "")
-                if row.get("PosX") in ("", None) or row.get("PosY") in ("", None):
+                pos_x = coerce_number(row.get("PosX"))
+                pos_y = coerce_number(row.get("PosY"))
+                if pos_x is None or pos_y is None:
                     pos_x, pos_y = _channel_default_coords(row["Position"])
-                    row["PosX"] = pos_x
-                    row["PosY"] = pos_y
+                row["PosX"] = float(pos_x)
+                row["PosY"] = float(pos_y)
                 # Keep Model consistent with the chosen electrode type (Rubrik) using electrodes.json:
                 # if the model isn't valid for that type, snap it to the first valid one.
                 models_for_type = ELECTRODE_LIBRARY.get(row.get("Rubrik") or "", [])
