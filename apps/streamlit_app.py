@@ -2702,25 +2702,26 @@ def handle_upload(target) -> None:
                 st.session_state["use_imported_data"] = True
                 st.success(f"Attached data from '{data_upload.name}'.")
 
-
 def render_sidebar_controls() -> SidebarControls:
     sidebar = st.sidebar
     sidebar.title("Controls")
 
     with sidebar.container(border=True):
         st.subheader("Measurement")
+
         default_save = st.text_input(
             "Experiment / save directory",
             value=str(DEFAULT_SAVE_DIR),
             help="Folder where run outputs are written. Point it at an existing experiment to continue it.",
         )
-        # Continuity: if this experiment folder already holds sessions, offer to resume its settings
-        # so a new subject can be recorded next day without re-entering every parameter.
+
         exp_dir = Path(default_save).expanduser()
         prior_sessions = list_saved_sessions(exp_dir) if exp_dir.exists() else []
+
         if prior_sessions:
             latest = prior_sessions[0]
             st.caption(f"📁 {len(prior_sessions)} prior session(s) — latest: {latest.name}")
+
             if st.button(
                 "🔁 Continue experiment (load latest settings)",
                 key="continue_experiment",
@@ -2728,6 +2729,7 @@ def render_sidebar_controls() -> SidebarControls:
                 help="Load the most recent session's parameters (not its data) so you can record the next subject.",
             ):
                 params_content, _ = _load_session_contents(latest)
+
                 if params_content:
                     load_params_into_state(normalize_params(params_content))
                     st.session_state["imported_data"] = None
@@ -2738,6 +2740,7 @@ def render_sidebar_controls() -> SidebarControls:
                     st.rerun()
                 else:
                     st.warning("Latest session has no params.json to resume from.")
+
         simulate = st.toggle(
             "Simulate run",
             value=False,
@@ -2746,7 +2749,9 @@ def render_sidebar_controls() -> SidebarControls:
 
     with sidebar.container(border=True):
         st.subheader("Configuration & data")
+
         snapshot = current_params_snapshot()
+
         st.download_button(
             "⬇ Export settings (params.json)",
             data=params_to_json(snapshot) if snapshot else "{}",
@@ -2757,17 +2762,27 @@ def render_sidebar_controls() -> SidebarControls:
             help="Download the current method/device/electrode configuration to reuse later.",
         )
 
-        # Explicit recording export: container (BIDS/SBIDS) x raw format (Parquet/EDF).
         last = st.session_state.get("last_results") or {}
         can_export = last.get("data") is not None
+
         st.markdown("**Export recording**")
+
         exp_cols = st.columns(2)
+
         export_container = exp_cols[0].selectbox(
-            "Container", ["SBIDS", "BIDS"], key="export_container", disabled=not can_export
+            "Container",
+            ["SBIDS", "BIDS"],
+            key="export_container",
+            disabled=not can_export,
         )
+
         export_fmt = exp_cols[1].selectbox(
-            "Raw format", ["Parquet", "EDF"], key="export_raw_format", disabled=not can_export
+            "Raw format",
+            ["Parquet", "EDF"],
+            key="export_raw_format",
+            disabled=not can_export,
         )
+
         if st.button(
             f"⬇ Export as {export_container} + {export_fmt}",
             disabled=not can_export,
@@ -2776,42 +2791,63 @@ def render_sidebar_controls() -> SidebarControls:
         ):
             try:
                 out = export_recording(
-                    last.get("data"), last.get("params") or {}, Path(default_save).expanduser(),
-                    export_container, export_fmt,
+                    last.get("data"),
+                    last.get("params") or {},
+                    Path(default_save).expanduser(),
+                    export_container,
+                    export_fmt,
                 )
                 st.success(f"Exported {export_container} + {export_fmt} → {out}")
-            except Exception as exc:  # pragma: no cover - surfaced to the user
+            except Exception as exc:
                 LOGGER.exception("Recording export failed")
                 st.error(f"Export failed: {exc}")
+
         if not can_export:
             st.caption("Run or load a session first to enable recording export.")
 
         handle_upload(st)
+
         imported_data = st.session_state.get("imported_data")
         default_use_imported = st.session_state.get("use_imported_data", False) or bool(imported_data)
+
         use_imported_data = st.checkbox(
             "Use imported data for offline replay",
             value=default_use_imported and imported_data is not None,
             disabled=imported_data is None,
+            key="use_imported_data_checkbox",
         )
+
         st.session_state["use_imported_data"] = use_imported_data and imported_data is not None
 
     with sidebar.container(border=True):
         st.subheader("Live view")
-        live_view_enabled = st.toggle("During measurement", value=True)
+
+        live_view_enabled = st.toggle(
+            "During measurement",
+            value=True,
+            key="live_view_enabled_toggle",
+        )
+
         live_view_window = st.slider(
             "Window (s)",
             min_value=1,
             max_value=60,
             value=5,
             disabled=not live_view_enabled,
+            key="live_view_window_slider",
         )
 
     with sidebar.container(border=True):
         st.subheader("Run")
-        if st.button("🔌 Test device connection", width="stretch",
-                     help="Connect and confirm the device is streaming before starting a recording."):
+
+        if st.button(
+            "🔌 Test device connection",
+            width="stretch",
+            key="test_device_connection",
+            help="Connect and confirm the device is streaming before starting a recording.",
+        ):
             snap = current_params_snapshot()
+
             if snap is None:
                 st.session_state["_device_check"] = ("warn", "Choose a method and device first.")
             else:
@@ -2819,28 +2855,47 @@ def render_sidebar_controls() -> SidebarControls:
                     try:
                         ok, msg = verify_device_connection(snap)
                         st.session_state["_device_check"] = ("ok" if ok else "err", msg)
-                    except Exception as exc:  # pragma: no cover - surfaced to the user
+                    except Exception as exc:
                         LOGGER.exception("Device connection test failed")
                         st.session_state["_device_check"] = ("err", str(exc))
+
         check = st.session_state.get("_device_check")
+
         if check:
             kind, msg = check
             {"ok": st.success, "warn": st.warning}.get(kind, st.error)(
                 {"ok": "✅ ", "warn": "", "err": "❌ "}.get(kind, "") + msg
             )
-        start_button = st.button("Start measurement", type="primary", width="stretch")
-        st.caption("Tip: run **Test device connection** first, then Start. Use **Simulate run** above to try the flow without hardware.")
 
+        start_button = st.button(
+            "Start measurement",
+            type="primary",
+            width="stretch",
+            key="start_measurement",
+        )
+
+        st.caption(
+            "Tip: run **Test device connection** first, then Start. "
+            "Use Simulate run above to try without hardware."
+        )
+
+    # ✅ ONLY ONE diagnostics block (FIXED)
     with sidebar.expander("🩺 Diagnostics (logs)", expanded=False):
         st.caption(f"Log file: {LOG_PATH}")
-        st.button("Refresh", key="refresh_logs")  # click triggers a rerun -> re-reads the log
+
+        if st.button("Refresh logs", key="refresh_logs_button"):
+            st.rerun()
+
         log_lines = _tail_log(LOG_PATH, 60)
+
         errs = [ln for ln in log_lines if "[ERROR]" in ln]
         warns = [ln for ln in log_lines if "[WARNING]" in ln]
+
         if errs:
             st.error("Recent errors:\n\n" + "\n".join(errs[-4:]))
         elif warns:
             st.warning("Recent warnings:\n\n" + "\n".join(warns[-4:]))
+
         st.code("\n".join(log_lines) if log_lines else "(log is empty)", language="log")
 
     return SidebarControls(
@@ -2850,7 +2905,6 @@ def render_sidebar_controls() -> SidebarControls:
         live_view_window=int(live_view_window),
         start_button=start_button,
     )
-
 
 def render_footer() -> None:
     st.divider()
