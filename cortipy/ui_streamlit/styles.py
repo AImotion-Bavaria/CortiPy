@@ -116,6 +116,13 @@ textarea,
 [contenteditable="true"] {
     cursor: text !important;
 }
+/* Space efficiency: short-value inputs (dropdowns / numbers / small text) shouldn't sprawl
+   across the whole column. Cap their width in the main content area (sidebar unaffected). */
+[data-testid="stMain"] [data-testid="stSelectbox"],
+[data-testid="stMain"] [data-testid="stNumberInput"],
+[data-testid="stMain"] [data-testid="stTextInput"] {
+    max-width: 340px;
+}
 </style>
 """
 

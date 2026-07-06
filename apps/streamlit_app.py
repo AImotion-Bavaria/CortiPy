@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import copy
 import logging
-import re
 import sys
 import time
 from dataclasses import dataclass
@@ -145,29 +144,38 @@ for fields in DEVICE_CONFIG_SCHEMA.values():
         DEVICE_FIELD_ALIASES[field["name"]] = field.get("aliases", [])
 
 
-@dataclass(frozen=True)
-class FieldSchema:
-    name: str
-    kind: str
-    options: List[str]
-    tooltip: str
+# Field schema + value coercion live in cortipy.ui_streamlit.fields (modularization).
+from cortipy.ui_streamlit.fields import (  # noqa: E402
+    FieldSchema,
+    default_values,
+    resolve_choice,
+    is_integer_field,
+    coerce_number,
+    convert_value,
+)
 
 
-@dataclass(frozen=True)
-class ChartSeries:
-    name: str
-    x: np.ndarray
-    y: np.ndarray
-
-
-@dataclass
-class ChartData:
-    key: str
-    title: str
-    x_label: str
-    y_label: str
-    series: List[ChartSeries]
-    description: Optional[str] = None
+# Chart data model + renderer live in cortipy.ui_streamlit.charts (modularization).
+from cortipy.ui_streamlit.charts import (  # noqa: E402
+    ChartSeries,
+    ChartData,
+    downsample_series as _downsample_series,
+    render_chart,
+    _chart_from_raw_data,
+    _chart_from_psd,
+    _chart_from_alpha_power,
+    _chart_from_eval_psd,
+    _chart_from_eval_fft,
+    _chart_from_average_signals,
+    _chart_from_metric_vector,
+)
+from cortipy.ui_streamlit.electrodes import (  # noqa: E402
+    actichamp_channel_count as _actichamp_channel_count,
+    bump_channel_editor_revision as _bump_channel_editor_revision,
+    map_impedances_to_channels as _map_impedances_to_channels,
+    has_measured_impedance as _has_measured_impedance,
+    impedance_range_kohm as _impedance_range_kohm,
+)
 
 
 @dataclass(frozen=True)
@@ -210,159 +218,22 @@ ELECTRODE_LIBRARY: Dict[str, List[str]] = json.loads((SCHEMA_DIR / "electrodes.j
 ELECTRODE_RUBRICS = list(ELECTRODE_LIBRARY.keys())
 ELECTRODE_MODELS = sorted({model for models in ELECTRODE_LIBRARY.values() for model in models})
 
-DEVICE_DEFAULT_CHANNELS = {
-    "ActiCHamp": 32,
-    "UNICORN": 8,
-    "BIOPACK": 16,
-    "LSL": 8,
-    "Offline": 8,
-    "Dummy": 8,
-}
-DEVICE_EXTRA_LABELS = {
-    "ActiCHamp": ["GND"],
-    "UNICORN": ["GND", "Ref"],
-}
+# Device / montage / field configuration lives in cortipy.ui_streamlit.constants (modularization).
+from cortipy.ui_streamlit.constants import (  # noqa: E402
+    DEVICE_DEFAULT_CHANNELS,
+    DEVICE_EXTRA_LABELS,
+    DEVICE_FS_OPTIONS,
+    DEVICE_POSITION_DEFAULTS,
+    normalize_position_label as _normalize_position_label,
+    STANDARD_POSITION_ORDER as _STANDARD_POSITION_ORDER,
+    POSITION_ANGLE_LOOKUP as _POSITION_ANGLE_LOOKUP,
+)
 
-INT_FIELD_NAMES = {
-    "NumberEEGChannels",
-    "NumberAUXChannels",
-    "ReferenceChannel",
-    "TriggerChannel",
-    "LivePlotCH",
-    "ChannelIpsi",
-    "ChannelContra",
-    "TestSubjectNo",
-    "RecordingTime",
-    "TriggerTime",
-    "RepeatMeasCount",
-}
-INT_FIELD_PREFIXES = ("Number",)
-INT_FIELD_SUFFIXES = ("Channel", "Channels", "Trials", "Count", "No")
-
-TEN_TWENTY_32 = [
-    "Fp1",
-    "Fpz",
-    "Fp2",
-    "AF3",
-    "AFz",
-    "AF4",
-    "F7",
-    "F3",
-    "Fz",
-    "F4",
-    "F8",
-    "FC5",
-    "FC1",
-    "FC2",
-    "FC6",
-    "T7",
-    "C3",
-    "Cz",
-    "C4",
-    "T8",
-    "CP5",
-    "CP1",
-    "CP2",
-    "CP6",
-    "P7",
-    "P3",
-    "Pz",
-    "P4",
-    "P8",
-    "PO3",
-    "PO4",
-    "Oz",
-]
-UNICORN_8 = ["Fp1", "Fp2", "C3", "C4", "P3", "P4", "O1", "O2"]
-BIOPACK_16 = TEN_TWENTY_32[:16]
-
-TEN_TWENTY_COORDS = {
-    "Fp1": (-0.5, 0.9),
-    "Fpz": (0.0, 0.95),
-    "Fp2": (0.5, 0.9),
-    "F7": (-0.95, 0.6),
-    "F3": (-0.5, 0.6),
-    "Fz": (0.0, 0.65),
-    "F4": (0.5, 0.6),
-    "F8": (0.95, 0.6),
-    "FC5": (-0.7, 0.35),
-    "FC3": (-0.4, 0.35),
-    "FC1": (-0.2, 0.35),
-    "FCz": (0.0, 0.35),
-    "FC2": (0.2, 0.35),
-    "FC4": (0.4, 0.35),
-    "FC6": (0.7, 0.35),
-    "T7": (-1.05, 0.0),
-    "C5": (-0.7, 0.05),
-    "C3": (-0.5, 0.0),
-    "C1": (-0.2, 0.0),
-    "Cz": (0.0, 0.0),
-    "C2": (0.2, 0.0),
-    "C4": (0.5, 0.0),
-    "C6": (0.7, 0.05),
-    "T8": (1.05, 0.0),
-    "TP7": (-0.95, -0.2),
-    "CP5": (-0.7, -0.25),
-    "CP3": (-0.4, -0.25),
-    "CP1": (-0.2, -0.25),
-    "CPz": (0.0, -0.25),
-    "CP2": (0.2, -0.25),
-    "CP4": (0.4, -0.25),
-    "CP6": (0.7, -0.25),
-    "TP8": (0.95, -0.2),
-    "P7": (-0.95, -0.55),
-    "P5": (-0.65, -0.55),
-    "P3": (-0.5, -0.55),
-    "P1": (-0.2, -0.55),
-    "Pz": (0.0, -0.6),
-    "P2": (0.2, -0.55),
-    "P4": (0.5, -0.55),
-    "P6": (0.65, -0.55),
-    "P8": (0.95, -0.55),
-    "PO7": (-0.7, -0.75),
-    "PO3": (-0.35, -0.75),
-    "PO4": (0.35, -0.75),
-    "PO8": (0.7, -0.75),
-    "O1": (-0.3, -0.95),
-    "Oz": (0.0, -1.0),
-    "O2": (0.3, -0.95),
-}
-
-def _channel_default_coords(label: str) -> tuple[Optional[float], Optional[float]]:
-    clean = label.replace(" ", "")
-    coords = TEN_TWENTY_COORDS.get(clean)
-    if coords is None:
-        return None, None
-    return coords
-
-DEVICE_POSITION_DEFAULTS = {
-    "ActiCHamp": TEN_TWENTY_32,
-    "UNICORN": UNICORN_8,
-    "BIOPACK": BIOPACK_16,
-    "LSL": UNICORN_8,
-    "Offline": UNICORN_8,
-    "Dummy": UNICORN_8,
-}
-
-
-def _normalize_position_label(label: str) -> str:
-    return re.sub(r"\s+", "", str(label or "").strip()).upper()
-
-
-_STANDARD_POSITION_ORDER: List[str] = []
-for positions in DEVICE_POSITION_DEFAULTS.values():
-    for pos in positions:
-        normalized = _normalize_position_label(pos)
-        if normalized and normalized not in _STANDARD_POSITION_ORDER:
-            _STANDARD_POSITION_ORDER.append(normalized)
-for extras in DEVICE_EXTRA_LABELS.values():
-    for label in extras:
-        normalized = _normalize_position_label(label)
-        if normalized and normalized not in _STANDARD_POSITION_ORDER:
-            _STANDARD_POSITION_ORDER.append(normalized)
-if not _STANDARD_POSITION_ORDER:
-    _STANDARD_POSITION_ORDER = [f"CH{idx+1}" for idx in range(32)]
-_POSITION_ANGLE_LOOKUP = {label: idx for idx, label in enumerate(_STANDARD_POSITION_ORDER)}
+# 10-20 scalp coordinates + lookup live in cortipy.ui_streamlit.coords (first modularization step).
+from cortipy.ui_streamlit.coords import (  # noqa: E402
+    TEN_TWENTY_COORDS,
+    channel_default_coords as _channel_default_coords,
+)
 
 METHOD_FULL_NAMES: Dict[str, str] = {
     "Alpha": "Alpha Relaxation",
@@ -513,39 +384,6 @@ GENDER_OPTIONS = ["Unspecified", "Female", "Male", "Diverse"]
 HANDEDNESS_OPTIONS = ["Right", "Left", "Ambidextrous"]
 
 
-def default_values(fields: Iterable[FieldSchema]) -> Dict[str, Any]:
-    defaults: Dict[str, Any] = {}
-    for field in fields:
-        if field.kind == "dropdown":
-            defaults[field.name] = field.options[0] if field.options else ""
-        elif field.kind == "numeric":
-            defaults[field.name] = None
-        else:
-            defaults[field.name] = ""
-    return defaults
-
-
-def resolve_choice(options: List[str], current: Optional[str]) -> str:
-    if current in options:
-        return current
-    if current is not None:
-        current_str = str(current)
-        if current_str in options:
-            return current_str
-    return options[0] if options else ""
-
-
-def is_integer_field(name: str) -> bool:
-    if name in INT_FIELD_NAMES:
-        return True
-    lower = name.lower()
-    if any(lower.startswith(prefix.lower()) for prefix in INT_FIELD_PREFIXES):
-        return True
-    if any(lower.endswith(suffix.lower()) for suffix in INT_FIELD_SUFFIXES):
-        return True
-    return False
-
-
 def render_numeric_input(target, field: FieldSchema, current: Any, key: str):
     as_number = coerce_number(current)
     if is_integer_field(field.name):
@@ -657,245 +495,6 @@ def _load_npz_array(source: Union[Path, Any]) -> Optional[np.ndarray]:
     finally:
         if hasattr(npz, "close"):
             npz.close()
-
-
-def _downsample_series(x: np.ndarray, y: np.ndarray, max_points: int = 2000) -> tuple[np.ndarray, np.ndarray]:
-    if len(x) <= max_points:
-        return x, y
-    step = max(1, math.ceil(len(x) / max_points))
-    return x[::step], y[::step]
-
-
-def _chart_from_raw_data(label: str, params: Dict[str, Any], data: np.ndarray, aggregate: bool = False) -> Optional[ChartData]:
-    if data is None:
-        return None
-    arr = np.asarray(data)
-    if arr.ndim < 2 or arr.shape[0] == 0:
-        return None
-
-    param_block = params.get("Parameters", {}) if params else {}
-    fs_value = coerce_number(param_block.get("fs"))
-    fs = float(fs_value) if fs_value else 0.0
-    n_samples, n_channels = arr.shape[0], arr.shape[1]
-    max_seconds = 10
-    limit = min(n_samples, int(fs * max_seconds) if fs > 0 else n_samples)
-    time_axis = np.arange(n_samples) / fs if fs > 0 else np.arange(n_samples)
-    x_vals = time_axis[:limit]
-    series: List[ChartSeries] = []
-
-    if aggregate or n_channels == 1:
-        y_vals = np.mean(arr[:limit], axis=1)
-        x_ds, y_ds = _downsample_series(x_vals, y_vals)
-        series.append(ChartSeries(name=label, x=x_ds, y=y_ds))
-    else:
-        max_channels = min(4, n_channels)
-        for ch in range(max_channels):
-            y_vals = arr[:limit, ch]
-            x_ds, y_ds = _downsample_series(x_vals, y_vals)
-            series.append(ChartSeries(name=f"{label} – Ch {ch + 1}", x=x_ds, y=y_ds))
-
-    return ChartData(
-        key="raw",
-        title="Raw EEG preview",
-        x_label="Time (s)" if fs > 0 else "Sample",
-        y_label="Amplitude (uV)",
-        series=series,
-        description="First 10 seconds" if fs > 0 else "Full buffer preview",
-    )
-
-
-def _chart_from_psd(label: str, params: Dict[str, Any], data: np.ndarray, aggregate: bool = False) -> Optional[ChartData]:
-    if data is None:
-        return None
-    arr = np.asarray(data)
-    if arr.ndim < 2 or arr.shape[0] == 0:
-        return None
-
-    param_block = params.get("Parameters", {}) if params else {}
-    fs_value = coerce_number(param_block.get("fs"))
-    fs = float(fs_value) if fs_value else 0.0
-    if fs <= 0:
-        return None
-
-    max_seconds = 10
-    limit = min(arr.shape[0], int(fs * max_seconds)) or arr.shape[0]
-    segment = arr[:limit]
-
-    spectrum = np.fft.rfft(segment, axis=0)
-    psd = (1.0 / (limit * fs)) * np.abs(spectrum) ** 2
-    if psd.shape[0] > 2:
-        psd[1:-1] *= 2
-    freq = np.fft.rfftfreq(limit, d=1.0 / fs)
-
-    series: List[ChartSeries] = []
-    if aggregate or psd.shape[1] == 1:
-        y_vals = 10.0 * np.log10(np.maximum(psd.mean(axis=1), np.finfo(float).tiny))
-        series.append(ChartSeries(name=label, x=freq, y=y_vals))
-    else:
-        max_channels = min(4, psd.shape[1])
-        for ch in range(max_channels):
-            y_vals = 10.0 * np.log10(np.maximum(psd[:, ch], np.finfo(float).tiny))
-            series.append(ChartSeries(name=f"{label} – Ch {ch + 1}", x=freq, y=y_vals))
-
-    return ChartData(
-        key="psd",
-        title="Power Spectral Density",
-        x_label="Frequency (Hz)",
-        y_label="Power (dB/Hz)",
-        series=series,
-        description="Welch-style PSD from first 10 seconds",
-    )
-
-
-def _chart_from_alpha_power(label: str, alpha_eval: Dict[str, Any], aggregate: bool = False) -> Optional[ChartData]:
-    if not alpha_eval:
-        return None
-    try:
-        time_axis = np.asarray(alpha_eval.get("time"))
-        power = np.asarray(alpha_eval.get("dBpsdx"))
-    except Exception:
-        return None
-    if time_axis.ndim != 1 or power.ndim != 2 or power.shape[1] != time_axis.shape[0]:
-        return None
-
-    series: List[ChartSeries] = []
-    if aggregate or power.shape[0] == 1:
-        series.append(ChartSeries(name=label, x=time_axis, y=power.mean(axis=0)))
-    else:
-        max_channels = min(4, power.shape[0])
-        for idx in range(max_channels):
-            series.append(ChartSeries(name=f"{label} – Ch {idx + 1}", x=time_axis, y=power[idx]))
-
-    return ChartData(
-        key="alpha_power",
-        title="Alpha band power",
-        x_label=alpha_eval.get("timeUnit", "Time"),
-        y_label=alpha_eval.get("dBpsdxUnit", "Power"),
-        series=series,
-    )
-
-
-def _chart_from_eval_psd(label: str, psd_eval: Dict[str, Any], aggregate: bool = False) -> Optional[ChartData]:
-    if not psd_eval:
-        return None
-    try:
-        freq = np.asarray(psd_eval.get("freq"))
-        psd_values = psd_eval.get("dBpsdx") or psd_eval.get("psdx")
-        if psd_values is None:
-            return None
-        psd_array = np.asarray(psd_values)
-    except Exception:
-        return None
-
-    if freq.ndim != 1 or psd_array.size == 0:
-        return None
-
-    if psd_array.ndim == 3:
-        psd_array = psd_array.mean(axis=2)
-    if psd_array.ndim == 2 and psd_array.shape[0] == freq.shape[0] and psd_array.shape[1] != freq.shape[0]:
-        psd_array = psd_array.T
-    elif psd_array.ndim == 1:
-        psd_array = psd_array[None, :]
-
-    if psd_array.ndim != 2 or psd_array.shape[1] != freq.shape[0]:
-        return None
-
-    series: List[ChartSeries] = []
-    if aggregate or psd_array.shape[0] == 1:
-        series.append(ChartSeries(name=label, x=freq, y=psd_array.mean(axis=0)))
-    else:
-        max_channels = min(4, psd_array.shape[0])
-        for idx in range(max_channels):
-            series.append(ChartSeries(name=f"{label} – Ch {idx + 1}", x=freq, y=psd_array[idx]))
-
-    return ChartData(
-        key="eval_psd",
-        title="PSD (evaluation)",
-        x_label=psd_eval.get("freqUnit", "Frequency (Hz)"),
-        y_label=psd_eval.get("dBpsdxUnit") or psd_eval.get("psdxUnit") or "Power",
-        series=series,
-    )
-
-
-def _chart_from_eval_fft(label: str, fft_eval: Dict[str, Any], aggregate: bool = False) -> Optional[ChartData]:
-    if not fft_eval:
-        return None
-    try:
-        freq = np.asarray(fft_eval.get("freq"))
-        xdft = np.asarray(fft_eval.get("xdft"))
-    except Exception:
-        return None
-    if freq.ndim != 1 or xdft.size == 0:
-        return None
-    if xdft.ndim == 1:
-        xdft = xdft[:, None]
-    if xdft.ndim == 3:
-        xdft = np.mean(xdft, axis=2)
-    if xdft.shape[0] != freq.shape[0]:
-        xdft = xdft.T if xdft.shape[1] == freq.shape[0] else xdft
-    if xdft.shape[0] != freq.shape[0]:
-        return None
-
-    magnitude = np.abs(xdft)
-    series: List[ChartSeries] = []
-    if aggregate or magnitude.shape[1] == 1:
-        series.append(ChartSeries(name=label, x=freq, y=magnitude.mean(axis=1)))
-    else:
-        max_channels = min(4, magnitude.shape[1])
-        for idx in range(max_channels):
-            series.append(ChartSeries(name=f"{label} – Ch {idx + 1}", x=freq, y=magnitude[:, idx]))
-
-    return ChartData(
-        key="eval_fft",
-        title="FFT (evaluation)",
-        x_label=fft_eval.get("freqUnit", "Frequency (Hz)"),
-        y_label=fft_eval.get("xdftUnit", "Amplitude"),
-        series=series,
-    )
-
-
-def _chart_from_average_signals(label: str, avg_eval: Dict[str, Any], aggregate: bool = False) -> Optional[ChartData]:
-    if not avg_eval:
-        return None
-    try:
-        time_axis = np.asarray(avg_eval.get("time"))
-        voltage = np.asarray(avg_eval.get("voltage"))
-    except Exception:
-        return None
-    if time_axis.ndim != 1 or voltage.ndim != 2 or voltage.shape[0] != time_axis.shape[0]:
-        return None
-
-    series: List[ChartSeries] = []
-    if aggregate or voltage.shape[1] == 1:
-        series.append(ChartSeries(name=label, x=time_axis, y=voltage.mean(axis=1)))
-    else:
-        max_channels = min(4, voltage.shape[1])
-        for idx in range(max_channels):
-            series.append(ChartSeries(name=f"{label} – Ch {idx + 1}", x=time_axis, y=voltage[:, idx]))
-
-    return ChartData(
-        key="avg_signals",
-        title="Average signals (evaluation)",
-        x_label=avg_eval.get("timeUnit", "Time"),
-        y_label=avg_eval.get("voltageUnit", "Amplitude"),
-        series=series,
-    )
-
-
-def _chart_from_metric_vector(label: str, name: str, values: Any, unit: str = "Value") -> Optional[ChartData]:
-    if values is None:
-        return None
-    arr = np.asarray(values)
-    if arr.ndim != 1 or arr.size == 0:
-        return None
-    x_axis = np.arange(1, arr.size + 1)
-    return ChartData(
-        key=f"metric_{name}",
-        title=f"{label} – {name}",
-        x_label="Index / Channel",
-        y_label=unit,
-        series=[ChartSeries(name=name, x=x_axis, y=arr)],
-    )
 
 
 def _autoevaluate_if_needed(params: Dict[str, Any], data: Optional[np.ndarray]) -> Dict[str, Any]:
@@ -1117,11 +716,12 @@ def _plot_live_buffer(
     samples = buffer.shape[0]
     time_axis = np.arange(samples) / fs if fs > 0 else np.arange(samples)
     if fs > 0:
-        time_axis = time_axis - time_axis[-1]  # align so 0 is "now" on the right
-        time_axis = np.round(time_axis, 3)
+        time_axis = np.round(time_axis, 3)  # positive elapsed seconds from the start of the buffer
     if window_seconds is not None and fs > 0:
-        time_axis_min = -float(window_seconds)
-        time_axis_max = 0.0
+        # Show elapsed time with "now" on the right, clipped to the most recent `window` seconds.
+        # No padding: early on the view just spans the data captured so far.
+        time_axis_max = float(time_axis[-1])
+        time_axis_min = max(0.0, time_axis_max - float(window_seconds))
     else:
         time_axis_min = time_axis[0]
         time_axis_max = time_axis[-1]
@@ -1163,7 +763,7 @@ def _plot_live_buffer(
             color = colors[plot_idx % len(colors)]
             ax.plot(time_axis, buffer[:, ch], label=f"Ch {ch + 1}", color=color)
         ax.set_xlim(time_axis_min, time_axis_max)
-        ax.set_xlabel("Time (s, left = -window, right = 0)" if fs > 0 else "Samples")
+        ax.set_xlabel("Time (s) — newest on the right" if fs > 0 else "Samples")
         ax.set_ylabel("Amplitude (uV)")
         label_part = "All channels" if len(indices) == total_channels else ", ".join(f"{ch + 1}" for ch in indices)
         ax.set_title(f"Live preview – {label_part}")
@@ -1306,10 +906,13 @@ def _plot_individual_channels(
         return
     time_axis = np.arange(buffer.shape[0]) / fs if fs > 0 else np.arange(buffer.shape[0])
     if fs > 0:
-        time_axis = time_axis - time_axis[-1]
-        time_axis = np.round(time_axis, 3)
-    time_axis_min = -float(window_seconds) if window_seconds is not None and fs > 0 else time_axis[0]
-    time_axis_max = 0.0 if window_seconds is not None and fs > 0 else time_axis[-1]
+        time_axis = np.round(time_axis, 3)  # positive elapsed seconds, newest on the right
+    if window_seconds is not None and fs > 0:
+        time_axis_max = float(time_axis[-1])
+        time_axis_min = max(0.0, time_axis_max - float(window_seconds))
+    else:
+        time_axis_min = float(time_axis[0])
+        time_axis_max = float(time_axis[-1])
     palette = list(getattr(plt.cm, "tab10").colors) if hasattr(plt.cm, "tab10") else []
     default_color = (0.2, 0.4, 0.8)
     for plot_idx, ch in enumerate(indices):
@@ -1323,7 +926,7 @@ def _plot_individual_channels(
             fig, ax = plt.subplots(figsize=(14, 3))
             ax.plot(time_axis, buffer[:, ch], color=color, linewidth=1.0)
             ax.set_xlim(time_axis_min, time_axis_max)
-            ax.set_xlabel("Time (s, left = -window, right = 0)" if fs > 0 else "Samples")
+            ax.set_xlabel("Time (s) — newest on the right" if fs > 0 else "Samples")
             ax.set_ylabel("Amplitude (uV)")
             ax.set_title(f"Channel {ch + 1}")
             ax.grid(True, alpha=0.25)
@@ -1672,29 +1275,6 @@ def run_live_preview(
         LOGGER.info("run_live_preview finished")
 
 
-def render_chart(chart: ChartData) -> None:
-    fig, ax = plt.subplots(figsize=(8, 3))
-    for series in chart.series:
-        ax.plot(series.x, series.y, label=series.name)
-    ax.set_title(chart.title)
-    ax.set_xlabel(chart.x_label)
-    ax.set_ylabel(chart.y_label)
-    if len(chart.series) > 1:
-        ax.legend(loc="best")
-    if chart.description:
-        ax.text(
-            0.01,
-            0.02,
-            chart.description,
-            transform=ax.transAxes,
-            fontsize=8,
-            color="gray",
-            ha="left",
-        )
-    st.pyplot(fig, clear_figure=True)
-    plt.close(fig)
-
-
 def render_chart_section(label: str, params: Dict[str, Any], data: Optional[np.ndarray], aggregate: bool = False) -> None:
     eval_figures = _render_evaluation_figures(params, data)
     LOGGER.debug(
@@ -2012,43 +1592,6 @@ def _render_live_preview_frame(
         _plot_individual_channels(buf, fs, channel_placeholders, indices or [])
 
 
-def _actichamp_channel_count(rows: List[Dict[str, Any]]) -> int:
-    extras = set(DEVICE_EXTRA_LABELS.get("ActiCHamp", []))
-    return sum(1 for row in rows if row.get("Channel") not in extras)
-
-
-def _bump_channel_editor_revision(device: str) -> None:
-    revisions = st.session_state.setdefault("_channel_editor_revision", {})
-    revisions[device] = int(revisions.get(device, 0)) + 1
-
-
-def _map_impedances_to_channels(rows: List[Dict[str, Any]], values: List[float]) -> List[Dict[str, Any]]:
-    if len(values) < 3:
-        return rows
-
-    labels = ["GND", "REF"] + [f"Ch {idx}" for idx in range(1, len(values) - 1)]
-    mapping = {label: values[idx] for idx, label in enumerate(labels) if idx < len(values)}
-
-    for row in rows:
-        value = mapping.get(row.get("Channel"))
-        if value is None or value < 0:
-            continue
-        row["Impedance"] = round(float(value) / 1000.0, 1)
-
-    return rows
-
-
-def _has_measured_impedance(values: List[float]) -> bool:
-    return any(value > 0 for value in values)
-
-
-def _impedance_range_kohm(values: List[float]) -> Optional[tuple[float, float]]:
-    measured = [float(value) / 1000.0 for value in values if value > 0]
-    if not measured:
-        return None
-    return min(measured), max(measured)
-
-
 def _fetch_actichamp_impedances(fs_value: Any) -> None:
     if st.session_state.get("_actichamp_impedance_loaded"):
         return
@@ -2111,56 +1654,6 @@ def _fetch_actichamp_impedances(fs_value: Any) -> None:
             f"Loaded {len(values)} impedance values ({low:.1f}-{high:.1f} kΩ)."
         )
     st.session_state["_actichamp_impedance_timestamp"] = time.time()
-
-
-def coerce_number(value: Any) -> Optional[float | int]:
-    if value is None or value == "":
-        return None
-    if isinstance(value, (int, float)):
-        return int(value) if float(value).is_integer() else float(value)
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return None
-        try:
-            number = float(text)
-        except ValueError:
-            return None
-        return int(number) if number.is_integer() else number
-    return None
-
-
-def parse_numeric_list(text: str) -> Optional[List[float | int]]:
-    tokens = [tok for tok in re.split(r"[,\s;]+", text.strip()) if tok]
-    if len(tokens) <= 1:
-        return None
-    parsed: List[float | int] = []
-    for token in tokens:
-        number = coerce_number(token)
-        if number is None:
-            return None
-        parsed.append(number)
-    return parsed
-
-
-def convert_value(field: FieldSchema, value: Any) -> Any:
-    if value in ("", None):
-        return None
-    if field.kind == "numeric":
-        number = coerce_number(value)
-        if number is None:
-            return None
-        return int(number) if is_integer_field(field.name) else number
-    if field.kind == "dropdown":
-        casted = coerce_number(value)
-        return casted if casted is not None else value
-    if field.kind == "edit":
-        text = str(value).strip()
-        if not text:
-            return None
-        numeric_list = parse_numeric_list(text)
-        return numeric_list if numeric_list is not None else text
-    return value
 
 
 def _position_angle(label: str, fallback_idx: int) -> float:
@@ -2344,9 +1837,10 @@ def render_general_form() -> Dict[str, Any]:
 
     other_fields = [field for field in GENERAL_SCHEMA if field.name not in {"Method", "Device"}]
     device_is_unicorn = device.lower() == "unicorn"
-    cols = form_col.columns(2)
+    ncols = 3 if len(other_fields) > 4 else 2  # denser grid = fewer rows to scroll
+    cols = form_col.columns(ncols)
     for idx, field in enumerate(other_fields):
-        target = cols[idx % 2]
+        target = cols[idx % ncols]
         key = f"general_{field.name}"
         current = general.get(field.name)
         if field.name == "fs" and device_is_unicorn:
@@ -2361,6 +1855,21 @@ def render_general_form() -> Dict[str, Any]:
                 help="UNICORN sampling rate is fixed to 250 Hz.",
                 key=key,
                 disabled=True,
+            )
+        elif field.name == "fs":
+            options = DEVICE_FS_OPTIONS.get(device, field.options or [""]) or [""]
+            if st.session_state.get(key) not in options:
+                st.session_state.pop(key, None)  # previous device's rate may be unavailable here
+            resolved = resolve_choice(options, current)
+            fs_help = field.tooltip or None
+            if device == "ActiCHamp":
+                fs_help = "ActiCHamp-supported rates. An unsupported rate is clamped by the hardware and makes the recording run longer than RecordingTime."
+            value = target.selectbox(
+                field.name,
+                options=options,
+                index=options.index(resolved),
+                help=fs_help,
+                key=key,
             )
         elif field.kind == "dropdown":
             options = field.options or [""]
@@ -2444,9 +1953,10 @@ def render_method_form(method: str) -> Dict[str, Any]:
         return {}
 
     with st.expander(f"{method} parameters", expanded=True):
-        cols = st.columns(2)
+        ncols = 3 if len(schema) > 4 else 2  # denser grid for long method forms (less scrolling)
+        cols = st.columns(ncols)
         for idx, field in enumerate(schema):
-            target = cols[idx % 2]
+            target = cols[idx % ncols]
             key = f"{method}_{field.name}"
             current = method_state.get(field.name)
             if field.kind == "dropdown":
@@ -2540,6 +2050,65 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                     ts_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_ts))
                     st.caption(f"Last read: {ts_str}")
 
+        # Quick setup: fill the standard montage / bulk-toggle active channels without hand-editing.
+        extras_set = set(DEVICE_EXTRA_LABELS.get(device, []))
+        qs = st.columns(3)
+        if qs[0].button("Fill standard positions", key=f"fill_pos_{device}",
+                        help="Set each channel's Position from the device's standard montage and activate it."):
+            preset = DEVICE_POSITION_DEFAULTS.get(device, [])
+            eeg_idx = 0
+            for row in rows:
+                if row["Channel"] in extras_set:
+                    continue
+                if eeg_idx < len(preset):
+                    row["Position"] = preset[eeg_idx]
+                    row["PosX"], row["PosY"] = _channel_default_coords(preset[eeg_idx])
+                row["Active"] = True
+                eeg_idx += 1
+            channel_state[device] = rows
+            _bump_channel_editor_revision(device)
+            st.rerun()
+        if qs[1].button("Activate all", key=f"activate_all_{device}"):
+            for row in rows:
+                row["Active"] = True
+            channel_state[device] = rows
+            _bump_channel_editor_revision(device)
+            st.rerun()
+        if qs[2].button("Deactivate EEG", key=f"deactivate_eeg_{device}",
+                        help="Turn off all EEG channels (Ground/Reference stay on)."):
+            for row in rows:
+                if row["Channel"] not in extras_set:
+                    row["Active"] = False
+            channel_state[device] = rows
+            _bump_channel_editor_revision(device)
+            st.rerun()
+
+        # Reference electrode (#8): designate which EEG channel is the reference. ReferenceChannel is
+        # a 1-based index over the EEG channels (excluding Ground/Reference extras), matching analysis.
+        method = st.session_state.get("general_form", {}).get("Method")
+        method_has_ref = any(f.name == "ReferenceChannel" for f in METHOD_SCHEMAS.get(method, []))
+        eeg_rows = [row for row in rows if row["Channel"] not in extras_set]
+        if method and method_has_ref and eeg_rows:
+            ref_labels = [f"{i + 1}: {row.get('Position') or row['Channel']}" for i, row in enumerate(eeg_rows)]
+            current_ref = st.session_state.get("method_forms", {}).get(method, {}).get("ReferenceChannel")
+            try:
+                cur_idx = int(current_ref) - 1
+            except (TypeError, ValueError):
+                cur_idx = 0
+            cur_idx = cur_idx if 0 <= cur_idx < len(ref_labels) else 0
+            choice = st.selectbox(
+                "Reference electrode",
+                options=list(range(len(ref_labels))),
+                format_func=lambda i: ref_labels[i],
+                index=cur_idx,
+                key=f"ref_electrode_{device}",
+                help="Channel used as the reference (ReferenceChannel) during analysis.",
+            )
+            new_ref = choice + 1
+            if str(new_ref) != str(current_ref):
+                st.session_state.setdefault("method_forms", {}).setdefault(method, {})["ReferenceChannel"] = new_ref
+                st.session_state.pop(f"{method}_ReferenceChannel", None)  # keep the method form in sync
+
         table_col, map_col = st.columns((2, 1))
         with table_col:
             edited = st.data_editor(
@@ -2595,6 +2164,11 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                     pos_x, pos_y = _channel_default_coords(row["Position"])
                     row["PosX"] = pos_x
                     row["PosY"] = pos_y
+                # Keep Model consistent with the chosen electrode type (Rubrik) using electrodes.json:
+                # if the model isn't valid for that type, snap it to the first valid one.
+                models_for_type = ELECTRODE_LIBRARY.get(row.get("Rubrik") or "", [])
+                if models_for_type and row.get("Model") not in models_for_type:
+                    row["Model"] = models_for_type[0]
             channel_state[device] = edited
 
         with map_col:
@@ -2901,6 +2475,31 @@ def current_params_snapshot() -> Optional[Dict[str, Any]]:
         return None
 
 
+def verify_device_connection(params: Dict[str, Any]) -> tuple[bool, str]:
+    """Connect to the configured device and confirm it streams a short window.
+
+    Returns (ok, message). Used as a pre-flight 'first-connect confirm' so a recording
+    isn't started against a device that hasn't actually come up / is still settling.
+    """
+    device = DeviceFactory.create(params)
+    aux = 0
+    if params.get("Device") == "ActiCHamp":
+        aux = int(params.get("Parameters", {}).get("NumberAUXChannels", 0) or 0)
+    try:
+        device.connect()
+        probe_s = 0.5
+        sample = np.asarray(device.acquire(probe_s, aux), dtype=float)
+        if sample.size == 0 or sample.shape[0] == 0:
+            return False, "Connected, but no samples were received (device may still be settling)."
+        eff_fs = sample.shape[0] / probe_s
+        return True, f"Streaming — {sample.shape[1]} channels, ~{eff_fs:.0f} Hz over {probe_s:.1f}s."
+    finally:
+        try:
+            device.disconnect()
+        except Exception:  # pragma: no cover - best-effort cleanup
+            LOGGER.debug("Device disconnect after verify raised", exc_info=True)
+
+
 def export_recording(data: Any, params: Dict[str, Any], out_dir: Path, container: str, raw_format: str) -> Path:
     """Export a recording as BIDS or SBIDS with a Parquet/EDF raw layer. Returns the output folder."""
     from cortipy.shared.bids import BIDSLoader, BIDSLoadResult, _coerce_to_raw_array
@@ -3101,25 +2700,26 @@ def handle_upload(target) -> None:
                 st.session_state["use_imported_data"] = True
                 st.success(f"Attached data from '{data_upload.name}'.")
 
-
 def render_sidebar_controls() -> SidebarControls:
     sidebar = st.sidebar
     sidebar.title("Controls")
 
     with sidebar.container(border=True):
         st.subheader("Measurement")
+
         default_save = st.text_input(
             "Experiment / save directory",
             value=str(DEFAULT_SAVE_DIR),
             help="Folder where run outputs are written. Point it at an existing experiment to continue it.",
         )
-        # Continuity: if this experiment folder already holds sessions, offer to resume its settings
-        # so a new subject can be recorded next day without re-entering every parameter.
+
         exp_dir = Path(default_save).expanduser()
         prior_sessions = list_saved_sessions(exp_dir) if exp_dir.exists() else []
+
         if prior_sessions:
             latest = prior_sessions[0]
             st.caption(f"📁 {len(prior_sessions)} prior session(s) — latest: {latest.name}")
+
             if st.button(
                 "🔁 Continue experiment (load latest settings)",
                 key="continue_experiment",
@@ -3127,6 +2727,7 @@ def render_sidebar_controls() -> SidebarControls:
                 help="Load the most recent session's parameters (not its data) so you can record the next subject.",
             ):
                 params_content, _ = _load_session_contents(latest)
+
                 if params_content:
                     load_params_into_state(normalize_params(params_content))
                     st.session_state["imported_data"] = None
@@ -3137,6 +2738,7 @@ def render_sidebar_controls() -> SidebarControls:
                     st.rerun()
                 else:
                     st.warning("Latest session has no params.json to resume from.")
+
         simulate = st.toggle(
             "Simulate run",
             value=False,
@@ -3145,7 +2747,9 @@ def render_sidebar_controls() -> SidebarControls:
 
     with sidebar.container(border=True):
         st.subheader("Configuration & data")
+
         snapshot = current_params_snapshot()
+
         st.download_button(
             "⬇ Export settings (params.json)",
             data=params_to_json(snapshot) if snapshot else "{}",
@@ -3155,41 +2759,141 @@ def render_sidebar_controls() -> SidebarControls:
             width="stretch",
             help="Download the current method/device/electrode configuration to reuse later.",
         )
+
+        last = st.session_state.get("last_results") or {}
+        can_export = last.get("data") is not None
+
+        st.markdown("**Export recording**")
+
+        exp_cols = st.columns(2)
+
+        export_container = exp_cols[0].selectbox(
+            "Container",
+            ["SBIDS", "BIDS"],
+            key="export_container",
+            disabled=not can_export,
+        )
+
+        export_fmt = exp_cols[1].selectbox(
+            "Raw format",
+            ["Parquet", "EDF"],
+            key="export_raw_format",
+            disabled=not can_export,
+        )
+
+        if st.button(
+            f"⬇ Export as {export_container} + {export_fmt}",
+            disabled=not can_export,
+            width="stretch",
+            key="export_recording_btn",
+        ):
+            try:
+                out = export_recording(
+                    last.get("data"),
+                    last.get("params") or {},
+                    Path(default_save).expanduser(),
+                    export_container,
+                    export_fmt,
+                )
+                st.success(f"Exported {export_container} + {export_fmt} → {out}")
+            except Exception as exc:
+                LOGGER.exception("Recording export failed")
+                st.error(f"Export failed: {exc}")
+
+        if not can_export:
+            st.caption("Run or load a session first to enable recording export.")
+
         handle_upload(st)
+
         imported_data = st.session_state.get("imported_data")
         default_use_imported = st.session_state.get("use_imported_data", False) or bool(imported_data)
+
         use_imported_data = st.checkbox(
             "Use imported data for offline replay",
             value=default_use_imported and imported_data is not None,
             disabled=imported_data is None,
+            key="use_imported_data_checkbox",
         )
+
         st.session_state["use_imported_data"] = use_imported_data and imported_data is not None
 
     with sidebar.container(border=True):
         st.subheader("Live view")
-        live_view_enabled = st.toggle("During measurement", value=True)
+
+        live_view_enabled = st.toggle(
+            "During measurement",
+            value=True,
+            key="live_view_enabled_toggle",
+        )
+
         live_view_window = st.slider(
             "Window (s)",
             min_value=1,
             max_value=60,
             value=5,
             disabled=not live_view_enabled,
+            key="live_view_window_slider",
         )
 
     with sidebar.container(border=True):
         st.subheader("Run")
-        start_button = st.button("Start measurement", type="primary", width="stretch")
 
+        if st.button(
+            "🔌 Test device connection",
+            width="stretch",
+            key="test_device_connection",
+            help="Connect and confirm the device is streaming before starting a recording.",
+        ):
+            snap = current_params_snapshot()
+
+            if snap is None:
+                st.session_state["_device_check"] = ("warn", "Choose a method and device first.")
+            else:
+                with st.spinner("Connecting…"):
+                    try:
+                        ok, msg = verify_device_connection(snap)
+                        st.session_state["_device_check"] = ("ok" if ok else "err", msg)
+                    except Exception as exc:
+                        LOGGER.exception("Device connection test failed")
+                        st.session_state["_device_check"] = ("err", str(exc))
+
+        check = st.session_state.get("_device_check")
+
+        if check:
+            kind, msg = check
+            {"ok": st.success, "warn": st.warning}.get(kind, st.error)(
+                {"ok": "✅ ", "warn": "", "err": "❌ "}.get(kind, "") + msg
+            )
+
+        start_button = st.button(
+            "Start measurement",
+            type="primary",
+            width="stretch",
+            key="start_measurement",
+        )
+
+        st.caption(
+            "Tip: run **Test device connection** first, then Start. "
+            "Use Simulate run above to try without hardware."
+        )
+
+    # ✅ ONLY ONE diagnostics block (FIXED)
     with sidebar.expander("🩺 Diagnostics (logs)", expanded=False):
         st.caption(f"Log file: {LOG_PATH}")
-        st.button("Refresh", key="refresh_logs")  # click triggers a rerun -> re-reads the log
+
+        if st.button("Refresh logs", key="refresh_logs_button"):
+            st.rerun()
+
         log_lines = _tail_log(LOG_PATH, 60)
+
         errs = [ln for ln in log_lines if "[ERROR]" in ln]
         warns = [ln for ln in log_lines if "[WARNING]" in ln]
+
         if errs:
             st.error("Recent errors:\n\n" + "\n".join(errs[-4:]))
         elif warns:
             st.warning("Recent warnings:\n\n" + "\n".join(warns[-4:]))
+
         st.code("\n".join(log_lines) if log_lines else "(log is empty)", language="log")
 
     return SidebarControls(
@@ -3199,7 +2903,6 @@ def render_sidebar_controls() -> SidebarControls:
         live_view_window=int(live_view_window),
         start_button=start_button,
     )
-
 
 def render_footer() -> None:
     st.divider()
@@ -3211,6 +2914,26 @@ def render_footer() -> None:
         "Protect privacy: avoid uploading or storing identifiable participant data. "
         "Keep run folders on secured systems and use anonymized or synthetic data when sharing."
     )
+
+
+def render_workflow_progress(slot, params: Dict[str, Any], validation_issues: List[str]) -> None:
+    """Compact top-of-page checklist guiding the user through a measurement workflow."""
+    parameters = params.get("Parameters", {}) if isinstance(params, dict) else {}
+    participant = (params.get("Metadata", {}) or {}).get("Participant", {}) or {}
+    steps = [
+        ("Method & device", bool(params.get("Method") and params.get("Device"))),
+        ("Sampling rate", bool(parameters.get("fs"))),
+        ("Electrodes", len(params.get("Channels", []) or []) > 0),
+        ("Participant", bool(participant.get("Code"))),
+    ]
+    done = sum(1 for _, ok in steps if ok)
+    ready = not validation_issues
+    with slot:
+        caption = "Ready to run — press Start measurement" if ready else "Complete the required fields to run"
+        st.progress(done / len(steps), text=f"Setup {done}/{len(steps)} · {caption}")
+        cols = st.columns(len(steps))
+        for col, (label, ok) in zip(cols, steps):
+            col.markdown(f"{'✅' if ok else '⬜'} {label}")
 
 
 def main() -> None:
@@ -3245,6 +2968,7 @@ def main() -> None:
     # Elevated run-status + live-view region: measurement feedback renders here at the top of the
     # page (vivid start/end via st.status) instead of at the bottom where the run block executes.
     run_region = st.container()
+    progress_slot = st.container()
 
     general_values = dict(st.session_state["general_form"])
     device_values = dict(st.session_state.setdefault("device_forms", {}).get(general_values.get("Device"), {}))
@@ -3267,6 +2991,7 @@ def main() -> None:
 
     assembled_params = assemble_params(general_values, method_values, participant_values, device_values)
     validation_issues = validate_params(assembled_params)
+    render_workflow_progress(progress_slot, assembled_params, validation_issues)
 
     if page == "Live preview":
         render_live_preview_tab(assembled_params, validation_issues)
