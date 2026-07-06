@@ -88,7 +88,7 @@ class P300Module(ModuleBase):
         referenced = self._apply_reference(params, data)
         if live_ch < 0 or live_ch >= referenced.shape[1]:
             return
-        referenced[:, live_ch] = filter_vep(referenced[:, [live_ch]], self.high_pass_cutoff, fs)
+        referenced[:, live_ch] = filter_vep(referenced[:, [live_ch]], self.high_pass_cutoff, fs).ravel()
 
         triggered = trigger_adc(referenced, fs, trig_idx, self.max_time, edge=param_block.get("edge", "f"))
         segments = seg_sig_fast_p300(triggered, fs, self.max_time, trig_idx)

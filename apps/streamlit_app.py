@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import copy
 import logging
+import re
 import sys
 import time
 from dataclasses import dataclass
@@ -217,6 +218,24 @@ for schema_path in SCHEMA_DIR.glob("*.json"):
 ELECTRODE_LIBRARY: Dict[str, List[str]] = json.loads((SCHEMA_DIR / "electrodes.json").read_text(encoding="utf-8"))
 ELECTRODE_RUBRICS = list(ELECTRODE_LIBRARY.keys())
 ELECTRODE_MODELS = sorted({model for models in ELECTRODE_LIBRARY.values() for model in models})
+
+
+def _valid_electrode_rubrik(value: Any) -> str:
+    rubric = resolve_choice(ELECTRODE_RUBRICS, value)
+    if rubric:
+        return str(rubric)
+    return ELECTRODE_RUBRICS[0] if ELECTRODE_RUBRICS else ""
+
+
+def _model_for_rubrik(rubrik: Any, current: Any = None) -> str:
+    rubric_key = _valid_electrode_rubrik(rubrik)
+    models = ELECTRODE_LIBRARY.get(rubric_key, [])
+    current_text = str(current or "").strip()
+    if current_text in models:
+        return current_text
+    if models:
+        return models[0]
+    return current_text or (ELECTRODE_MODELS[0] if ELECTRODE_MODELS else "")
 
 # Device / montage / field configuration lives in cortipy.ui_streamlit.constants (modularization).
 from cortipy.ui_streamlit.constants import (  # noqa: E402
@@ -497,6 +516,207 @@ def _load_npz_array(source: Union[Path, Any]) -> Optional[np.ndarray]:
             npz.close()
 
 
+def _load_parquet_array(source: Union[Path, Any]) -> Optional[np.ndarray]:
+    try:
+        if hasattr(source, "seek"):
+            source.seek(0)
+        frame = pd.read_parquet(source)
+    except Exception as exc:
+        st.error(f"Failed to load Parquet data: {exc}")
+        return None
+    return frame.to_numpy(dtype=float, copy=False)
+
+
+def _load_uploaded_data_array(uploaded: Any) -> Optional[np.ndarray]:
+    suffix = Path(getattr(uploaded, "name", "")).suffix.lower()
+    if suffix == ".npz":
+        return _load_npz_array(uploaded)
+    if suffix == ".parquet":
+        return _load_parquet_array(uploaded)
+    st.error(f"Unsupported data file type: {suffix or 'unknown'}")
+    return None
+
+
+def _jsonld_value(value: Any) -> Any:
+    if isinstance(value, list):
+        return _jsonld_value(value[0]) if value else None
+    if isinstance(value, dict):
+        if "@value" in value:
+            return value.get("@value")
+        if "@id" in value:
+            return value.get("@id")
+        if "name" in value:
+            return value.get("name")
+        if "schema:name" in value:
+            return _jsonld_value(value.get("schema:name"))
+    return value
+
+
+def _jsonld_types(node: Dict[str, Any]) -> set[str]:
+    raw = node.get("@type") or node.get("type") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    return {str(item).split(":")[-1].lower() for item in raw}
+
+
+def _jsonld_node_id(node: Dict[str, Any]) -> Optional[str]:
+    node_id = node.get("@id") or node.get("id")
+    return str(node_id) if node_id not in (None, "") else None
+
+
+def _duration_seconds(value: Any) -> Optional[float]:
+    raw = str(_jsonld_value(value) or "").strip()
+    if not raw:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        pass
+    match = re.fullmatch(
+        r"P(?:(?P<days>\d+(?:\.\d+)?)D)?(?:T(?:(?P<hours>\d+(?:\.\d+)?)H)?(?:(?P<minutes>\d+(?:\.\d+)?)M)?(?:(?P<seconds>\d+(?:\.\d+)?)S)?)?",
+        raw,
+    )
+    if not match:
+        return None
+    total = 0.0
+    total += float(match.group("days") or 0.0) * 86400.0
+    total += float(match.group("hours") or 0.0) * 3600.0
+    total += float(match.group("minutes") or 0.0) * 60.0
+    total += float(match.group("seconds") or 0.0)
+    return total if total > 0 else None
+
+
+def _additional_property_lookup(node: Dict[str, Any]) -> Dict[str, Any]:
+    props = node.get("schema:additionalProperty") or node.get("additionalProperty") or []
+    if isinstance(props, dict):
+        props = [props]
+    lookup: Dict[str, Any] = {}
+    for prop in props:
+        if not isinstance(prop, dict):
+            continue
+        name = _jsonld_value(prop.get("schema:name") or prop.get("name"))
+        value = _jsonld_value(prop.get("schema:value") or prop.get("value"))
+        if name not in (None, ""):
+            lookup[str(name)] = value
+    return lookup
+
+
+def _params_from_jsonld_doc(doc: Dict[str, Any], file_name: str = "import.jsonld") -> Optional[Dict[str, Any]]:
+    graph = doc.get("@graph") if isinstance(doc, dict) else None
+    nodes = graph if isinstance(graph, list) else [doc]
+    nodes = [node for node in nodes if isinstance(node, dict)]
+    id_map = {_jsonld_node_id(node): node for node in nodes if _jsonld_node_id(node)}
+
+    recording = None
+    for node in nodes:
+        types = _jsonld_types(node)
+        if "createaction" in types or "recording" in types or node.get("schema:result") or node.get("result"):
+            recording = node
+            break
+    recording = recording or (nodes[0] if nodes else {})
+    if not recording:
+        st.error("JSON-LD import did not contain a recording node.")
+        return None
+
+    result_ref = _jsonld_value(recording.get("schema:result") or recording.get("result"))
+    file_node = id_map.get(str(result_ref), {}) if result_ref else {}
+    if not file_node:
+        for node in nodes:
+            types = _jsonld_types(node)
+            if "mediaobject" in types or "digitaldocument" in types or node.get("schema:contentUrl") or node.get("contentUrl"):
+                file_node = node
+                break
+
+    prop_lookup = _additional_property_lookup(recording)
+    prop_lookup.update(_additional_property_lookup(file_node))
+
+    def prop(*names: str) -> Any:
+        for name in names:
+            if name in prop_lookup:
+                return prop_lookup[name]
+            lowered = name.lower()
+            for key, value in prop_lookup.items():
+                if key.lower() == lowered:
+                    return value
+        return None
+
+    fs = coerce_number(prop("SamplingRate", "SamplingFrequency", "sfreq", "sfreq_Hz"))
+    duration = _duration_seconds(recording.get("schema:duration") or recording.get("duration"))
+    n_eeg = coerce_number(prop("NumberEEGChannels", "EEGChannels", "channels"))
+    n_aux = coerce_number(prop("NumberAUXChannels", "AUXChannels"))
+
+    variables = recording.get("schema:variableMeasured") or recording.get("variableMeasured") or []
+    if isinstance(variables, dict):
+        variables = [variables]
+    channels: List[Dict[str, Any]] = []
+    for idx, item in enumerate(variables):
+        if isinstance(item, dict):
+            position = _jsonld_value(item.get("schema:name") or item.get("name")) or f"Ch {idx + 1}"
+            column = _jsonld_value(item.get("columnName")) or position
+            ch_props = _additional_property_lookup(item)
+            active_raw = ch_props.get("Active", True)
+            active = not (active_raw is False or str(active_raw).strip().lower() in {"false", "0", "no"})
+            rubric = _valid_electrode_rubrik(ch_props.get("Rubrik"))
+            model = _model_for_rubrik(rubric, ch_props.get("ElectrodeModel") or ch_props.get("Model"))
+            entry = {
+                "Channel": str(column),
+                "Position": str(position),
+                "Active": active,
+                "Rubrik": rubric,
+                "Model": model,
+            }
+            impedance = coerce_number(item.get("impedance"))
+            if impedance is not None:
+                entry["Impedance"] = impedance
+            channels.append(entry)
+            continue
+        name = _jsonld_value(item) or f"Ch {idx + 1}"
+        channels.append({"Channel": str(name), "Position": str(name), "Active": True})
+    if not channels and n_eeg:
+        channels = [{"Channel": f"Ch {idx + 1}", "Position": f"Ch {idx + 1}", "Active": True} for idx in range(int(n_eeg))]
+
+    subject_ref = _jsonld_value(recording.get("schema:object") or recording.get("object"))
+    subject_code = ""
+    if subject_ref:
+        subject_node = id_map.get(str(subject_ref), {})
+        subject_code = str(
+            _jsonld_value(subject_node.get("schema:identifier") or subject_node.get("identifier"))
+            or str(subject_ref).split("/")[-1]
+        )
+
+    raw_file = _jsonld_value(file_node.get("schema:contentUrl") or file_node.get("contentUrl") or file_node.get("schema:name") or file_node.get("name"))
+    default_method = "Alpha" if "Alpha" in METHOD_SCHEMAS else next(iter(METHOD_SCHEMAS), "")
+    method_raw = _jsonld_value(recording.get("schema:measurementTechnique") or recording.get("measurementTechnique"))
+    method = resolve_choice(list(METHOD_SCHEMAS.keys()), method_raw) if method_raw else default_method
+    parameters = {
+        "fs": fs or 250,
+        "RecordingTime": duration or 0,
+        "NumberEEGChannels": int(n_eeg or len(channels) or 0),
+        "NumberAUXChannels": int(n_aux or 0),
+        "Filename": Path(str(raw_file or file_name)).stem,
+    }
+    for key in (
+        "ReferenceChannel",
+        "TriggerChannel",
+        "LowestFrequency",
+        "HighestFrequency",
+        "Stimulus",
+        "Environment",
+    ):
+        value = prop(key)
+        if value not in (None, "", []):
+            parameters[key] = value
+    params = {
+        "Method": method,
+        "Device": "Offline",
+        "Parameters": parameters,
+        "Channels": channels,
+        "Metadata": {"Participant": {"Code": subject_code}} if subject_code else {},
+        "DataFile": raw_file,
+    }
+    return params
+
+
 def _autoevaluate_if_needed(params: Dict[str, Any], data: Optional[np.ndarray]) -> Dict[str, Any]:
     # If Evaluation already exists (even empty), never auto-run evaluators.
     if "Evaluation" in params:
@@ -700,6 +920,15 @@ def _resolve_aux_channels(params: Dict[str, Any]) -> int:
     if params.get("Device") == "ActiCHamp":
         return int(params.get("Parameters", {}).get("NumberAUXChannels", 0) or 0)
     return 0
+
+
+def _selected_recording_seconds(params: Dict[str, Any]) -> Optional[float]:
+    parameters = params.get("Parameters", {}) if isinstance(params, dict) else {}
+    for key in ("RecordingTime", "recording_time", "Duration", "duration"):
+        value = coerce_number(parameters.get(key))
+        if value is not None and value > 0:
+            return float(value)
+    return None
 
 
 def _plot_live_buffer(
@@ -1103,6 +1332,13 @@ def _plotly_topography(rows: List[Dict[str, Any]]) -> Optional["go.Figure"]:
     return fig
 
 
+def _as_2d_array(chunk: Any) -> np.ndarray:
+    array = np.asarray(chunk, dtype=float)
+    if array.ndim == 1:
+        array = array[:, np.newaxis]
+    return array
+
+
 class LiveViewDevice(DeviceInterface):
     """Device wrapper that mirrors prime/acquire results into a Streamlit live view."""
 
@@ -1118,9 +1354,26 @@ class LiveViewDevice(DeviceInterface):
         self._wrapped.connect()
 
     def acquire(self, duration_seconds: float, aux_channels: int = 0):
-        chunk = self._wrapped.acquire(duration_seconds, aux_channels)
-        self._live_view.push(chunk, self._fs)
-        return chunk
+        total = float(duration_seconds or 0.0)
+        max_step = max(0.1, float(getattr(self._live_view, "max_update_seconds", 0.5)))
+        if total <= max_step:
+            chunk = self._wrapped.acquire(duration_seconds, aux_channels)
+            self._live_view.push(chunk, self._fs)
+            return chunk
+
+        chunks: List[np.ndarray] = []
+        remaining = total
+        while remaining > 1e-9:
+            step = min(max_step, remaining)
+            chunk = self._wrapped.acquire(step, aux_channels)
+            array = _as_2d_array(chunk)
+            if array.size:
+                chunks.append(array)
+            self._live_view.push(array, self._fs)
+            remaining -= step
+        if not chunks:
+            return np.empty((0, 0))
+        return np.vstack(chunks)
 
     def prime(self, duration_seconds: float, aux_channels: int = 0):
         chunk = self._wrapped.prime(duration_seconds, aux_channels)
@@ -1147,35 +1400,64 @@ def _normalize_channel_indices(indices: Optional[List[int]], total_channels: int
 class LiveViewService:
     def __init__(
         self,
-        placeholder: "st.delta_generator.DeltaGenerator",
+        placeholder: Optional["st.delta_generator.DeltaGenerator"],
         window_seconds: float = 5.0,
         channel_indices: Optional[List[int]] = None,
         fft_placeholder: Optional["st.delta_generator.DeltaGenerator"] = None,
+        progress_placeholder: Optional["st.delta_generator.DeltaGenerator"] = None,
+        total_seconds: Optional[float] = None,
+        max_update_seconds: float = 0.5,
     ) -> None:
         self.placeholder = placeholder
         self.fft_placeholder = fft_placeholder
+        self.progress_placeholder = progress_placeholder
         self.window_seconds = max(1.0, float(window_seconds))
         self.channel_indices = channel_indices or []
+        self.total_seconds = float(total_seconds or 0.0)
+        self.max_update_seconds = max(0.1, float(max_update_seconds))
         self.buffer: np.ndarray = np.empty((0, 0))
+        self.samples_seen = 0
 
     def wrap_device(self, device: DeviceInterface, params: Dict[str, Any]) -> LiveViewDevice:
         fs_value = coerce_number(params.get("Parameters", {}).get("fs"))
         fs = float(fs_value) if fs_value else 0.0
-        self.reset()
+        self.reset(clear_progress=False)
         return LiveViewDevice(device, self, fs)
 
-    def reset(self) -> None:
+    def reset(self, *, clear_progress: bool = True) -> None:
         self.buffer = np.empty((0, 0))
+        self.samples_seen = 0
         if self.placeholder is not None:
             self.placeholder.empty()
+        if self.progress_placeholder is not None:
+            if clear_progress:
+                self.progress_placeholder.empty()
+            elif self.total_seconds > 0:
+                self.progress_placeholder.progress(0.0, text=f"Recording 0.0s / {self.total_seconds:.1f}s")
+
+    def mark_complete(self) -> None:
+        if self.progress_placeholder is not None and self.total_seconds > 0:
+            self.progress_placeholder.progress(1.0, text=f"Recording {self.total_seconds:.1f}s / {self.total_seconds:.1f}s")
+
+    def _update_progress(self, fs: float) -> None:
+        if self.progress_placeholder is None:
+            return
+        if self.total_seconds > 0 and fs > 0:
+            elapsed = min(self.total_seconds, self.samples_seen / float(fs))
+            fraction = min(1.0, elapsed / self.total_seconds)
+            self.progress_placeholder.progress(fraction, text=f"Recording {elapsed:.1f}s / {self.total_seconds:.1f}s")
+        elif self.samples_seen:
+            self.progress_placeholder.caption(f"Recorded {self.samples_seen:,} samples.")
 
     def push(self, chunk: Any, fs: float) -> None:
-        if chunk is None or self.placeholder is None:
+        if chunk is None:
             return
-        array = np.asarray(chunk, dtype=float)
-        if array.ndim == 1:
-            array = array[:, np.newaxis]
+        array = _as_2d_array(chunk)
         if array.size == 0:
+            return
+        self.samples_seen += int(array.shape[0])
+        self._update_progress(fs)
+        if self.placeholder is None:
             return
         if self.buffer.size == 0:
             self.buffer = array
@@ -1488,12 +1770,13 @@ def load_params_into_state(params: Dict[str, Any], data_override: Optional[np.nd
             channel_name = ch.get("Channel") or ch.get("Label") or ch.get("name")
             if not channel_name:
                 continue
+            rubric = _valid_electrode_rubrik(ch.get("Rubrik") or ch.get("Rubric"))
             imported_rows.append(
                 {
                     "Channel": channel_name,
                     "Position": ch.get("Position") or channel_name.replace(" ", ""),
-                    "Rubrik": ch.get("Rubrik") or ch.get("Rubric") or (ELECTRODE_RUBRICS[0] if ELECTRODE_RUBRICS else ""),
-                    "Model": ch.get("Model") or (ELECTRODE_MODELS[0] if ELECTRODE_MODELS else ""),
+                    "Rubrik": rubric,
+                    "Model": _model_for_rubrik(rubric, ch.get("Model")),
                     "Impedance": coerce_number(ch.get("Impedance")) or 0.0,
                     "PosX": coerce_number(ch.get("PosX")),
                     "PosY": coerce_number(ch.get("PosY")),
@@ -1592,8 +1875,8 @@ def _render_live_preview_frame(
         _plot_individual_channels(buf, fs, channel_placeholders, indices or [])
 
 
-def _fetch_actichamp_impedances(fs_value: Any) -> None:
-    if st.session_state.get("_actichamp_impedance_loaded"):
+def _fetch_actichamp_impedances(fs_value: Any, *, force: bool = False) -> None:
+    if st.session_state.get("_actichamp_impedance_loaded") and not force:
         return
 
     fs = coerce_number(fs_value)
@@ -1984,7 +2267,7 @@ def ensure_channel_rows(device: str, existing: Optional[List[Dict[str, Any]]] = 
 
     def base_row(label: str, is_extra: bool, index: Optional[int] = None) -> Dict[str, Any]:
         default_rubric = ELECTRODE_RUBRICS[0] if ELECTRODE_RUBRICS else ""
-        default_model = ELECTRODE_LIBRARY.get(default_rubric, ["Unknown"])[0] if ELECTRODE_RUBRICS else ""
+        default_model = _model_for_rubrik(default_rubric)
         position_label = label.replace(" ", "")
         if index is not None and index < len(default_positions):
             position_label = default_positions[index]
@@ -2005,11 +2288,15 @@ def ensure_channel_rows(device: str, existing: Optional[List[Dict[str, Any]]] = 
     for label in extras:
         row = existing_map.get(label, base_row(label, True))
         row["Active"] = True
+        row["Rubrik"] = _valid_electrode_rubrik(row.get("Rubrik") or row.get("Rubric"))
+        row["Model"] = _model_for_rubrik(row.get("Rubrik"), row.get("Model"))
         rows.append(row)
 
     for idx in range(base_count):
         label = f"Ch {idx + 1}"
         row = existing_map.get(label, base_row(label, False, idx))
+        row["Rubrik"] = _valid_electrode_rubrik(row.get("Rubrik") or row.get("Rubric"))
+        row["Model"] = _model_for_rubrik(row.get("Rubrik"), row.get("Model"))
         rows.append(row)
 
     return rows
@@ -2049,6 +2336,28 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 if last_ts:
                     ts_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_ts))
                     st.caption(f"Last read: {ts_str}")
+            auto_cols = st.columns([1, 1, 2])
+            continuous_impedance = auto_cols[0].toggle(
+                "Continuous impedance refresh",
+                value=bool(st.session_state.get("_actichamp_impedance_auto", False)),
+                key="_actichamp_impedance_auto",
+            )
+            refresh_interval = auto_cols[1].number_input(
+                "Refresh interval (s)",
+                min_value=2,
+                max_value=60,
+                value=int(st.session_state.get("_actichamp_impedance_interval", 5) or 5),
+                step=1,
+                key="_actichamp_impedance_interval",
+                disabled=not continuous_impedance,
+            )
+            if continuous_impedance:
+                now = time.time()
+                if not last_ts or now - float(last_ts) >= float(refresh_interval):
+                    _fetch_actichamp_impedances(fs_value, force=True)
+                    rows = st.session_state["channel_tables"].get("ActiCHamp", rows)
+                    editor_revision = int(st.session_state["_channel_editor_revision"].get(device, 0))
+                auto_cols[2].caption("Updates whenever Streamlit reruns while the toggle is enabled.")
 
         # Quick setup: fill the standard montage / bulk-toggle active channels without hand-editing.
         extras_set = set(DEVICE_EXTRA_LABELS.get(device, []))
@@ -2128,7 +2437,12 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                         options=ELECTRODE_RUBRICS,
                         width="medium",
                     ),
-                    "Model": st.column_config.SelectboxColumn("Model", options=ELECTRODE_MODELS, width="large"),
+                    "Model": st.column_config.TextColumn(
+                        "Model",
+                        width="large",
+                        disabled=True,
+                        help="Automatically selected from the electrode type (Rubrik).",
+                    ),
                     "Impedance": st.column_config.NumberColumn(
                         "Impedance (kΩ)",
                         min_value=0.0,
@@ -2155,6 +2469,7 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 },
             )
             extras = set(DEVICE_EXTRA_LABELS.get(device, []))
+            corrected_model = False
             for row in edited:
                 if row["Channel"] in extras:
                     row["Active"] = True
@@ -2166,12 +2481,15 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                     pos_x, pos_y = _channel_default_coords(row["Position"])
                 row["PosX"] = float(pos_x)
                 row["PosY"] = float(pos_y)
-                # Keep Model consistent with the chosen electrode type (Rubrik) using electrodes.json:
-                # if the model isn't valid for that type, snap it to the first valid one.
-                models_for_type = ELECTRODE_LIBRARY.get(row.get("Rubrik") or "", [])
-                if models_for_type and row.get("Model") not in models_for_type:
-                    row["Model"] = models_for_type[0]
+                row["Rubrik"] = _valid_electrode_rubrik(row.get("Rubrik") or row.get("Rubric"))
+                next_model = _model_for_rubrik(row["Rubrik"], row.get("Model"))
+                if row.get("Model") != next_model:
+                    corrected_model = True
+                row["Model"] = next_model
             channel_state[device] = edited
+            if corrected_model:
+                _bump_channel_editor_revision(device)
+                st.rerun()
 
         with map_col:
             st.caption("Scalp map")
@@ -2361,11 +2679,12 @@ def build_channels(device: str) -> List[Dict[str, Any]]:
         if not channel_name:
             continue
         is_active = bool(row.get("Active")) or channel_name in extras
+        rubric = _valid_electrode_rubrik(row.get("Rubrik") or row.get("Rubric"))
         entry = {
             "Channel": channel_name,
             "Position": row.get("Position") or channel_name.replace(" ", ""),
-            "Rubrik": row.get("Rubrik") or row.get("Rubric") or (ELECTRODE_RUBRICS[0] if ELECTRODE_RUBRICS else ""),
-            "Model": row.get("Model") or (ELECTRODE_MODELS[0] if ELECTRODE_MODELS else ""),
+            "Rubrik": rubric,
+            "Model": _model_for_rubrik(rubric, row.get("Model")),
             "Impedance": coerce_number(row.get("Impedance")),
             "Active": bool(is_active),
         }
@@ -2437,6 +2756,8 @@ def validate_params(params: Dict[str, Any]) -> List[str]:
         issues.append("Device must be selected.")
     if "fs" not in parameters or not parameters["fs"]:
         issues.append("Sampling rate (fs) is required.")
+    if not _has_active_eeg_channels(params):
+        issues.append("Select at least one EEG channel.")
     if (device.lower() if device else "") not in {"actichamp", "unicorn", "lsl", "offline", "dummy"}:
         issues.append(f"Device '{device}' is not yet supported by the Python pipeline.")
     if device and device.lower() == "unicorn":
@@ -2490,11 +2811,13 @@ def verify_device_connection(params: Dict[str, Any]) -> tuple[bool, str]:
     try:
         device.connect()
         probe_s = 0.5
-        sample = np.asarray(device.acquire(probe_s, aux), dtype=float)
+        sample = _as_2d_array(device.acquire(probe_s, aux))
         if sample.size == 0 or sample.shape[0] == 0:
             return False, "Connected, but no samples were received (device may still be settling)."
         eff_fs = sample.shape[0] / probe_s
-        return True, f"Streaming — {sample.shape[1]} channels, ~{eff_fs:.0f} Hz over {probe_s:.1f}s."
+        selected_s = _selected_recording_seconds(params)
+        selected_text = f"Selected recording: {selected_s:.0f}s" if selected_s else "Selected recording length not set"
+        return True, f"Streaming - {sample.shape[1]} channels, ~{eff_fs:.0f} Hz. {selected_text} (probe {probe_s:.1f}s)."
     finally:
         try:
             device.disconnect()
@@ -2669,14 +2992,15 @@ def render_saved_sessions(base_dir: Path) -> tuple[Optional[tuple[str, Dict[str,
 def handle_upload(target) -> None:
     with target.expander("Import config / params", expanded=False):
         uploaded = st.file_uploader(
-            "Load JSON/TOML config or params.json",
-            type=["json", "toml", "tml"],
+            "Load JSON/TOML config, params.json, or SBIDS JSON-LD",
+            type=["json", "jsonld", "toml", "tml"],
             key="config_uploader",
         )
         data_upload = st.file_uploader(
-            "Attach data file (.npz)",
-            type=["npz"],
-            key="data_uploader",
+            "Attach data file(s): .npz, .parquet, or JSON-LD + raw file",
+            type=["npz", "parquet", "jsonld"],
+            accept_multiple_files=True,
+            key="data_uploader_v2",
         )
 
         if uploaded:
@@ -2685,22 +3009,43 @@ def handle_upload(target) -> None:
             try:
                 if suffix in {".toml", ".tml"}:
                     config = tomllib.loads(config_bytes.decode("utf-8"))
+                    params = normalize_params(config)
+                elif suffix == ".jsonld":
+                    config = json.loads(config_bytes.decode("utf-8"))
+                    params = _params_from_jsonld_doc(config, uploaded.name)
+                    if params is None:
+                        return
                 else:
                     config = json.loads(config_bytes.decode("utf-8"))
+                    params = normalize_params(config)
             except Exception as exc:  # pragma: no cover
                 st.error(f"Failed to parse uploaded config: {exc}")
             else:
-                params = normalize_params(config)
                 load_params_into_state(params)
                 st.session_state["_flash"] = f"Imported parameters from '{uploaded.name}'."
                 st.rerun()
 
         if data_upload:
-            data_array = _load_npz_array(data_upload)
+            uploads = list(data_upload) if isinstance(data_upload, list) else [data_upload]
+            jsonld_upload = next((item for item in uploads if Path(item.name).suffix.lower() == ".jsonld"), None)
+            data_file = next((item for item in uploads if Path(item.name).suffix.lower() in {".npz", ".parquet"}), None)
+            params_from_jsonld: Optional[Dict[str, Any]] = None
+            if jsonld_upload is not None:
+                try:
+                    jsonld_upload.seek(0)
+                    params_from_jsonld = _params_from_jsonld_doc(json.loads(jsonld_upload.read().decode("utf-8")), jsonld_upload.name)
+                except Exception as exc:  # pragma: no cover
+                    st.error(f"Failed to parse uploaded JSON-LD: {exc}")
+                    params_from_jsonld = None
+            data_array = _load_uploaded_data_array(data_file) if data_file is not None else None
             if data_array is not None:
                 st.session_state["imported_data"] = data_array
                 st.session_state["use_imported_data"] = True
-                st.success(f"Attached data from '{data_upload.name}'.")
+                st.success(f"Attached data from '{data_file.name}'.")
+            if params_from_jsonld is not None:
+                load_params_into_state(params_from_jsonld, data_array)
+                st.session_state["_flash"] = f"Imported SBIDS metadata from '{jsonld_upload.name}'."
+                st.rerun()
 
 def render_sidebar_controls() -> SidebarControls:
     sidebar = st.sidebar
@@ -2918,6 +3263,18 @@ def render_footer() -> None:
     )
 
 
+def _has_active_eeg_channels(params: Dict[str, Any]) -> bool:
+    device = str(params.get("Device") or "")
+    extras = {name.lower() for name in DEVICE_EXTRA_LABELS.get(device, [])}
+    for channel in params.get("Channels", []) or []:
+        if not isinstance(channel, dict):
+            continue
+        name = str(channel.get("Channel") or channel.get("Label") or "").lower()
+        if name and name not in extras and bool(channel.get("Active", True)):
+            return True
+    return False
+
+
 def render_workflow_progress(slot, params: Dict[str, Any], validation_issues: List[str]) -> None:
     """Compact top-of-page checklist guiding the user through a measurement workflow."""
     parameters = params.get("Parameters", {}) if isinstance(params, dict) else {}
@@ -2925,7 +3282,7 @@ def render_workflow_progress(slot, params: Dict[str, Any], validation_issues: Li
     steps = [
         ("Method & device", bool(params.get("Method") and params.get("Device"))),
         ("Sampling rate", bool(parameters.get("fs"))),
-        ("Electrodes", len(params.get("Channels", []) or []) > 0),
+        ("Electrodes", _has_active_eeg_channels(params)),
         ("Participant", bool(participant.get("Code"))),
     ]
     done = sum(1 for _, ok in steps if ok)
@@ -3027,7 +3384,11 @@ def main() -> None:
             st.caption("Using imported data with current parameters.")
 
         if chart_label and chart_params is not None:
-            render_chart_section(chart_label, chart_params, chart_data)
+            try:
+                render_chart_section(chart_label, chart_params, chart_data)
+            except Exception as exc:  # pragma: no cover
+                LOGGER.exception("Charts tab failed")
+                st.error(f"Charts failed: {exc}")
         else:
             st.info("Run a measurement or load a saved session to see charts.")
 
@@ -3035,9 +3396,17 @@ def main() -> None:
         primary_payload, compare_payloads = render_saved_sessions(Path(default_save).expanduser())
         if primary_payload:
             label, params_loaded, data_loaded = primary_payload
-            render_chart_section(label, params_loaded, data_loaded)
+            try:
+                render_chart_section(label, params_loaded, data_loaded)
+            except Exception as exc:  # pragma: no cover
+                LOGGER.exception("Saved-session charts failed")
+                st.error(f"Charts failed: {exc}")
         if compare_payloads:
-            render_comparison_charts(compare_payloads)
+            try:
+                render_comparison_charts(compare_payloads)
+            except Exception as exc:  # pragma: no cover
+                LOGGER.exception("Comparison charts failed")
+                st.error(f"Comparison charts failed: {exc}")
 
     if start_button:
         if validation_issues:
@@ -3068,14 +3437,17 @@ def main() -> None:
         # Position the live view inside the elevated top region (recreated each run).
         st.session_state["_live_view_placeholder"] = None
         with run_region, st.status("🔴 Measurement running…", expanded=True) as run_status:
-            live_view_service: Optional[LiveViewService] = None
+            progress_placeholder = st.empty()
+            live_view_service = LiveViewService(
+                get_live_view_placeholder() if live_view_enabled else None,
+                window_seconds=float(live_view_window),
+                channel_indices=selected_indices,
+                fft_placeholder=st.session_state.get("_live_preview_fft_placeholder") if live_view_enabled else None,
+                progress_placeholder=progress_placeholder,
+                total_seconds=_selected_recording_seconds(params_to_run),
+                max_update_seconds=0.5,
+            )
             if live_view_enabled:
-                live_view_service = LiveViewService(
-                    get_live_view_placeholder(),
-                    window_seconds=float(live_view_window),
-                    channel_indices=selected_indices,
-                    fft_placeholder=st.session_state.get("_live_preview_fft_placeholder"),
-                )
                 st.session_state["_live_view_active"] = True
                 st.session_state["_live_view_banner"] = "Measurement running: live EEG and FFT updating below."
             try:
@@ -3091,6 +3463,7 @@ def main() -> None:
                         "params": params_to_run,
                         "data": params_to_run.get("data"),
                     }
+                    live_view_service.mark_complete()
                     run_status.update(label="✅ Simulated data saved — open the Charts tab", state="complete")
                 else:
                     imported_data = st.session_state.get("imported_data")
@@ -3108,6 +3481,7 @@ def main() -> None:
                             "params": run_params,
                             "data": run_params.get("data"),
                         }
+                        live_view_service.mark_complete()
                         run_status.update(label="✅ Measurement finished and saved — open the Charts tab", state="complete")
             except Exception as exc:  # pragma: no cover
                 LOGGER.exception("Measurement failed")
@@ -3116,8 +3490,6 @@ def main() -> None:
             finally:
                 st.session_state["_live_view_active"] = False
                 st.session_state["_live_view_banner"] = None
-                if live_view_service is not None:
-                    live_view_service.reset()
 
     render_footer()
 
