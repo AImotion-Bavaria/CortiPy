@@ -1591,11 +1591,12 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
         st.success(f"Stopped live preview after capturing {buffer.shape[0]} samples.")
 
 
-def render_participant_form(*, compact: bool = False) -> Dict[str, Any]:
+def render_participant_form() -> Dict[str, Any]:
     participant = st.session_state["participant"]
     with st.expander("Participant / proband information", expanded=True):
-        if compact:
-            cols = st.columns([1.2, 0.9, 0.55])
+        form_col, viz_col = st.columns((5, 1))
+        with form_col:
+            cols = form_col.columns([1.25, 1.0, 0.65, 1.0, 1.0])
             participant["Code"] = cols[0].text_input(
                 "Participant code", value=participant.get("Code", ""), placeholder="e.g. VEP_023"
             )
@@ -1605,41 +1606,18 @@ def render_participant_form(*, compact: bool = False) -> Dict[str, Any]:
             participant["Age"] = cols[2].number_input("Age", min_value=0, max_value=110, value=age_default)
             gender_value = resolve_choice(GENDER_OPTIONS, participant.get("Gender"))
             hand_value = resolve_choice(HANDEDNESS_OPTIONS, participant.get("DominantHand"))
-            cols = st.columns(2)
-            participant["Gender"] = cols[0].selectbox(
+            participant["Gender"] = cols[3].selectbox(
                 "Gender", options=GENDER_OPTIONS, index=GENDER_OPTIONS.index(gender_value)
             )
-            participant["DominantHand"] = cols[1].selectbox(
+            participant["DominantHand"] = cols[4].selectbox(
                 "Dominant hand", options=HANDEDNESS_OPTIONS, index=HANDEDNESS_OPTIONS.index(hand_value)
             )
-            notes_col, _ = st.columns([2, 1])
+            notes_col, _ = form_col.columns([3, 1])
             participant["Notes"] = notes_col.text_area("Session notes", value=participant.get("Notes", ""), height=80)
-            _render_participant_card(participant)
-        else:
-            form_col, viz_col = st.columns((5, 1))
-            with form_col:
-                cols = form_col.columns([1.25, 1.0, 0.65, 1.0, 1.0])
-                participant["Code"] = cols[0].text_input(
-                    "Participant code", value=participant.get("Code", ""), placeholder="e.g. VEP_023"
-                )
-                participant["Initials"] = cols[1].text_input("Initials", value=participant.get("Initials", ""))
-                age_number = coerce_number(participant.get("Age"))
-                age_default = int(age_number) if isinstance(age_number, (int, float)) and age_number > 0 else 0
-                participant["Age"] = cols[2].number_input("Age", min_value=0, max_value=110, value=age_default)
-                gender_value = resolve_choice(GENDER_OPTIONS, participant.get("Gender"))
-                hand_value = resolve_choice(HANDEDNESS_OPTIONS, participant.get("DominantHand"))
-                participant["Gender"] = cols[3].selectbox(
-                    "Gender", options=GENDER_OPTIONS, index=GENDER_OPTIONS.index(gender_value)
-                )
-                participant["DominantHand"] = cols[4].selectbox(
-                    "Dominant hand", options=HANDEDNESS_OPTIONS, index=HANDEDNESS_OPTIONS.index(hand_value)
-                )
-                notes_col, _ = form_col.columns([3, 1])
-                participant["Notes"] = notes_col.text_area("Session notes", value=participant.get("Notes", ""), height=80)
-            with viz_col:
-                spacer_col, snap_col = viz_col.columns([1, 5])
-                with snap_col:
-                    _render_participant_card(participant)
+        with viz_col:
+            spacer_col, snap_col = viz_col.columns([1, 5])
+            with snap_col:
+                _render_participant_card(participant)
     return dict(participant)
 
 
@@ -2471,12 +2449,12 @@ def main() -> None:
 
     if page == "Session configuration":
         general_values = render_general_form()
-        method_values = render_method_form(general_values["Method"])
-        device_col, participant_col = st.columns(2)
+        method_col, device_col = st.columns(2)
+        with method_col:
+            method_values = render_method_form(general_values["Method"])
         with device_col:
             device_values = render_device_config(general_values["Device"])
-        with participant_col:
-            participant_values = render_participant_form(compact=True)
+        participant_values = render_participant_form()
 
     if page == "Electrodes":
         render_channel_editor(general_values["Device"])
