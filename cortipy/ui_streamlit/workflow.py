@@ -17,6 +17,15 @@ WORKFLOW_READINESS_ITEMS = (
     ("has_data", "Recorded data"),
 )
 
+CORTIPY_CAPABILITIES = (
+    "Configure EEG methods, devices, timing, and participants",
+    "Edit electrodes, 10-20 positions, rubrics, models, and impedance",
+    "Preview live EEG, FFT, and per-channel windows during setup",
+    "Run hardware, simulated, or imported-data sessions",
+    "Reopen saved sessions and compare chart outputs",
+    "Export JSON-LD or BIDS with Parquet/EDF raw data",
+)
+
 
 def has_active_eeg_channels(params: Dict[str, Any]) -> bool:
     device = str(params.get("Device") or "")
@@ -258,6 +267,31 @@ def _render_check_grid(items: List[tuple[str, bool]]) -> None:
     )
 
 
+def _render_capability_panel() -> None:
+    cells = []
+    for label in CORTIPY_CAPABILITIES:
+        cells.append(
+            "<div style='display:flex;align-items:flex-start;gap:0.5rem;'>"
+            "<span style='color:#0d9488;font-weight:900;line-height:1.35;'>&#10003;</span>"
+            f"<span style='font-size:0.94rem;line-height:1.35;color:#1f2937;'>{html.escape(label)}</span>"
+            "</div>"
+        )
+    st.markdown(
+        (
+            "<div style='border:1px solid #5eead4;border-left:6px solid #0d9488;"
+            "border-radius:10px;background:#ecfdf5;padding:1.1rem 1.16rem;margin-bottom:1rem;'>"
+            "<div style='color:#047857;font-size:0.76rem;font-weight:850;text-transform:uppercase;'>"
+            "CortiPy command center</div>"
+            "<div style='color:#111827;font-size:1.25rem;font-weight:820;line-height:1.25;margin-top:0.16rem;'>"
+            "What CortiPy can do</div>"
+            "<div style='display:grid;grid-template-columns:repeat(2,minmax(0,1fr));"
+            "column-gap:1.3rem;row-gap:0.7rem;margin-top:0.85rem;'>"
+            f"{''.join(cells)}</div></div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
 def _phase_card(
     index: int,
     title: str,
@@ -299,24 +333,24 @@ def render_workflow_page(
 
     top_left, top_right = st.columns([1.9, 1])
     with top_left:
-        with st.container(border=True):
-            _render_workflow_banner("Next best action", next_title, next_body, next_status, min_height="7.4rem")
-            action_cols = st.columns([1.15, 0.85])
-            action_cols[0].button(
-                f"Open {next_page}",
-                type="primary",
-                width="stretch",
-                key=next_key,
-                on_click=set_active_view,
-                args=(next_page,),
-            )
-            action_cols[1].button(
-                f"Open {secondary_page}",
-                width="stretch",
-                key=f"{next_key}_secondary",
-                on_click=set_active_view,
-                args=(secondary_page,),
-            )
+        _render_capability_panel()
+        _render_workflow_banner("Next best action", next_title, next_body, next_status, min_height="5.5rem")
+        action_cols = st.columns([1.15, 0.85])
+        action_cols[0].button(
+            f"Open {next_page}",
+            type="primary",
+            width="stretch",
+            key=next_key,
+            on_click=set_active_view,
+            args=(next_page,),
+        )
+        action_cols[1].button(
+            f"Open {secondary_page}",
+            width="stretch",
+            key=f"{next_key}_secondary",
+            on_click=set_active_view,
+            args=(secondary_page,),
+        )
     with top_right:
         with st.container(border=True):
             _render_workflow_banner(
