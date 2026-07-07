@@ -38,6 +38,9 @@ class DeviceLike(Protocol):
     def prime(self, duration_seconds: float, aux_channels: int = 0) -> DeviceChunk:
         ...
 
+    def prepare_for_recording(self) -> None:
+        ...
+
 
 class DeviceInterface(DeviceLike, ABC):
     """Contract that hardware adapters must implement."""
@@ -66,6 +69,10 @@ class DeviceInterface(DeviceLike, ABC):
     def prime(self, duration_seconds: float, aux_channels: int = 0) -> DeviceChunk:
         """Optional warm-up acquisition that defaults to ``acquire``."""
         return self.acquire(duration_seconds, aux_channels)
+
+    def prepare_for_recording(self) -> None:
+        """Drop stale buffered samples immediately before a real recording starts."""
+        return None
 
     def close(self) -> None:
         """Compatibility shim for contexts expecting a ``close`` method."""

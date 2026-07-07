@@ -107,6 +107,10 @@ class UnicornDevice(DeviceInterface):
             finally:
                 self._serial = None
 
+    def prepare_for_recording(self) -> None:
+        if self._serial is not None:
+            self._serial.reset_input_buffer()
+
     # ------------------------------------------------------------------
     def _read_exact(self, size: int) -> bytes:
         """Read exactly ``size`` bytes from the serial port or raise."""

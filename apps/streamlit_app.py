@@ -89,7 +89,7 @@ def _tail_log(path: Path, n: int = 60) -> List[str]:
 
 from cortipy import MeasurementPipeline  # noqa: E402
 from cortipy.core.pipeline import PipelineHooks  # noqa: E402
-from cortipy.devices import DeviceFactory  # noqa: E402
+from cortipy.devices import DeviceFactory, DeviceInterface  # noqa: E402
 from cortipy.ui import SaveManager, normalize_params  # noqa: E402
 from cortipy.ui_streamlit.styles import inject_global_styles  # noqa: E402
 
@@ -130,6 +130,7 @@ from cortipy.ui_streamlit.live import (  # noqa: E402
     _plot_individual_channels,
     _plot_live_buffer,
     _reset_plot_window_open_state,
+    _resolve_aux_channels,
     _selected_recording_seconds,
     run_live_preview,
 )
@@ -1712,31 +1713,89 @@ def current_params_snapshot() -> Optional[Dict[str, Any]]:
         return None
 
 
+def _connection_signature(params: Dict[str, Any]) -> str:
+    payload = dict(params)
+    payload.pop("data", None)
+    payload.pop("Evaluation", None)
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        default=lambda obj: obj.tolist() if isinstance(obj, np.ndarray) else str(obj),
+    )
+
+
+def _disconnect_session_device() -> None:
+    device = st.session_state.pop("_connected_device", None)
+    st.session_state.pop("_connected_device_signature", None)
+    if device is not None:
+        try:
+            device.disconnect()
+        except Exception:
+            LOGGER.debug("Disconnecting cached device raised", exc_info=True)
+
+
+def _session_device_ready(params: Optional[Dict[str, Any]]) -> bool:
+    if params is None:
+        return False
+    return (
+        st.session_state.get("_connected_device") is not None
+        and st.session_state.get("_connected_device_signature") == _connection_signature(params)
+    )
+
+
+def _requires_device_connection(
+    params: Optional[Dict[str, Any]],
+    *,
+    simulate: bool,
+    use_imported_data: bool,
+    imported_data: Optional[np.ndarray],
+) -> bool:
+    if params is None or simulate:
+        return False
+    if use_imported_data and imported_data is not None:
+        return False
+    device = str(params.get("Device") or "").strip().lower()
+    return device not in {"offline", "file"}
+
+
+def connect_device_for_run(params: Dict[str, Any]) -> tuple[DeviceInterface, str]:
+    """Connect to the configured device, probe a short window, and keep it ready."""
+    device = DeviceFactory.create(params)
+    aux = _resolve_aux_channels(params)
+    probe_s = 0.5
+    try:
+        device.connect()
+        sample = _as_2d_array(device.acquire(probe_s, aux))
+        if sample.size == 0 or sample.shape[0] == 0:
+            raise RuntimeError("Connected, but no samples were received (device may still be settling).")
+        eff_fs = sample.shape[0] / probe_s
+        selected_s = _selected_recording_seconds(params)
+        selected_text = f"Selected recording: {selected_s:.0f}s" if selected_s else "Selected recording length not set"
+        return device, f"Streaming - {sample.shape[1]} channels, ~{eff_fs:.0f} Hz. {selected_text}."
+    except Exception:
+        try:
+            device.disconnect()
+        except Exception:
+            LOGGER.debug("Device disconnect after failed connect raised", exc_info=True)
+        raise
+
+
 def verify_device_connection(params: Dict[str, Any]) -> tuple[bool, str]:
     """Connect to the configured device and confirm it streams a short window.
 
     Returns (ok, message). Used as a pre-flight 'first-connect confirm' so a recording
     isn't started against a device that hasn't actually come up / is still settling.
     """
-    device = DeviceFactory.create(params)
-    aux = 0
-    if params.get("Device") == "ActiCHamp":
-        aux = int(params.get("Parameters", {}).get("NumberAUXChannels", 0) or 0)
+    device: Optional[DeviceInterface] = None
     try:
-        device.connect()
-        probe_s = 0.5
-        sample = _as_2d_array(device.acquire(probe_s, aux))
-        if sample.size == 0 or sample.shape[0] == 0:
-            return False, "Connected, but no samples were received (device may still be settling)."
-        eff_fs = sample.shape[0] / probe_s
-        selected_s = _selected_recording_seconds(params)
-        selected_text = f"Selected recording: {selected_s:.0f}s" if selected_s else "Selected recording length not set"
-        return True, f"Streaming - {sample.shape[1]} channels, ~{eff_fs:.0f} Hz. {selected_text} (probe {probe_s:.1f}s)."
+        device, msg = connect_device_for_run(params)
+        return True, msg
     finally:
-        try:
-            device.disconnect()
-        except Exception:  # pragma: no cover - best-effort cleanup
-            LOGGER.debug("Device disconnect after verify raised", exc_info=True)
+        if device is not None:
+            try:
+                device.disconnect()
+            except Exception:  # pragma: no cover - best-effort cleanup
+                LOGGER.debug("Device disconnect after verify raised", exc_info=True)
 
 
 def export_recording(data: Any, params: Dict[str, Any], out_dir: Path, container: str, raw_format: str) -> Path:
@@ -1803,6 +1862,7 @@ def run_pipeline_once(
     params: Dict[str, Any],
     save_dir: Path,
     live_view: Optional[LiveViewService] = None,
+    connected_device: Optional[DeviceInterface] = None,
 ) -> tuple[Dict[str, Any], Optional[Path]]:
     saver = SaveManager(save_dir)
     provider_called = {"done": False}
@@ -1822,6 +1882,11 @@ def run_pipeline_once(
     def attach_context(context):
         if live_view is not None:
             context.attach_service("live_view", live_view)
+        if connected_device is not None:
+            if live_view is not None:
+                context.device = live_view.wrap_device(connected_device, context.params)
+            else:
+                context.device = connected_device
 
     hooks = PipelineHooks(
         params_provider=provider,
@@ -2112,24 +2177,46 @@ def render_sidebar_controls() -> SidebarControls:
 
     with sidebar.container(border=True):
         st.subheader("Run")
+        snap = current_params_snapshot()
+        imported_data = st.session_state.get("imported_data")
+        use_imported = st.session_state.get("use_imported_data", False)
+        connection_required = _requires_device_connection(
+            snap,
+            simulate=simulate,
+            use_imported_data=use_imported,
+            imported_data=imported_data,
+        )
+
+        if not connection_required and st.session_state.get("_connected_device") is not None:
+            _disconnect_session_device()
+            st.session_state["_device_check"] = (
+                "warn",
+                "Hardware connection released because this mode does not require it.",
+            )
+        connected_device_cached = st.session_state.get("_connected_device") is not None
+        if snap is not None and connected_device_cached and not _session_device_ready(snap):
+            _disconnect_session_device()
+            st.session_state["_device_check"] = ("warn", "Configuration changed. Connect the device again before starting.")
 
         if st.button(
-            "Test device connection",
+            "Connect device",
             width="stretch",
             key="test_device_connection",
-            help="Connect and confirm the device is streaming before starting a recording.",
+            disabled=snap is None or not connection_required,
+            help="Connect, probe, and keep the device ready so Start begins without another connection handshake.",
         ):
-            snap = current_params_snapshot()
-
             if snap is None:
                 st.session_state["_device_check"] = ("warn", "Choose a method and device first.")
             else:
+                _disconnect_session_device()
                 with st.spinner("Connecting..."):
                     try:
-                        ok, msg = verify_device_connection(snap)
-                        st.session_state["_device_check"] = ("ok" if ok else "err", msg)
+                        device, msg = connect_device_for_run(snap)
+                        st.session_state["_connected_device"] = device
+                        st.session_state["_connected_device_signature"] = _connection_signature(snap)
+                        st.session_state["_device_check"] = ("ok", f"{msg} Ready to start.")
                     except Exception as exc:
-                        LOGGER.exception("Device connection test failed")
+                        LOGGER.exception("Device connection failed")
                         st.session_state["_device_check"] = ("err", str(exc))
 
         check = st.session_state.get("_device_check")
@@ -2140,17 +2227,23 @@ def render_sidebar_controls() -> SidebarControls:
                 {"ok": "[ok] ", "warn": "", "err": "[error] "}.get(kind, "") + msg
             )
 
+        connection_ready = _session_device_ready(snap)
+        start_disabled = snap is None or (connection_required and not connection_ready)
         start_button = st.button(
             "Start measurement",
             type="primary",
             width="stretch",
             key="start_measurement",
+            disabled=start_disabled,
         )
 
-        st.caption(
-            "Tip: run **Test device connection** first, then Start. "
-            "Use Simulate run above to try without hardware."
-        )
+        if connection_required:
+            if connection_ready:
+                st.caption("Device is connected. Start begins acquisition using the live connection.")
+            else:
+                st.caption("Connect the device first. Simulate run and offline replay do not require hardware.")
+        else:
+            st.caption("This mode does not require a hardware connection.")
 
     # ONLY ONE diagnostics block (FIXED)
     with sidebar.expander("Diagnostics (logs)", expanded=False):
@@ -2362,6 +2455,25 @@ def main() -> None:
         params_to_run = dict(assembled_params)
         params_to_run.pop("Evaluation", None)
         params_to_run.pop("data", None)
+        imported_data = st.session_state.get("imported_data")
+        use_imported = st.session_state.get("use_imported_data", False)
+        connection_required = _requires_device_connection(
+            params_to_run,
+            simulate=simulate,
+            use_imported_data=use_imported,
+            imported_data=imported_data,
+        )
+        connected_device = None
+        if connection_required:
+            if not _session_device_ready(params_to_run):
+                st.error("Connect the device first, then press Start measurement.")
+                render_footer()
+                return
+            connected_device = st.session_state.get("_connected_device")
+            if connected_device is None:
+                st.error("The device connection was lost. Connect the device again.")
+                render_footer()
+                return
         _reset_plot_window_open_state(
             "live_preview_signal",
             "live_preview_fft",
@@ -2395,8 +2507,6 @@ def main() -> None:
                     live_view_service.mark_complete()
                     run_status.update(label="Simulated data saved - open the Charts tab", state="complete")
                 else:
-                    imported_data = st.session_state.get("imported_data")
-                    use_imported = st.session_state.get("use_imported_data", False)
                     if use_imported and imported_data is None:
                         run_status.update(label="No imported data attached", state="error")
                         st.error("Upload a data file or select a saved session first.")
@@ -2404,7 +2514,14 @@ def main() -> None:
                         if use_imported and imported_data is not None:
                             params_to_run["Device"] = "Offline"
                             params_to_run["data"] = imported_data
-                        run_params, saved_path = run_pipeline_once(params_to_run, save_dir, live_view=live_view_service)
+                        if connected_device is not None:
+                            connected_device.prepare_for_recording()
+                        run_params, saved_path = run_pipeline_once(
+                            params_to_run,
+                            save_dir,
+                            live_view=live_view_service,
+                            connected_device=connected_device,
+                        )
                         st.session_state["last_results"] = {
                             "label": getattr(saved_path, "name", "Last run"),
                             "params": run_params,
@@ -2419,6 +2536,14 @@ def main() -> None:
             finally:
                 st.session_state["_live_view_active"] = False
                 st.session_state["_live_view_banner"] = None
+                if connected_device is not None:
+                    try:
+                        connected_device.disconnect()
+                    except Exception:
+                        LOGGER.debug("Device disconnect after measurement raised", exc_info=True)
+                    st.session_state.pop("_connected_device", None)
+                    st.session_state.pop("_connected_device_signature", None)
+                    st.session_state["_device_check"] = ("warn", "Measurement finished. Connect again before the next hardware run.")
 
     render_footer()
 

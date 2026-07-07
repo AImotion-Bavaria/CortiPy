@@ -87,3 +87,9 @@ class LSLDevice(DeviceInterface):
             except Exception:
                 pass
         self._inlet = None
+
+    def prepare_for_recording(self) -> None:
+        if self._inlet is not None:
+            flush = getattr(self._inlet, "flush", None)
+            if callable(flush):
+                flush()

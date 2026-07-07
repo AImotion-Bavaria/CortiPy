@@ -69,5 +69,8 @@ class DummyDevice(DeviceInterface):
         """Warm-up call mirrors acquire to feed live-preview windows."""
         return self.acquire(duration_seconds, aux_channels)
 
+    def prepare_for_recording(self) -> None:
+        self._sample_index = 0
+
     def disconnect(self) -> None:
         self._connected = False

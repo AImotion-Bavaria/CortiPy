@@ -296,6 +296,13 @@ class ActiChampDevice(DeviceInterface):
     def prime(self, duration_seconds: float, aux_channels: int = 0) -> np.ndarray:
         return self.acquire(duration_seconds, aux_channels)
 
+    def prepare_for_recording(self) -> None:
+        with self._lock:
+            if self._buffer is None:
+                return
+            self._buf.control.stopRequested = False
+            self._buf.readIndex = self._buf.writeIndex
+
     def read_impedances(
         self,
         wait_seconds: float = 6.0,
