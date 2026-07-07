@@ -1141,12 +1141,17 @@ def render_general_form() -> Dict[str, Any]:
 
 def render_device_config(device: str) -> Dict[str, Any]:
     schema = DEVICE_CONFIG_SCHEMA.get(device)
-    if not schema:
-        return {}
     device_forms = st.session_state.setdefault("device_forms", {})
     form_state = device_forms.setdefault(device, device_default_values(device))
 
     with st.expander(f"{device} device settings", expanded=True):
+        if not schema:
+            st.info(
+                f"No device-specific settings are available for {device}. "
+                "Use the general session fields and electrode editor for this device."
+            )
+            return dict(form_state)
+
         cols = st.columns(2)
         for idx, field in enumerate(schema):
             target = cols[idx % 2]
@@ -2505,23 +2510,58 @@ def _workflow_next_action(params: Dict[str, Any], validation_issues: List[str]) 
     )
 
 
+def _workflow_next_status(flags: Dict[str, bool]) -> str:
+    if not flags["has_config"] or not flags["has_participant"]:
+        return "Needs setup"
+    if not flags["has_electrodes"]:
+        return "Needs electrodes"
+    if not flags["is_valid"]:
+        return "Needs validation"
+    if not flags["has_data"]:
+        return "Ready to acquire"
+    return "Ready to review"
+
+
 def _workflow_status_tone(status: str) -> tuple[str, str, str]:
     normalized = status.lower()
     if "ready" in normalized:
-        return "#ccfbf1", "#115e59", "#5eead4"
+        return "#d1fae5", "#065f46", "#34d399"
     if "need" in normalized or "missing" in normalized:
-        return "#fef3c7", "#92400e", "#fbbf24"
-    return "#e0f2fe", "#075985", "#7dd3fc"
+        return "#fff7ed", "#9a3412", "#fb923c"
+    return "#e0f2fe", "#075985", "#38bdf8"
 
 
-def _render_status_pill(status: str) -> None:
+def _render_workflow_banner(eyebrow: str, title: str, body: str, status: str) -> None:
     bg, fg, border = _workflow_status_tone(status)
     st.markdown(
         (
-            f"<span style='display:inline-block;border:1px solid {border};"
-            f"border-radius:999px;background:{bg};color:{fg};"
-            "font-size:0.78rem;font-weight:700;padding:0.12rem 0.55rem;'>"
-            f"{html.escape(status)}</span>"
+            f"<div style='border:1px solid {border};border-left:6px solid {border};"
+            f"border-radius:10px;background:{bg};padding:0.85rem 0.95rem;margin-bottom:0.75rem;'>"
+            f"<div style='color:{fg};font-size:0.76rem;font-weight:800;text-transform:uppercase;'>"
+            f"{html.escape(eyebrow)}</div>"
+            f"<div style='color:#111827;font-size:1.25rem;font-weight:800;line-height:1.25;margin-top:0.15rem;'>"
+            f"{html.escape(title)}</div>"
+            f"<div style='color:#374151;line-height:1.35;margin-top:0.3rem;'>{html.escape(body)}</div>"
+            f"<div style='margin-top:0.55rem;'><span style='display:inline-block;border:1px solid {border};"
+            f"border-radius:999px;background:rgba(255,255,255,0.72);color:{fg};"
+            f"font-size:0.78rem;font-weight:750;padding:0.13rem 0.58rem;'>{html.escape(status)}</span></div>"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def _render_summary_tile(label: str, value: str, status: str) -> None:
+    bg, fg, border = _workflow_status_tone(status)
+    st.markdown(
+        (
+            f"<div style='border:1px solid {border};border-radius:9px;background:{bg};"
+            "padding:0.65rem 0.75rem;min-height:5rem;'>"
+            f"<div style='color:{fg};font-size:0.72rem;font-weight:800;text-transform:uppercase;'>"
+            f"{html.escape(label)}</div>"
+            f"<div style='color:#111827;font-size:1.35rem;font-weight:760;line-height:1.25;"
+            f"margin-top:0.25rem;overflow-wrap:anywhere;'>{html.escape(value)}</div>"
+            "</div>"
         ),
         unsafe_allow_html=True,
     )
@@ -2549,12 +2589,7 @@ def _phase_card(
     key_prefix: str,
 ) -> None:
     with st.container(border=True):
-        heading_cols = st.columns([0.2, 0.8])
-        heading_cols[0].caption(f"{index:02d}")
-        heading_cols[1].markdown(f"**{title}**")
-        _render_status_pill(status)
-        st.caption(body)
-        st.divider()
+        _render_workflow_banner(f"Step {index:02d}", title, body, status)
         for label, ok in checks:
             _render_check_item(label, ok)
         action_cols = st.columns(len(actions))
@@ -2573,6 +2608,7 @@ def render_workflow_page(params: Dict[str, Any], validation_issues: List[str]) -
     summary = _workflow_summary(params)
     flags = _workflow_flags(params, validation_issues)
     next_title, next_body, next_page, next_key = _workflow_next_action(params, validation_issues)
+    next_status = _workflow_next_status(flags)
     completed = sum(1 for key, _ in WORKFLOW_READINESS_ITEMS if flags[key])
     total = len(WORKFLOW_READINESS_ITEMS)
     secondary_page = "Preview" if next_page != "Preview" else "Session configuration"
@@ -2580,9 +2616,7 @@ def render_workflow_page(params: Dict[str, Any], validation_issues: List[str]) -
     top_left, top_right = st.columns([1.9, 1])
     with top_left:
         with st.container(border=True):
-            st.caption("Next best action")
-            st.markdown(f"### {next_title}")
-            st.write(next_body)
+            _render_workflow_banner("Next best action", next_title, next_body, next_status)
             action_cols = st.columns([1.15, 0.85])
             action_cols[0].button(
                 f"Open {next_page}",
@@ -2601,7 +2635,7 @@ def render_workflow_page(params: Dict[str, Any], validation_issues: List[str]) -
             )
     with top_right:
         with st.container(border=True):
-            st.caption("Session readiness")
+            _render_workflow_banner("Readiness", "Session state", f"{completed} of {total} checkpoints are complete.", next_status)
             st.progress(completed / total, text=f"{completed}/{total} ready")
             checklist_cols = st.columns(2)
             for idx, (key, label) in enumerate(WORKFLOW_READINESS_ITEMS):
@@ -2610,8 +2644,17 @@ def render_workflow_page(params: Dict[str, Any], validation_issues: List[str]) -
 
     st.markdown("**Current session**")
     summary_cols = st.columns(6)
+    summary_status = {
+        "Method": "Ready" if summary["Method"] != "Not set" else "Needs setup",
+        "Device": "Ready" if summary["Device"] != "Not set" else "Needs setup",
+        "Time": "Ready" if summary["Time"] != "0 s" else "Needs setup",
+        "Channels": "Ready" if summary["Channels"] != "Not set" else "Needs electrodes",
+        "Participant": "Ready" if summary["Participant"] != "Not set" else "Needs setup",
+        "Format": "Available",
+    }
     for col, (label, value) in zip(summary_cols, summary.items()):
-        col.metric(label, value)
+        with col:
+            _render_summary_tile(label, value, summary_status[label])
 
     st.markdown("**Guided flow**")
     phase_cols = st.columns(3)

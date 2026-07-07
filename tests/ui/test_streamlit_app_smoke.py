@@ -48,6 +48,9 @@ def test_streamlit_app_imports() -> None:
     assert callable(module.set_active_view)
     assert callable(module._workflow_next_action)
     assert callable(module._phase_card)
+    assert callable(module._render_workflow_banner)
+    assert callable(module._render_summary_tile)
+    assert callable(module.render_device_config)
     assert module.WORKFLOW_READINESS_ITEMS[0] == ("has_config", "Configuration")
 
 
