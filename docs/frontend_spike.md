@@ -2,7 +2,7 @@
 
 Status: spike / decision aid. The **cortipy pipeline (`cortipy/`) is frontend-agnostic** — any option
 below reuses `MeasurementPipeline`, `DeviceFactory`, the evaluators, and the BIDS/SBIDS I/O unchanged.
-Only `apps/streamlit_app.py` + `cortipy/ui_streamlit/` would be replaced in a migration.
+Only `apps/streamlit_app.py` and `cortipy/ui_streamlit/` would be replaced in a migration.
 
 ## 1. Observed pain points (first-hand, this session)
 
@@ -10,7 +10,7 @@ These are concrete, reproduced issues — not hypotheticals:
 
 | # | Pain point | Root cause (Streamlit model) |
 |---|---|---|
-| P1 | **Every click reruns the whole script top-to-bottom** ("buttons not fluid"). | Streamlit's core execution model: any interaction re-executes `main()` end-to-end. A 3,300-line script re-runs fully per click. |
+| P1 | **Every click reruns the Streamlit script top-to-bottom** ("buttons not fluid"). | Streamlit's core execution model: any interaction re-executes the app entrypoint end-to-end. The implementation is now split into focused modules, but reruns are still the framework model. |
 | P2 | **Electrode table "disappears and reappears"** on fill / impedance read / load. | `st.data_editor` is a *keyed* widget; to reflect programmatic data changes you must change its `key`, which **remounts** the component. There is no in-place "set value" API. |
 | P3 | **Loaded/imported settings silently didn't apply.** | Keyed widgets ignore `value=`/`index=` once instantiated; you must mutate `st.session_state[key]` or clear it, then `st.rerun()`. Fixed this session, but it's a recurring footgun. |
 | P4 | **Live plots during a blocking acquisition** need placeholder gymnastics. | A synchronous `run()` blocks the single script thread; live updates go through cached `st.empty()` placeholders and a manual service. |
@@ -35,7 +35,7 @@ sync on load, diagnostics panel, quick-fill, device-aware `fs`) address most of 
 high-impact Streamlit-native follow-ups that don't need a migration:
 
 - **Wrap heavy regions in `st.fragment`** (esp. the electrode editor and live-view) so interacting with
-  them reruns *only that region*, not the whole 3,300-line script — directly targets P1/P4.
+  them reruns *only that region*, not the whole app entrypoint - directly targets P1/P4.
 - **Finish the modular split of `app.py`** (`state.py`, `forms.py`, `electrodes.py`, `charts.py`,
   `run_control.py`) so reruns import less and the code is maintainable. Pure refactor; do it as its own
   reviewed PR (see §5).

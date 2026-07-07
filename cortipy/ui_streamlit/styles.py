@@ -3,7 +3,7 @@
 GLOBAL_CSS = """
 <style>
 :root {
-    --app-top-padding: 2.1rem;
+    --app-top-padding: 2.35rem;
     --sidebar-top-padding: 1.25rem;
     --sidebar-width: 21rem;
     --sidebar-bg: #cbd5e1;
@@ -56,8 +56,8 @@ section[data-testid="stSidebar"] > div,
     line-height: 1.4;
     padding-top: 0.15rem !important;
     margin-top: 0 !important;
-    margin-bottom: 0.9rem;
-    padding-bottom: 0.3rem;
+    margin-bottom: 1.15rem;
+    padding-bottom: 0.4rem;
     border-bottom: 3px solid var(--accent);
     display: inline-block;
 }
@@ -71,8 +71,8 @@ section[data-testid="stSidebar"] > div,
 [data-testid="stSidebar"] h3 {
     font-size: 1rem;
     line-height: 1.25;
-    margin: -0.45rem -0.55rem 0.6rem -0.55rem;
-    padding: 0.45rem 0.55rem;
+    margin: -0.25rem -0.45rem 0.85rem -0.45rem;
+    padding: 0.58rem 0.65rem;
     border-radius: 7px;
     background-color: var(--expander-summary);
     color: var(--expander-text);
@@ -104,6 +104,7 @@ div[data-testid="stExpander"] > details > summary,
     background-color: var(--expander-summary);
     color: var(--expander-text);
     border-radius: 11px 11px 0 0;
+    padding: 0.62rem 0.85rem !important;
 }
 div[data-testid="stExpander"] > details > summary p,
 [data-testid="stExpander"] details summary p,
@@ -117,7 +118,8 @@ div[data-testid="stExpander"] > details > summary:hover,
 }
 div[data-testid="stExpander"] > details > div[role="group"],
 [data-testid="stExpander"] details > div[role="group"] {
-    padding-top: 0.5rem;
+    padding-top: 1rem;
+    padding-bottom: 0.9rem;
     color: var(--expander-text);
 }
 button,
@@ -143,12 +145,11 @@ textarea,
 [contenteditable="true"] {
     cursor: text !important;
 }
-/* Space efficiency: short-value inputs (dropdowns / numbers / small text) shouldn't sprawl
-   across the whole column. Cap their width in the main content area (sidebar unaffected). */
+/* Keep compact fields readable without forcing the whole multi-page UI into a dense grid. */
 [data-testid="stMain"] [data-testid="stSelectbox"],
 [data-testid="stMain"] [data-testid="stNumberInput"],
 [data-testid="stMain"] [data-testid="stTextInput"] {
-    max-width: 340px;
+    max-width: 420px;
 }
 </style>
 """

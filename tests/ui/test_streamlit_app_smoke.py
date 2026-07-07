@@ -11,14 +11,15 @@ except ModuleNotFoundError:  # pragma: no cover - Python < 3.11
     import tomli as tomllib
 
 from cortipy.ui_streamlit.styles import GLOBAL_CSS
+from cortipy.ui_streamlit import workflow
+from cortipy.ui_streamlit.device_settings import render_device_config
 
 
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def load_streamlit_app():
-    app_path = ROOT / "apps" / "streamlit_app.py"
-    spec = importlib.util.spec_from_file_location("streamlit_app_smoke", app_path)
+def load_module(path: Path, name: str):
+    spec = importlib.util.spec_from_file_location(name, path)
     assert spec is not None
     assert spec.loader is not None
     module = importlib.util.module_from_spec(spec)
@@ -27,13 +28,22 @@ def load_streamlit_app():
     return module
 
 
+def load_streamlit_app():
+    return load_module(ROOT / "apps" / "streamlit_app.py", "streamlit_app_smoke")
+
+
+def load_session_module():
+    return load_module(ROOT / "cortipy" / "ui_streamlit" / "session.py", "session_smoke")
+
+
 def test_streamlit_app_imports() -> None:
     module = load_streamlit_app()
+    session = load_session_module()
 
     assert callable(module.main)
-    assert module.GENERAL_SCHEMA
-    assert module.METHOD_SCHEMAS
-    assert module.VIEW_OPTIONS == [
+    assert session.GENERAL_SCHEMA
+    assert session.METHOD_SCHEMAS
+    assert session.APP_VIEW_OPTIONS == [
         "Workflow",
         "Session configuration",
         "Electrodes",
@@ -42,16 +52,14 @@ def test_streamlit_app_imports() -> None:
         "Charts",
         "Saved sessions",
     ]
-    assert module.APP_VIEW_OPTIONS == module.VIEW_OPTIONS
-    assert module.APP_VIEW_OPTIONS[0] == "Workflow"
-    assert callable(module.render_workflow_page)
-    assert callable(module.set_active_view)
-    assert callable(module._workflow_next_action)
-    assert callable(module._phase_card)
-    assert callable(module._render_workflow_banner)
-    assert callable(module._render_summary_tile)
-    assert callable(module.render_device_config)
-    assert module.WORKFLOW_READINESS_ITEMS[0] == ("has_config", "Configuration")
+    assert session.APP_VIEW_OPTIONS[0] == "Workflow"
+    assert callable(session.set_active_view)
+    assert callable(workflow._workflow_next_action)
+    assert callable(workflow._phase_card)
+    assert callable(workflow._render_workflow_banner)
+    assert callable(workflow._render_summary_tile)
+    assert callable(render_device_config)
+    assert workflow.WORKFLOW_READINESS_ITEMS[0] == ("has_config", "Configuration")
 
 
 def test_global_css_keeps_pointer_cursor_override() -> None:
@@ -79,7 +87,7 @@ def test_ui_dependencies_are_bounded() -> None:
 
 
 def test_impedance_mapping_uses_measured_positive_values() -> None:
-    module = load_streamlit_app()
+    module = load_session_module()
     rows = [
         {"Channel": "GND", "Impedance": 0.0},
         {"Channel": "Ch 1", "Impedance": 0.0},
@@ -99,7 +107,7 @@ def test_impedance_mapping_uses_measured_positive_values() -> None:
 
 
 def test_topography_replaces_non_finite_coordinates() -> None:
-    module = load_streamlit_app()
+    module = load_session_module()
 
     class Placeholder:
         def __init__(self) -> None:

@@ -61,9 +61,9 @@ MeasurementPipeline(hooks=hooks).run()
   `Params` structure) and executes the pipeline once.
 - `cortipy.ui.SessionOptions` + `SaveManager` reproduce MATLAB’s `saveDatamain`
   behaviour, including timestamped run folders containing `params.json` + `data.npz`.
-- `apps/streamlit_app.py` provides the Streamlit UI that recreates the MATLAB
-  configuration dialog (method/device params, proband metadata, electrode naming) and
-  gives you start/stop controls plus saved-session browsing.
+- `apps/streamlit_app.py` is the Streamlit UI entrypoint. It composes focused
+  `cortipy/ui_streamlit/` modules for workflow, session forms, device settings, charts,
+  live preview, data import, and electrodes.
 
 ### UNICORN hardware specifics
 
