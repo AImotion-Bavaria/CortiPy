@@ -299,7 +299,7 @@ PARTICIPANT_CARD_STYLE = """
 .participant-card .summary-head {
     display: flex;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
     gap: 0.45rem;
     margin-bottom: 0.55rem;
     font-weight: 700;
