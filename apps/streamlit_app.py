@@ -2472,151 +2472,156 @@ def _workflow_summary(params: Dict[str, Any]) -> Dict[str, str]:
     }
 
 
-def _workflow_summary_tile(label: str, value: str) -> str:
-    return (
-        "<div class='workflow-summary-tile'>"
-        f"<div class='workflow-summary-label'>{html.escape(label)}</div>"
-        f"<div class='workflow-summary-value'>{html.escape(value)}</div>"
-        "</div>"
-    )
-
-
-def _workflow_lane_item(index: int, label: str, status: str) -> str:
+def _workflow_status_message(status: str) -> None:
     status_class = _workflow_status_class(status)
+    if status_class == "is-ready":
+        st.success(status)
+    elif status_class == "is-needed":
+        st.warning(status)
+    else:
+        st.info(status)
+
+
+def _workflow_flags(params: Dict[str, Any], validation_issues: List[str]) -> Dict[str, bool]:
+    parameters = params.get("Parameters", {}) if isinstance(params, dict) else {}
+    participant = (params.get("Metadata", {}) or {}).get("Participant", {}) or {}
+    has_config = bool(params.get("Method") and params.get("Device") and parameters.get("fs"))
+    return {
+        "has_config": has_config,
+        "has_participant": bool(participant.get("Code")),
+        "has_electrodes": _has_active_eeg_channels(params),
+        "is_valid": not validation_issues,
+        "has_data": bool(st.session_state.get("last_results") or st.session_state.get("imported_data") is not None),
+    }
+
+
+def _workflow_next_action(params: Dict[str, Any], validation_issues: List[str]) -> tuple[str, str, str, str]:
+    flags = _workflow_flags(params, validation_issues)
+    if not flags["has_config"] or not flags["has_participant"]:
+        return (
+            "Complete session setup",
+            "Choose method/device, set the recording time, and fill participant details.",
+            "Session configuration",
+            "workflow_next_session",
+        )
+    if not flags["has_electrodes"]:
+        return (
+            "Prepare electrodes",
+            "Review active channels, electrode labels, positions, and impedance mapping.",
+            "Electrodes",
+            "workflow_next_electrodes",
+        )
+    if not flags["is_valid"]:
+        return (
+            "Resolve validation items",
+            "Open Preview to see exactly which required fields still block the run.",
+            "Preview",
+            "workflow_next_preview",
+        )
+    if not flags["has_data"]:
+        return (
+            "Connect and record",
+            "Use the sidebar to connect the device, then start measurement. Live preview helps verify signal quality.",
+            "Live preview",
+            "workflow_next_live",
+        )
     return (
-        f"<div class='workflow-node {status_class}'>"
-        f"<div class='workflow-node-num'>{index:02d}</div>"
-        f"<div class='workflow-node-title'>{html.escape(label)}</div>"
-        f"<div class='workflow-node-status'>{html.escape(status)}</div>"
-        "</div>"
+        "Review and export",
+        "Inspect charts or reopen saved sessions, then export the recording from the sidebar.",
+        "Charts",
+        "workflow_next_charts",
     )
 
 
-def _workflow_card(index: int, title: str, body: str, page: str, status: str, key: str) -> None:
-    status_class = _workflow_status_class(status)
-    st.markdown(
-        (
-            "<div class='workflow-action'>"
-            "<div class='workflow-action-top'>"
-            f"<span class='workflow-index'>{index:02d}</span>"
-            f"<span class='workflow-badge {status_class}'>{html.escape(status)}</span>"
-            "</div>"
-            f"<div class='workflow-action-title'>{html.escape(title)}</div>"
-            f"<div class='workflow-action-copy'>{html.escape(body)}</div>"
-            "</div>"
-        ),
-        unsafe_allow_html=True,
-    )
-    st.button(
-        f"Open {page}",
-        width="stretch",
-        key=key,
-        on_click=set_active_view,
-        args=(page,),
-    )
+def _phase_card(title: str, status: str, primary_page: str, secondary_page: str, body: str, key_prefix: str) -> None:
+    with st.container(border=True):
+        st.markdown(f"**{title}**")
+        _workflow_status_message(status)
+        st.caption(body)
+        action_cols = st.columns(2)
+        action_cols[0].button(
+            primary_page,
+            width="stretch",
+            key=f"{key_prefix}_primary",
+            on_click=set_active_view,
+            args=(primary_page,),
+        )
+        action_cols[1].button(
+            secondary_page,
+            width="stretch",
+            key=f"{key_prefix}_secondary",
+            on_click=set_active_view,
+            args=(secondary_page,),
+        )
 
 
 def render_workflow_page(params: Dict[str, Any], validation_issues: List[str]) -> None:
     """Show a home page with workflow shortcuts for configuring, recording, and reviewing sessions."""
-    statuses = _workflow_statuses(params, validation_issues)
     summary = _workflow_summary(params)
-    summary_html = "".join(_workflow_summary_tile(label, value) for label, value in summary.items())
-    lane_pages = [
-        ("Configure", statuses["Session configuration"]),
-        ("Electrodes", statuses["Electrodes"]),
-        ("Live", statuses["Live preview"]),
-        ("Validate", statuses["Preview"]),
-        ("Charts", statuses["Charts"]),
-        ("Sessions", statuses["Saved sessions"]),
-    ]
-    lane_html = "".join(
-        _workflow_lane_item(index, label, status)
-        for index, (label, status) in enumerate(lane_pages, start=1)
+    flags = _workflow_flags(params, validation_issues)
+    next_title, next_body, next_page, next_key = _workflow_next_action(params, validation_issues)
+    completed = sum(
+        1
+        for key in ("has_config", "has_participant", "has_electrodes", "is_valid", "has_data")
+        if flags[key]
     )
 
-    st.markdown(
-        f"""
-        <div class="workflow-home">
-            <div>
-                <div class="workflow-kicker">CortiPy workflow</div>
-                <div class="workflow-title">Measurement command center</div>
-                <div class="workflow-copy">
-                    Jump directly into setup, signal preview, validation, charts, or saved sessions.
-                </div>
-            </div>
-            <div class="workflow-summary-grid">
-                {summary_html}
-            </div>
-        </div>
-        <div class="workflow-lane">{lane_html}</div>
-        <div class="workflow-section-title">Open a workspace</div>
-        """,
-        unsafe_allow_html=True,
-    )
+    top_left, top_right = st.columns([1.9, 1])
+    with top_left:
+        with st.container(border=True):
+            st.caption("Next step")
+            st.subheader(next_title)
+            st.write(next_body)
+            st.button(
+                f"Open {next_page}",
+                type="primary",
+                width="stretch",
+                key=next_key,
+                on_click=set_active_view,
+                args=(next_page,),
+            )
+    with top_right:
+        with st.container(border=True):
+            st.caption("Session readiness")
+            st.progress(completed / 5, text=f"{completed}/5 ready")
+            status_cols = st.columns(2)
+            status_cols[0].metric("Method", summary["Method"])
+            status_cols[1].metric("Device", summary["Device"])
+            status_cols[0].metric("Time", summary["Time"])
+            status_cols[1].metric("Channels", summary["Channels"])
 
-    route_cols = st.columns(3)
-    with route_cols[0]:
-        with st.container(border=True):
-            _workflow_card(
-                1,
-                "Configure session",
-                "Method, device, timing, parameters, and participant.",
-                "Session configuration",
-                statuses["Session configuration"],
-                "workflow_open_session",
-            )
-    with route_cols[1]:
-        with st.container(border=True):
-            _workflow_card(
-                2,
-                "Prepare electrodes",
-                "Channels, positions, rubrics, models, and impedance.",
-                "Electrodes",
-                statuses["Electrodes"],
-                "workflow_open_electrodes",
-            )
-    with route_cols[2]:
-        with st.container(border=True):
-            _workflow_card(
-                3,
-                "Preview signal",
-                "A moving signal window before or during acquisition.",
-                "Live preview",
-                statuses["Live preview"],
-                "workflow_open_live_preview",
-            )
-
-    review_cols = st.columns(3)
-    with review_cols[0]:
-        with st.container(border=True):
-            _workflow_card(
-                4,
-                "Validate setup",
-                "Completion checklist, params JSON, and warnings.",
-                "Preview",
-                statuses["Preview"],
-                "workflow_open_preview",
-            )
-    with review_cols[1]:
-        with st.container(border=True):
-            _workflow_card(
-                5,
-                "Inspect charts",
-                "Last run or imported data in pop-out chart windows.",
-                "Charts",
-                statuses["Charts"],
-                "workflow_open_charts",
-            )
-    with review_cols[2]:
-        with st.container(border=True):
-            _workflow_card(
-                6,
-                "Reopen sessions",
-                "Load, compare, and review previous outputs.",
-                "Saved sessions",
-                statuses["Saved sessions"],
-                "workflow_open_saved_sessions",
-            )
+    st.markdown("**Guided flow**")
+    phase_cols = st.columns(3)
+    with phase_cols[0]:
+        prepare_status = "Ready" if flags["has_config"] and flags["has_participant"] and flags["has_electrodes"] else "Needs setup"
+        _phase_card(
+            "Prepare",
+            prepare_status,
+            "Session configuration",
+            "Electrodes",
+            "Define the run and make the channel table physically meaningful before acquisition.",
+            "workflow_prepare",
+        )
+    with phase_cols[1]:
+        acquire_status = "Ready" if flags["is_valid"] and flags["has_electrodes"] else "Needs validation"
+        _phase_card(
+            "Acquire",
+            acquire_status,
+            "Live preview",
+            "Preview",
+            "Check signal behavior, validate the params payload, then use the sidebar run controls.",
+            "workflow_acquire",
+        )
+    with phase_cols[2]:
+        review_status = "Ready" if flags["has_data"] else "After run/import"
+        _phase_card(
+            "Review",
+            review_status,
+            "Charts",
+            "Saved sessions",
+            "Inspect plotted output, compare saved sessions, and export the selected container/format.",
+            "workflow_review",
+        )
 
 
 def main() -> None:
