@@ -261,7 +261,7 @@ PARTICIPANT_CARD_STYLE = """
         --expander-bg: #0f172a;
         --expander-border: #1f2937;
         --expander-summary: #111827;
-        --expander-summary-hover: #152238;
+        --expander-summary-hover: #1f2937;
         --expander-text: #e5e7eb;
     }
 }

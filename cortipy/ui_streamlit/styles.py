@@ -6,21 +6,21 @@ GLOBAL_CSS = """
     --app-top-padding: 2.1rem;
     --sidebar-top-padding: 1.25rem;
     --sidebar-width: 21rem;
-    --sidebar-bg: #eef2f6;
+    --sidebar-bg: #dbe4ee;
     --expander-bg: #f8fafc;
     --expander-border: #e5e7eb;
-    --expander-summary: #e2e8f0;
-    --expander-summary-hover: #cbd5e1;
+    --expander-summary: #cbd5e1;
+    --expander-summary-hover: #b7c4d2;
     --expander-text: #0f172a;
     --accent: #0d9488;
 }
 @media (prefers-color-scheme: dark) {
     :root {
-        --sidebar-bg: #0b1220;
+        --sidebar-bg: #020617;
         --expander-bg: #0f172a;
         --expander-border: #1f2937;
-        --expander-summary: #172033;
-        --expander-summary-hover: #223047;
+        --expander-summary: #111827;
+        --expander-summary-hover: #1f2937;
         --expander-text: #e5e7eb;
         --accent: #2dd4bf;
     }
