@@ -477,23 +477,6 @@ def render_unicorn_port_input(target, field: Dict[str, Any], current: Any, key: 
     return selection
 
 
-def sync_sidebar_unicorn_port(target) -> None:
-    device_forms = st.session_state.setdefault("device_forms", {})
-    form_state = device_forms.setdefault("UNICORN", device_default_values("UNICORN"))
-    current = form_state.get("UNICORNPort") or st.session_state.get("device_UNICORN_UNICORNPort")
-    base_field = next(
-        (field for field in DEVICE_CONFIG_SCHEMA.get("UNICORN", []) if field["name"] == "UNICORNPort"),
-        None,
-    )
-    if base_field is None:
-        return
-    field = dict(base_field)
-    field["label"] = "UNICORN COM port"
-    value = render_unicorn_port_input(target, field, current, "run_unicorn_port")
-    form_state["UNICORNPort"] = value
-    st.session_state["device_UNICORN_UNICORNPort"] = value
-
-
 def _params_from_jsonld_doc(doc: Dict[str, Any], file_name: str = "import.jsonld") -> Optional[Dict[str, Any]]:
     return _params_from_jsonld_doc_base(
         doc,
@@ -2278,9 +2261,6 @@ def render_sidebar_controls() -> SidebarControls:
 
     with sidebar.container(border=True):
         st.subheader("Run")
-        current_device = str(st.session_state.get("general_form", {}).get("Device") or "")
-        if current_device.lower() == "unicorn":
-            sync_sidebar_unicorn_port(st)
         snap = current_params_snapshot()
         imported_data = st.session_state.get("imported_data")
         use_imported = st.session_state.get("use_imported_data", False)
