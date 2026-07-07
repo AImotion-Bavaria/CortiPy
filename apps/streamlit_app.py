@@ -262,11 +262,6 @@ PARTICIPANT_CARD_STYLE = """
         --value-color: #e5e7eb;
         --notes-color: #cbd5e1;
         --divider-color: rgba(255, 255, 255, 0.15);
-        --expander-bg: #0f172a;
-        --expander-border: #1f2937;
-        --expander-summary: #111827;
-        --expander-summary-hover: #1f2937;
-        --expander-text: #e5e7eb;
     }
 }
 .snapshot-panel {

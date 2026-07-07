@@ -6,35 +6,40 @@ GLOBAL_CSS = """
     --app-top-padding: 2.1rem;
     --sidebar-top-padding: 1.25rem;
     --sidebar-width: 21rem;
-    --sidebar-bg: #dbe4ee;
+    --sidebar-bg: #cbd5e1;
+    --sidebar-panel-bg: #dbe4ee;
     --expander-bg: #f8fafc;
-    --expander-border: #e5e7eb;
-    --expander-summary: #cbd5e1;
-    --expander-summary-hover: #b7c4d2;
+    --expander-border: #9fb0c2;
+    --expander-summary: #b7c4d2;
+    --expander-summary-hover: #a7b7c8;
     --expander-text: #0f172a;
     --accent: #0d9488;
 }
 @media (prefers-color-scheme: dark) {
     :root {
         --sidebar-bg: #020617;
+        --sidebar-panel-bg: #0b1220;
         --expander-bg: #0f172a;
-        --expander-border: #1f2937;
+        --expander-border: #334155;
         --expander-summary: #111827;
         --expander-summary-hover: #1f2937;
         --expander-text: #e5e7eb;
         --accent: #2dd4bf;
     }
 }
+section[data-testid="stSidebar"],
 [data-testid="stSidebar"] {
     width: var(--sidebar-width) !important;
     min-width: var(--sidebar-width) !important;
     background-color: var(--sidebar-bg) !important;
 }
+section[data-testid="stSidebar"] > div,
 [data-testid="stSidebar"] > div:first-child {
     width: var(--sidebar-width) !important;
     background-color: var(--sidebar-bg) !important;
 }
-[data-testid="stSidebarContent"] {
+[data-testid="stSidebarContent"],
+[data-testid="stSidebarUserContent"] {
     padding-top: var(--sidebar-top-padding) !important;
     background-color: var(--sidebar-bg) !important;
 }
@@ -66,11 +71,19 @@ GLOBAL_CSS = """
 [data-testid="stSidebar"] h3 {
     font-size: 1rem;
     line-height: 1.25;
-    margin-bottom: 0.35rem;
-    color: var(--accent);
+    margin: -0.45rem -0.55rem 0.6rem -0.55rem;
+    padding: 0.45rem 0.55rem;
+    border-radius: 7px;
+    background-color: var(--expander-summary);
+    color: var(--expander-text);
 }
 [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] {
     border-radius: 8px;
+    border-color: var(--expander-border) !important;
+    background-color: var(--sidebar-panel-bg) !important;
+}
+[data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] > div {
+    background-color: var(--sidebar-panel-bg) !important;
 }
 @media (max-width: 640px) {
     :root {
@@ -79,24 +92,31 @@ GLOBAL_CSS = """
         --sidebar-top-padding: 1rem;
     }
 }
-div[data-testid="stExpander"] > details {
+div[data-testid="stExpander"] > details,
+[data-testid="stExpander"] details {
     border-radius: 12px;
     border: 1px solid var(--expander-border);
     background-color: var(--expander-bg);
     color: var(--expander-text);
 }
-div[data-testid="stExpander"] > details > summary {
+div[data-testid="stExpander"] > details > summary,
+[data-testid="stExpander"] details summary {
     background-color: var(--expander-summary);
     color: var(--expander-text);
+    border-radius: 11px 11px 0 0;
 }
 div[data-testid="stExpander"] > details > summary p,
-div[data-testid="stExpander"] > details > summary span {
+[data-testid="stExpander"] details summary p,
+div[data-testid="stExpander"] > details > summary span,
+[data-testid="stExpander"] details summary span {
     color: var(--expander-text);
 }
-div[data-testid="stExpander"] > details > summary:hover {
+div[data-testid="stExpander"] > details > summary:hover,
+[data-testid="stExpander"] details summary:hover {
     background-color: var(--expander-summary-hover);
 }
-div[data-testid="stExpander"] > details > div[role="group"] {
+div[data-testid="stExpander"] > details > div[role="group"],
+[data-testid="stExpander"] details > div[role="group"] {
     padding-top: 0.5rem;
     color: var(--expander-text);
 }
