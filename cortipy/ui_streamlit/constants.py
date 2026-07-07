@@ -9,7 +9,15 @@ import re
 from typing import Any, Dict, List
 
 SUPPORTED_EXTRA_DEVICES = ["LSL", "Offline", "Dummy"]
-VIEW_OPTIONS = ["Session configuration", "Electrodes", "Live preview", "Preview", "Charts", "Saved sessions"]
+VIEW_OPTIONS = [
+    "Session configuration",
+    "Workflow",
+    "Electrodes",
+    "Live preview",
+    "Preview",
+    "Charts",
+    "Saved sessions",
+]
 DEVICE_CONFIG_SCHEMA: Dict[str, List[Dict[str, Any]]] = {
     "UNICORN": [
         {

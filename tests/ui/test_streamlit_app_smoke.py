@@ -35,12 +35,14 @@ def test_streamlit_app_imports() -> None:
     assert module.METHOD_SCHEMAS
     assert module.VIEW_OPTIONS == [
         "Session configuration",
+        "Workflow",
         "Electrodes",
         "Live preview",
         "Preview",
         "Charts",
         "Saved sessions",
     ]
+    assert callable(module.render_workflow_page)
 
 
 def test_global_css_keeps_pointer_cursor_override() -> None:

@@ -2418,6 +2418,59 @@ def render_workflow_progress(slot, params: Dict[str, Any], validation_issues: Li
             )
 
 
+def render_workflow_page() -> None:
+    """Show a concise operator guide for configuring, recording, and exporting sessions."""
+    st.subheader("Workflow")
+    st.caption("Use this page as the run checklist for a complete EEG session.")
+
+    step_cols = st.columns(3)
+    with step_cols[0]:
+        st.markdown("**1. Configure**")
+        st.markdown(
+            "- Choose method, device, and environment.\n"
+            "- Fill method parameters and device settings.\n"
+            "- Set the recording time before starting."
+        )
+    with step_cols[1]:
+        st.markdown("**2. Prepare**")
+        st.markdown(
+            "- Fill participant/proband fields.\n"
+            "- Review electrodes, labels, and active channels.\n"
+            "- Import existing params or data when replaying."
+        )
+    with step_cols[2]:
+        st.markdown("**3. Run and review**")
+        st.markdown(
+            "- Connect the device.\n"
+            "- Start measurement when the checklist is complete.\n"
+            "- Review previews, charts, and exported files."
+        )
+
+    st.divider()
+    st.markdown("**What this UI can do**")
+    ability_cols = st.columns(2)
+    with ability_cols[0]:
+        st.markdown(
+            "- Configure EEG measurement sessions.\n"
+            "- Edit channel metadata and electrode positions.\n"
+            "- Connect supported devices or run dummy/offline data.\n"
+            "- Monitor setup readiness from the top checklist."
+        )
+    with ability_cols[1]:
+        st.markdown(
+            "- Open live preview and chart windows.\n"
+            "- Import params, JSON-LD, and recorded data.\n"
+            "- Export settings and recordings.\n"
+            "- Load saved sessions for review and comparison."
+        )
+
+    st.divider()
+    st.markdown("**Suggested demo path**")
+    st.markdown(
+        "Session configuration -> Workflow -> Electrodes -> Live preview -> Preview -> Charts -> Saved sessions"
+    )
+
+
 def main() -> None:
     st.set_page_config(page_title="cortipy UI", layout="wide")
     inject_global_styles(st)
@@ -2477,6 +2530,9 @@ def main() -> None:
     assembled_params = assemble_params(general_values, method_values, participant_values, device_values)
     validation_issues = validate_params(assembled_params)
     render_workflow_progress(progress_slot, assembled_params, validation_issues)
+
+    if page == "Workflow":
+        render_workflow_page()
 
     if page == "Live preview":
         render_live_preview_tab(assembled_params, validation_issues)
