@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+import tempfile
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Union
 
 import numpy as np
@@ -46,12 +47,46 @@ def load_parquet_array(source: Union[Path, Any]) -> Optional[np.ndarray]:
     return frame.to_numpy(dtype=float, copy=False)
 
 
+def load_edf_array(source: Union[Path, Any]) -> Optional[np.ndarray]:
+    try:
+        import mne
+    except Exception as exc:  # pragma: no cover
+        st.error(f"Failed to load EDF data: mne is required ({exc})")
+        return None
+
+    temp_path: Optional[Path] = None
+    try:
+        if isinstance(source, (str, Path)):
+            path = Path(source)
+        else:
+            suffix = Path(getattr(source, "name", "")).suffix or ".edf"
+            if hasattr(source, "seek"):
+                source.seek(0)
+            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+                tmp.write(source.read())
+                temp_path = Path(tmp.name)
+            path = temp_path
+        raw = mne.io.read_raw_edf(str(path), preload=True, verbose="ERROR")
+        return raw.get_data().T
+    except Exception as exc:
+        st.error(f"Failed to load EDF data: {exc}")
+        return None
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+
+
 def load_uploaded_data_array(uploaded: Any) -> Optional[np.ndarray]:
     suffix = Path(getattr(uploaded, "name", "")).suffix.lower()
     if suffix == ".npz":
         return load_npz_array(uploaded)
     if suffix == ".parquet":
         return load_parquet_array(uploaded)
+    if suffix == ".edf":
+        return load_edf_array(uploaded)
     st.error(f"Unsupported data file type: {suffix or 'unknown'}")
     return None
 

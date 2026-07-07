@@ -1747,7 +1747,7 @@ def export_recording(data: Any, params: Dict[str, Any], out_dir: Path, container
     if arr.ndim != 2:
         raise ValueError("Recording data must be 2-D (samples x channels).")
     pblock = params.get("Parameters", {}) if isinstance(params, dict) else {}
-    fs = float(pblock.get("fs") or 250) or 250.0
+    fs = float(coerce_number(pblock.get("fs")) or 250.0)
     chans = params.get("Channels") or []
     ch_names = [(c.get("Position") or c.get("Channel")) for c in chans] or None
     if ch_names and len(ch_names) != arr.shape[1]:
@@ -1776,6 +1776,20 @@ def export_recording(data: Any, params: Dict[str, Any], out_dir: Path, container
     out.parent.mkdir(parents=True, exist_ok=True)
     CortiDataset(result).to_sbids(out, export_format=fmt)
     return out.parent
+
+
+def simulated_recording_data(params: Dict[str, Any]) -> np.ndarray:
+    parameters = params.get("Parameters", {}) if isinstance(params, dict) else {}
+    fs = float(coerce_number(parameters.get("fs")) or 250.0)
+    recording_seconds = _selected_recording_seconds(params) or 1.0
+    n_channels_value = coerce_number(
+        parameters.get("NumberEEGChannels")
+        or len(params.get("Channels", []))
+        or 8
+    )
+    n_channels = max(1, int(n_channels_value or 8))
+    n_samples = max(1, int(round(fs * recording_seconds)))
+    return np.zeros((n_samples, n_channels), dtype=float)
 
 
 @st.cache_data
@@ -1911,8 +1925,8 @@ def handle_upload(target) -> None:
             key="config_uploader",
         )
         data_upload = st.file_uploader(
-            "Attach data file(s): .npz, .parquet, or JSON-LD + raw file",
-            type=["npz", "parquet", "jsonld"],
+            "Attach data file(s): .npz, .parquet, .edf, or JSON-LD + raw file",
+            type=["npz", "parquet", "edf", "jsonld"],
             accept_multiple_files=True,
             key="data_uploader_v2",
         )
@@ -1942,7 +1956,7 @@ def handle_upload(target) -> None:
         if data_upload:
             uploads = list(data_upload) if isinstance(data_upload, list) else [data_upload]
             jsonld_upload = next((item for item in uploads if Path(item.name).suffix.lower() == ".jsonld"), None)
-            data_file = next((item for item in uploads if Path(item.name).suffix.lower() in {".npz", ".parquet"}), None)
+            data_file = next((item for item in uploads if Path(item.name).suffix.lower() in {".npz", ".parquet", ".edf"}), None)
             params_from_jsonld: Optional[Dict[str, Any]] = None
             if jsonld_upload is not None:
                 try:
@@ -2371,11 +2385,7 @@ def main() -> None:
                 st.session_state["_live_view_banner"] = "Measurement running: live EEG and FFT updating below."
             try:
                 if simulate:
-                    fs = int(assembled_params["Parameters"].get("fs", 250))
-                    n_channels = max(1, int(
-                        assembled_params["Parameters"].get("NumberEEGChannels", len(assembled_params.get("Channels", [])) or 8)
-                    ))
-                    params_to_run["data"] = np.zeros((fs, n_channels))
+                    params_to_run["data"] = simulated_recording_data(params_to_run)
                     saved_path = SaveManager(save_dir)(params_to_run)
                     st.session_state["last_results"] = {
                         "label": getattr(saved_path, "name", "Simulated run"),
