@@ -2601,6 +2601,8 @@ def main() -> None:
 
     assembled_params = assemble_params(general_values, method_values, participant_values, device_values)
     validation_issues = validate_params(assembled_params)
+    if page in {"Session configuration", "Preview"}:
+        render_workflow_progress(progress_slot, assembled_params, validation_issues)
 
     if page == "Workflow":
         render_workflow_page(assembled_params, validation_issues)
@@ -2609,7 +2611,6 @@ def main() -> None:
         render_live_preview_tab(assembled_params, validation_issues)
 
     if page == "Preview":
-        render_workflow_progress(progress_slot, assembled_params, validation_issues)
         if validation_issues:
             st.warning(" ; ".join(validation_issues))
         st.json(assembled_params)
