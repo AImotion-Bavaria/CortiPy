@@ -1750,9 +1750,51 @@ def current_params_snapshot() -> Optional[Dict[str, Any]]:
 
 
 def _connection_signature(params: Dict[str, Any]) -> str:
-    payload = dict(params)
-    payload.pop("data", None)
-    payload.pop("Evaluation", None)
+    parameters = params.get("Parameters", {}) if isinstance(params, dict) else {}
+
+    def pick(*names: str) -> Dict[str, Any]:
+        values: Dict[str, Any] = {}
+        for name in names:
+            if name in parameters:
+                values[name] = parameters.get(name)
+            elif name in params:
+                values[name] = params.get(name)
+        return values
+
+    payload: Dict[str, Any] = {"Device": str(params.get("Device") or "").strip().lower()}
+    device = payload["Device"]
+    if device == "unicorn":
+        payload.update(
+            pick(
+                "fs",
+                "NumberEEGChannels",
+                "UNICORNPort",
+                "UNICORNAddress",
+                "UnicornPort",
+                "UnicornAddress",
+                "UNICORNDeviceName",
+                "UnicornDeviceName",
+                "UnicornTimeout",
+                "UNICORNTimeout",
+            )
+        )
+    elif device == "actichamp":
+        payload.update(
+            pick(
+                "fs",
+                "NumberEEGChannels",
+                "NumberAUXChannels",
+                "ActiChampPath",
+                "actichampPath",
+                "ActiChampTimeout",
+                "UseActiveElectrodes",
+                "IncludeTriggers",
+            )
+        )
+    elif device == "lsl":
+        payload.update(pick("fs", "NumberEEGChannels", "StreamName"))
+    elif device in {"dummy", "sim", "simulation"}:
+        payload.update(pick("fs", "NumberEEGChannels", "Noise"))
     return json.dumps(
         payload,
         sort_keys=True,
