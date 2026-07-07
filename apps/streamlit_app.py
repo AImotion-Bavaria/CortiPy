@@ -459,6 +459,23 @@ def render_unicorn_port_input(target, field: Dict[str, Any], current: Any, key: 
     return selection
 
 
+def sync_sidebar_unicorn_port(target) -> None:
+    device_forms = st.session_state.setdefault("device_forms", {})
+    form_state = device_forms.setdefault("UNICORN", device_default_values("UNICORN"))
+    current = form_state.get("UNICORNPort") or st.session_state.get("device_UNICORN_UNICORNPort")
+    base_field = next(
+        (field for field in DEVICE_CONFIG_SCHEMA.get("UNICORN", []) if field["name"] == "UNICORNPort"),
+        None,
+    )
+    if base_field is None:
+        return
+    field = dict(base_field)
+    field["label"] = "UNICORN COM port"
+    value = render_unicorn_port_input(target, field, current, "run_unicorn_port")
+    form_state["UNICORNPort"] = value
+    st.session_state["device_UNICORN_UNICORNPort"] = value
+
+
 def _params_from_jsonld_doc(doc: Dict[str, Any], file_name: str = "import.jsonld") -> Optional[Dict[str, Any]]:
     return _params_from_jsonld_doc_base(
         doc,
@@ -841,6 +858,14 @@ def _position_angle(label: str, fallback_idx: int) -> float:
     return 2 * math.pi * (idx / total)
 
 
+def _safe_channel_coords(label: str, fallback_idx: int = 0) -> tuple[float, float]:
+    pos_x, pos_y = _channel_default_coords(label)
+    if pos_x is not None and pos_y is not None:
+        return float(pos_x), float(pos_y)
+    angle = _position_angle(label, fallback_idx)
+    return float(0.8 * math.cos(angle)), float(0.8 * math.sin(angle))
+
+
 def render_config_snapshot(method: str, device: str, general: Dict[str, Any]) -> None:
     method = method or "N/A"
     device = device or "N/A"
@@ -1164,7 +1189,7 @@ def ensure_channel_rows(device: str, existing: Optional[List[Dict[str, Any]]] = 
         position_label = label.replace(" ", "")
         if index is not None and index < len(default_positions):
             position_label = default_positions[index]
-        pos_x, pos_y = _channel_default_coords(position_label)
+        pos_x, pos_y = _safe_channel_coords(position_label, index or 0)
         row = {
             "Channel": label,
             "Position": position_label,
@@ -1281,7 +1306,7 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                     continue
                 if eeg_idx < len(preset):
                     row["Position"] = preset[eeg_idx]
-                    row["PosX"], row["PosY"] = _channel_default_coords(preset[eeg_idx])
+                    row["PosX"], row["PosY"] = _safe_channel_coords(preset[eeg_idx], eeg_idx)
                 row["Active"] = True
                 eeg_idx += 1
             channel_state[device] = rows
@@ -1380,7 +1405,7 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
             )
             extras = set(DEVICE_EXTRA_LABELS.get(device, []))
             corrected_model = False
-            for row in edited:
+            for row_idx, row in enumerate(edited):
                 if row["Channel"] in extras:
                     row["Active"] = True
                 if not row.get("Position"):
@@ -1388,7 +1413,7 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 pos_x = coerce_number(row.get("PosX"))
                 pos_y = coerce_number(row.get("PosY"))
                 if pos_x is None or pos_y is None:
-                    pos_x, pos_y = _channel_default_coords(row["Position"])
+                    pos_x, pos_y = _safe_channel_coords(row["Position"], row_idx)
                 row["PosX"] = float(pos_x)
                 row["PosY"] = float(pos_y)
                 row["Rubrik"] = _valid_electrode_rubrik(row.get("Rubrik") or row.get("Rubric"))
@@ -2177,6 +2202,9 @@ def render_sidebar_controls() -> SidebarControls:
 
     with sidebar.container(border=True):
         st.subheader("Run")
+        current_device = str(st.session_state.get("general_form", {}).get("Device") or "")
+        if current_device.lower() == "unicorn":
+            sync_sidebar_unicorn_port(st)
         snap = current_params_snapshot()
         imported_data = st.session_state.get("imported_data")
         use_imported = st.session_state.get("use_imported_data", False)
