@@ -1006,13 +1006,14 @@ def render_general_form() -> Dict[str, Any]:
     general = st.session_state["general_form"]
     method_field = next(field for field in GENERAL_SCHEMA if field.name == "Method")
     device_field = next(field for field in GENERAL_SCHEMA if field.name == "Device")
+    environment_field = next((field for field in GENERAL_SCHEMA if field.name == "Environment"), None)
 
     with st.expander("Session configuration", expanded=True):
         form_col, viz_col = st.columns((3, 2))
-        left, right = form_col.columns(2)
+        top_cols = form_col.columns(3)
         method_options = method_field.options or sorted(METHOD_SCHEMAS.keys())
         method_value = resolve_choice(method_options, general.get("Method"))
-        method = left.selectbox(
+        method = top_cols[0].selectbox(
             "Method",
             options=method_options,
             index=method_options.index(method_value),
@@ -1020,23 +1021,34 @@ def render_general_form() -> Dict[str, Any]:
         )
         device_options = sorted(set((device_field.options or []) + SUPPORTED_EXTRA_DEVICES))
         device_value = resolve_choice(device_options, general.get("Device"))
-        device = right.selectbox(
+        device = top_cols[1].selectbox(
             "Device",
             options=device_options,
             index=device_options.index(device_value),
             help=device_field.tooltip or None,
         )
+        if environment_field is not None:
+            env_options = environment_field.options or [""]
+            env_value = resolve_choice(env_options, general.get("Environment"))
+            environment = top_cols[2].selectbox(
+                "Environment",
+                options=env_options,
+                index=env_options.index(env_value),
+                help=environment_field.tooltip or None,
+                key="general_Environment",
+            )
+            general["Environment"] = environment
         method_full = METHOD_FULL_NAMES.get(method)
         description = METHOD_DESCRIPTIONS.get(method)
         if method_full or description:
             caption_parts = [method_full or ""]
             if description:
                 caption_parts.append(description)
-            left.caption(" - ".join(part for part in caption_parts if part))
+            top_cols[0].caption(" - ".join(part for part in caption_parts if part))
         general["Method"] = method
         general["Device"] = device
 
-    other_fields = [field for field in GENERAL_SCHEMA if field.name not in {"Method", "Device"}]
+    other_fields = [field for field in GENERAL_SCHEMA if field.name not in {"Method", "Device", "Environment"}]
     device_is_unicorn = device.lower() == "unicorn"
     ncols = 3 if len(other_fields) > 4 else 2  # denser grid = fewer rows to scroll
     cols = form_col.columns(ncols)
@@ -1090,7 +1102,6 @@ def render_general_form() -> Dict[str, Any]:
     with viz_col:
         spacer_col, snap_col = viz_col.columns([1, 5])
         with snap_col:
-            st.caption("Configuration snapshot")
             render_config_snapshot(general.get("Method", ""), general.get("Device", ""), general)
     previous_device = st.session_state.get("_last_device_selection")
     device_changed = device != previous_device
