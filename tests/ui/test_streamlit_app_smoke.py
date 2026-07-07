@@ -42,6 +42,7 @@ def test_streamlit_app_imports() -> None:
         "Charts",
         "Saved sessions",
     ]
+    assert module.APP_VIEW_OPTIONS == module.VIEW_OPTIONS
     assert callable(module.render_workflow_page)
 
 

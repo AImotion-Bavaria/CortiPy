@@ -213,6 +213,10 @@ from cortipy.ui_streamlit.constants import (  # noqa: E402
     POSITION_ANGLE_LOOKUP as _POSITION_ANGLE_LOOKUP,
 )
 
+APP_VIEW_OPTIONS = list(VIEW_OPTIONS)
+if "Workflow" not in APP_VIEW_OPTIONS:
+    APP_VIEW_OPTIONS.insert(1, "Workflow")
+
 # 10-20 scalp coordinates + lookup live in cortipy.ui_streamlit.coords (first modularization step).
 from cortipy.ui_streamlit.coords import (  # noqa: E402
     TEN_TWENTY_COORDS,
@@ -2138,6 +2142,12 @@ def render_sidebar_controls() -> SidebarControls:
     sidebar.title("Controls")
 
     with sidebar.container(border=True):
+        st.subheader("Navigation")
+        if st.button("Workflow / help", width="stretch", key="open_workflow_page"):
+            st.session_state["active_view"] = "Workflow"
+        st.caption("Use this guide for setup order, available views, and export flow.")
+
+    with sidebar.container(border=True):
         st.subheader("Measurement")
 
         default_save = st.text_input(
@@ -2489,10 +2499,12 @@ def main() -> None:
     start_button = controls.start_button
     imported_data = st.session_state.get("imported_data")
 
+    if st.session_state.get("active_view") not in APP_VIEW_OPTIONS:
+        st.session_state["active_view"] = APP_VIEW_OPTIONS[0]
+
     page = st.segmented_control(
         "Section",
-        VIEW_OPTIONS,
-        default="Session configuration",
+        APP_VIEW_OPTIONS,
         key="active_view",
         label_visibility="collapsed",
         width="stretch",
