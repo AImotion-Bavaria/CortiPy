@@ -174,13 +174,18 @@ def _render_workflow_banner(
     min_height: str = "0",
 ) -> None:
     bg, fg, border = _workflow_status_tone(status)
+    eyebrow_html = (
+        f"<div style='color:{fg};font-size:0.76rem;font-weight:800;text-transform:uppercase;'>"
+        f"{html.escape(eyebrow)}</div>"
+        if eyebrow
+        else ""
+    )
     st.markdown(
         (
             f"<div style='border:1px solid {border};border-left:6px solid {border};"
             f"border-radius:10px;background:{bg};padding:1.12rem 1.16rem;margin-bottom:1.1rem;"
             f"min-height:{min_height};'>"
-            f"<div style='color:{fg};font-size:0.76rem;font-weight:800;text-transform:uppercase;'>"
-            f"{html.escape(eyebrow)}</div>"
+            f"{eyebrow_html}"
             f"<div style='color:#111827;font-size:1.25rem;font-weight:800;line-height:1.25;margin-top:0.15rem;'>"
             f"{html.escape(title)}</div>"
             f"<div style='color:#374151;line-height:1.4;margin-top:0.45rem;'>{html.escape(body)}</div>"
@@ -280,8 +285,6 @@ def _render_capability_panel() -> None:
         (
             "<div style='border:1px solid #5eead4;border-left:6px solid #0d9488;"
             "border-radius:10px;background:#ecfdf5;padding:1.1rem 1.16rem;margin-bottom:1rem;'>"
-            "<div style='color:#047857;font-size:0.76rem;font-weight:850;text-transform:uppercase;'>"
-            "CortiPy command center</div>"
             "<div style='color:#111827;font-size:1.25rem;font-weight:820;line-height:1.25;margin-top:0.16rem;'>"
             "What CortiPy can do</div>"
             "<div style='display:grid;grid-template-columns:repeat(2,minmax(0,1fr));"
@@ -334,7 +337,7 @@ def render_workflow_page(
     top_left, top_right = st.columns([1.9, 1])
     with top_left:
         _render_capability_panel()
-        _render_workflow_banner("Next best action", next_title, next_body, next_status, min_height="5.5rem")
+        _render_workflow_banner("", next_title, next_body, next_status, min_height="5.5rem")
         action_cols = st.columns([1.15, 0.85])
         action_cols[0].button(
             f"Open {next_page}",
@@ -364,8 +367,7 @@ def render_workflow_page(
             _render_spacer("0.4rem")
             _render_check_grid([(label, flags[key]) for key, label in WORKFLOW_READINESS_ITEMS])
 
-    st.markdown("**Current session**")
-    _render_spacer("0.38rem")
+    _render_spacer("0.65rem")
     summary_cols = st.columns(6)
     summary_status = {
         "Method": "Ready" if summary["Method"] != "Not set" else "Needs setup",
@@ -379,8 +381,7 @@ def render_workflow_page(
         with col:
             _render_summary_tile(label, value, summary_status[label])
 
-    st.markdown("**Guided flow**")
-    _render_spacer("0.38rem")
+    _render_spacer("0.75rem")
     phase_cols = st.columns(3)
     with phase_cols[0]:
         prepare_status = "Ready" if flags["has_config"] and flags["has_participant"] and flags["has_electrodes"] else "Needs setup"
