@@ -292,12 +292,13 @@ PARTICIPANT_CARD_STYLE = """
     background: var(--card-bg);
     border-radius: 16px;
     border: 1px solid var(--card-border);
-    padding: 0.85rem 1rem;
+    padding: 0.75rem 0.85rem;
     box-shadow: 0 4px 12px var(--card-shadow);
     margin-bottom: 0.75rem;
 }
 .participant-card .avatar {
-    font-size: 48px;
+    font-size: 40px;
+    line-height: 1;
     text-align: center;
     margin-bottom: 0.4rem;
 }
@@ -998,7 +999,7 @@ def _render_participant_card(participant: Dict[str, Any]) -> None:
     notes_html = ""
     if notes_text:
         notes_html = f"<div class='notes'>Notes: {html.escape(notes_text)}</div>"
-    card_html = f"<div class='participant-card'><div class='avatar'>P</div>{info_html}{notes_html}</div>"
+    card_html = f"<div class='participant-card'><div class='avatar'>&#9786;</div>{info_html}{notes_html}</div>"
     st.markdown(card_html, unsafe_allow_html=True)
 
 
@@ -1593,30 +1594,29 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
 def render_participant_form() -> Dict[str, Any]:
     participant = st.session_state["participant"]
     with st.expander("Participant / proband information", expanded=True):
-        form_col, viz_col = st.columns((4, 1))
+        form_col, viz_col = st.columns((5, 1))
         with form_col:
-            cols = form_col.columns(2)
+            cols = form_col.columns([1.25, 1.0, 0.65, 1.0, 1.0])
             participant["Code"] = cols[0].text_input(
                 "Participant code", value=participant.get("Code", ""), placeholder="e.g. VEP_023"
             )
             participant["Initials"] = cols[1].text_input("Initials", value=participant.get("Initials", ""))
-            cols = form_col.columns(3)
             age_number = coerce_number(participant.get("Age"))
             age_default = int(age_number) if isinstance(age_number, (int, float)) and age_number > 0 else 0
-            participant["Age"] = cols[0].number_input("Age", min_value=0, max_value=110, value=age_default)
+            participant["Age"] = cols[2].number_input("Age", min_value=0, max_value=110, value=age_default)
             gender_value = resolve_choice(GENDER_OPTIONS, participant.get("Gender"))
             hand_value = resolve_choice(HANDEDNESS_OPTIONS, participant.get("DominantHand"))
-            participant["Gender"] = cols[1].selectbox(
+            participant["Gender"] = cols[3].selectbox(
                 "Gender", options=GENDER_OPTIONS, index=GENDER_OPTIONS.index(gender_value)
             )
-            participant["DominantHand"] = cols[2].selectbox(
+            participant["DominantHand"] = cols[4].selectbox(
                 "Dominant hand", options=HANDEDNESS_OPTIONS, index=HANDEDNESS_OPTIONS.index(hand_value)
             )
-            participant["Notes"] = form_col.text_area("Session notes", value=participant.get("Notes", ""), height=80)
+            notes_col, _ = form_col.columns([3, 1])
+            participant["Notes"] = notes_col.text_area("Session notes", value=participant.get("Notes", ""), height=80)
         with viz_col:
             spacer_col, snap_col = viz_col.columns([1, 5])
             with snap_col:
-                st.caption("Participant snapshot")
                 _render_participant_card(participant)
     return dict(participant)
 
