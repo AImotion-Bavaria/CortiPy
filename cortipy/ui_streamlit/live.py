@@ -105,7 +105,7 @@ def _plot_live_buffer(
                 range=[time_axis_min, time_axis_max],
             ),
             yaxis=dict(title="Amplitude (uV)"),
-            title=f"Live preview ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ {label_part}",
+            title=f"Live preview - {label_part}",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             template="plotly_dark" if st.get_option("theme.base") == "dark" else "plotly_white",
         )
@@ -127,10 +127,10 @@ def _plot_live_buffer(
             color = colors[plot_idx % len(colors)]
             ax.plot(time_axis, buffer[:, ch], label=f"Ch {ch + 1}", color=color)
         ax.set_xlim(time_axis_min, time_axis_max)
-        ax.set_xlabel("Time (s) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â newest on the right" if fs > 0 else "Samples")
+        ax.set_xlabel("Time (s) - newest on the right" if fs > 0 else "Samples")
         ax.set_ylabel("Amplitude (uV)")
         label_part = "All channels" if len(indices) == total_channels else ", ".join(f"{ch + 1}" for ch in indices)
-        ax.set_title(f"Live preview ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ {label_part}")
+        ax.set_title(f"Live preview - {label_part}")
         ax.legend(loc="upper right", fontsize=8)
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
@@ -209,7 +209,7 @@ def _plot_fft_spectrum(
             margin=dict(l=50, r=10, t=40, b=50),
             xaxis=dict(title="Frequency (Hz)", range=[0, max_freq]),
             yaxis=dict(title="Power (dB/Hz)"),
-            title=f"FFT ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ {label_part}",
+            title=f"FFT - {label_part}",
             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
             template="plotly_dark" if st.get_option("theme.base") == "dark" else "plotly_white",
             shapes=shapes,
@@ -263,7 +263,7 @@ def _plot_fft_spectrum(
         ax.set_xlabel("Frequency (Hz)")
         ax.set_ylabel("Power (dB/Hz)")
         label_part = "All channels" if len(indices) == total_channels else ", ".join(f"{ch + 1}" for ch in indices)
-        ax.set_title(f"FFT ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“ {label_part}")
+        ax.set_title(f"FFT - {label_part}")
         ax.legend(loc="upper right", fontsize=8, ncol=2)
         ax.grid(True, alpha=0.3)
         fig.tight_layout()
@@ -306,7 +306,7 @@ def _plot_individual_channels(
             fig, ax = plt.subplots(figsize=(14, 3))
             ax.plot(time_axis, buffer[:, ch], color=color, linewidth=1.0)
             ax.set_xlim(time_axis_min, time_axis_max)
-            ax.set_xlabel("Time (s) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â newest on the right" if fs > 0 else "Samples")
+            ax.set_xlabel("Time (s) - newest on the right" if fs > 0 else "Samples")
             ax.set_ylabel("Amplitude (uV)")
             ax.set_title(f"Channel {ch + 1}")
             ax.grid(True, alpha=0.25)

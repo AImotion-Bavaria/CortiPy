@@ -228,7 +228,7 @@ METHOD_FULL_NAMES: Dict[str, str] = {
     "VEP": "Transient Visual Evoked Potential",
 }
 METHOD_DESCRIPTIONS: Dict[str, str] = {
-    "Alpha": "Eyes-closed relaxation run to monitor 8ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ12 Hz activity.",
+    "Alpha": "Eyes-closed relaxation run to monitor 8-12 Hz activity.",
     "ASSR": "Amplitude-modulated tones to probe auditory entrainment.",
     "BCI": "Frequency-coded checkerboards for real-time BCI control.",
     "BERA": "Click trains capturing early brainstem responses.",
@@ -419,7 +419,7 @@ def serial_port_options() -> List[tuple[str, str]]:
         if serial_no:
             details_parts.append(f"SN {serial_no}")
         details = ", ".join(details_parts)
-        label = f"{device} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ {details}" if details else device
+        label = f"{device} - {details}" if details else device
         options.append((device, label))
         seen.add(device)
     return sorted(options, key=lambda item: item[0])
@@ -523,7 +523,7 @@ def _plot_topography(rows: List[Dict[str, Any]], placeholder: "st.delta_generato
         sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=vmin, vmax=vmax))
         sm.set_array([])
         cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.02)
-        cbar.set_label("Impedance (kÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â©)")
+        cbar.set_label("Impedance (kOhm)")
 
     ax.set_xlim(-1.25, 1.25)
     ax.set_ylim(-1.25, 1.25)
@@ -573,7 +573,7 @@ def _plotly_topography(rows: List[Dict[str, Any]]) -> Optional["go.Figure"]:
             xy = TEN_TWENTY_COORDS.get(clean, (0.0, 0.0))
         xs.append(xy[0])
         ys.append(xy[1])
-        texts.append(f"{label}<br>Imp: {impedances[idx] if impedances[idx] is not None else 'ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â'} kÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â©")
+        texts.append(f"{label}<br>Imp: {impedances[idx] if impedances[idx] is not None else 'N/A'} kOhm")
         colors.append(impedances[idx] if impedances[idx] is not None else 0.0)
 
     scatter = go.Scatter(
@@ -587,7 +587,7 @@ def _plotly_topography(rows: List[Dict[str, Any]]) -> Optional["go.Figure"]:
             color=colors,
             colorscale="Plasma",
             showscale=True,
-            colorbar=dict(title="Imp (kÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â©)"),
+            colorbar=dict(title="Imp (kOhm)"),
             line=dict(color="white", width=1),
         ),
         hoverinfo="text",
@@ -826,7 +826,7 @@ def _fetch_actichamp_impedances(fs_value: Any, *, force: bool = False) -> None:
     else:
         low, high = range_kohm
         st.session_state["_actichamp_impedance_status"] = (
-            f"Loaded {len(values)} impedance values ({low:.1f}-{high:.1f} kÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â©)."
+            f"Loaded {len(values)} impedance values ({low:.1f}-{high:.1f} kOhm)."
         )
     st.session_state["_actichamp_impedance_timestamp"] = time.time()
 
@@ -841,8 +841,8 @@ def _position_angle(label: str, fallback_idx: int) -> float:
 
 
 def render_config_snapshot(method: str, device: str, general: Dict[str, Any]) -> None:
-    method = method or "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"
-    device = device or "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"
+    method = method or "N/A"
+    device = device or "N/A"
     full_name = METHOD_FULL_NAMES.get(method)
     desc = METHOD_DESCRIPTIONS.get(method)
     params_block = general if "Parameters" not in general else general.get("Parameters", {})
@@ -850,10 +850,10 @@ def render_config_snapshot(method: str, device: str, general: Dict[str, Any]) ->
     channels = coerce_number(params_block.get("NumberEEGChannels") or general.get("NumberEEGChannels"))
     duration = coerce_number(params_block.get("RecordingTime") or general.get("RecordingTime"))
 
-    method_label = f"{method} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ {full_name}" if full_name else method
-    fs_txt = f"{fs_value} Hz" if fs_value is not None else "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"
-    ch_txt = f"{int(channels)}" if channels is not None else "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"
-    dur_txt = f"{duration} s" if duration is not None else "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â s"
+    method_label = f"{method} - {full_name}" if full_name else method
+    fs_txt = f"{fs_value} Hz" if fs_value is not None else "N/A"
+    ch_txt = f"{int(channels)}" if channels is not None else "N/A"
+    dur_txt = f"{duration} s" if duration is not None else "N/A"
 
     html_block = textwrap.dedent(
         f"""
@@ -957,11 +957,11 @@ def _electrode_map_figure(device: str, rows: List[Dict[str, Any]]) -> plt.Figure
 def _render_participant_card(participant: Dict[str, Any]) -> None:
     st.markdown(PARTICIPANT_CARD_STYLE, unsafe_allow_html=True)
     info_rows = [
-        ("ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â", "Code", participant.get("Code") or "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"),
-        ("ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚Â¤", "Initials", participant.get("Initials") or "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"),
-        ("ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€¦Ã‚Â½ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡", "Age", participant.get("Age") or "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"),
-        ("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã‚Â¡Ãƒâ€šÃ‚Â§", "Gender", participant.get("Gender") or "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"),
-        ("ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹", "Dominant hand", participant.get("DominantHand") or "ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â"),
+        ("ID", "Code", participant.get("Code") or "N/A"),
+        ("Ab", "Initials", participant.get("Initials") or "N/A"),
+        ("Age", "Age", participant.get("Age") or "N/A"),
+        ("Sex", "Gender", participant.get("Gender") or "N/A"),
+        ("Hand", "Dominant hand", participant.get("DominantHand") or "N/A"),
     ]
     info_html = "".join(
         f"<div class='field'><div class='icon'>{icon}</div>"
@@ -971,8 +971,8 @@ def _render_participant_card(participant: Dict[str, Any]) -> None:
     notes_text = str(participant.get("Notes") or "").strip()
     notes_html = ""
     if notes_text:
-        notes_html = f"<div class='notes'>ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€šÃ‚Â {html.escape(notes_text)}</div>"
-    card_html = f"<div class='participant-card'><div class='avatar'>ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€šÃ‚Â§ÃƒÂ¢Ã¢â€šÂ¬Ã‹Å“</div>{info_html}{notes_html}</div>"
+        notes_html = f"<div class='notes'>Notes: {html.escape(notes_text)}</div>"
+    card_html = f"<div class='participant-card'><div class='avatar'>P</div>{info_html}{notes_html}</div>"
     st.markdown(card_html, unsafe_allow_html=True)
 
 
@@ -1006,7 +1006,7 @@ def render_general_form() -> Dict[str, Any]:
             caption_parts = [method_full or ""]
             if description:
                 caption_parts.append(description)
-            left.caption(" ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· ".join(part for part in caption_parts if part))
+            left.caption(" - ".join(part for part in caption_parts if part))
         general["Method"] = method
         general["Device"] = device
 
@@ -1353,7 +1353,7 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                         help="Automatically selected from the electrode type (Rubrik).",
                     ),
                     "Impedance": st.column_config.NumberColumn(
-                        "Impedance (kÃƒÆ’Ã…Â½Ãƒâ€šÃ‚Â©)",
+                        "Impedance (kOhm)",
                         min_value=0.0,
                         step=0.5,
                         format="%.1f",
@@ -1979,10 +1979,10 @@ def render_sidebar_controls() -> SidebarControls:
 
         if prior_sessions:
             latest = prior_sessions[0]
-            st.caption(f"ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œÃƒâ€šÃ‚Â {len(prior_sessions)} prior session(s) ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â latest: {latest.name}")
+            st.caption(f"{len(prior_sessions)} prior session(s) - latest: {latest.name}")
 
             if st.button(
-                "ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚Â Continue experiment (load latest settings)",
+                "Continue experiment (load latest settings)",
                 key="continue_experiment",
                 width="stretch",
                 help="Load the most recent session's parameters (not its data) so you can record the next subject.",
@@ -2012,7 +2012,7 @@ def render_sidebar_controls() -> SidebarControls:
         snapshot = current_params_snapshot()
 
         st.download_button(
-            "ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ Export settings (params.json)",
+            "Export settings (params.json)",
             data=params_to_json(snapshot) if snapshot else "{}",
             file_name=f"{(snapshot or {}).get('Method', 'cortipy')}_params.json",
             mime="application/json",
@@ -2043,7 +2043,7 @@ def render_sidebar_controls() -> SidebarControls:
         )
 
         if st.button(
-            f"ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¡ Export as {export_container} + {export_fmt}",
+            f"Export as {export_container} + {export_fmt}",
             disabled=not can_export,
             width="stretch",
             key="export_recording_btn",
@@ -2056,7 +2056,7 @@ def render_sidebar_controls() -> SidebarControls:
                     export_container,
                     export_fmt,
                 )
-                st.success(f"Exported {export_container} + {export_fmt} ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ÃƒÂ¢Ã¢â€šÂ¬Ã¢â€žÂ¢ {out}")
+                st.success(f"Exported {export_container} + {export_fmt} -> {out}")
             except Exception as exc:
                 LOGGER.exception("Recording export failed")
                 st.error(f"Export failed: {exc}")
@@ -2100,7 +2100,7 @@ def render_sidebar_controls() -> SidebarControls:
         st.subheader("Run")
 
         if st.button(
-            "ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Test device connection",
+            "Test device connection",
             width="stretch",
             key="test_device_connection",
             help="Connect and confirm the device is streaming before starting a recording.",
@@ -2110,7 +2110,7 @@ def render_sidebar_controls() -> SidebarControls:
             if snap is None:
                 st.session_state["_device_check"] = ("warn", "Choose a method and device first.")
             else:
-                with st.spinner("ConnectingÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦"):
+                with st.spinner("Connecting..."):
                     try:
                         ok, msg = verify_device_connection(snap)
                         st.session_state["_device_check"] = ("ok" if ok else "err", msg)
@@ -2123,7 +2123,7 @@ def render_sidebar_controls() -> SidebarControls:
         if check:
             kind, msg = check
             {"ok": st.success, "warn": st.warning}.get(kind, st.error)(
-                {"ok": "ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ ", "warn": "", "err": "ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ "}.get(kind, "") + msg
+                {"ok": "[ok] ", "warn": "", "err": "[error] "}.get(kind, "") + msg
             )
 
         start_button = st.button(
@@ -2138,8 +2138,8 @@ def render_sidebar_controls() -> SidebarControls:
             "Use Simulate run above to try without hardware."
         )
 
-    # ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ ONLY ONE diagnostics block (FIXED)
-    with sidebar.expander("ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸Ãƒâ€šÃ‚Â©Ãƒâ€šÃ‚Âº Diagnostics (logs)", expanded=False):
+    # ONLY ONE diagnostics block (FIXED)
+    with sidebar.expander("Diagnostics (logs)", expanded=False):
         st.caption(f"Log file: {LOG_PATH}")
 
         if st.button("Refresh logs", key="refresh_logs_button"):
@@ -2202,17 +2202,17 @@ def render_workflow_progress(slot, params: Dict[str, Any], validation_issues: Li
     done = sum(1 for _, ok in steps if ok)
     ready = not validation_issues
     with slot:
-        caption = "Ready to run ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â press Start measurement" if ready else "Complete the required fields to run"
-        st.progress(done / len(steps), text=f"Setup {done}/{len(steps)} ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â· {caption}")
+        caption = "Ready to run - press Start measurement" if ready else "Complete the required fields to run"
+        st.progress(done / len(steps), text=f"Setup {done}/{len(steps)} - {caption}")
         cols = st.columns(len(steps))
         for col, (label, ok) in zip(cols, steps):
-            col.markdown(f"{'ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦' if ok else 'ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚Â¬Ãƒâ€¦Ã¢â‚¬Å“'} {label}")
+            col.markdown(f"{'[ok]' if ok else '[ ]'} {label}")
 
 
 def main() -> None:
     st.set_page_config(page_title="cortipy UI", layout="wide")
     inject_global_styles(st)
-    st.title("cortipy ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ EEG Measurement UI")
+    st.title("cortipy - EEG Measurement UI")
     ensure_state()
 
     flash = st.session_state.pop("_flash", None)
@@ -2271,7 +2271,7 @@ def main() -> None:
 
     if page == "Preview":
         if validation_issues:
-            st.warning(" ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ ".join(validation_issues))
+            st.warning(" ; ".join(validation_issues))
         st.json(assembled_params)
         st.download_button(
             "Download params.json",
@@ -2324,7 +2324,7 @@ def main() -> None:
 
     if start_button:
         if validation_issues:
-            issues_md = " ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ " + "\n ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¢ ".join(validation_issues)
+            issues_md = " - " + "\n - ".join(validation_issues)
             st.error(f"Please fix these configuration issues before starting a run:\n{issues_md}")
             render_footer()
             return
@@ -2355,7 +2355,7 @@ def main() -> None:
         )
         # Position the live view inside the elevated top region (recreated each run).
         st.session_state["_live_view_placeholder"] = None
-        with run_region, st.status("ÃƒÆ’Ã‚Â°Ãƒâ€¦Ã‚Â¸ÃƒÂ¢Ã¢â€šÂ¬Ã‚ÂÃƒâ€šÃ‚Â´ Measurement runningÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â¦", expanded=True) as run_status:
+        with run_region, st.status("Measurement running...", expanded=True) as run_status:
             progress_placeholder = st.empty()
             live_view_service = LiveViewService(
                 get_live_view_placeholder() if live_view_enabled else None,
@@ -2383,12 +2383,12 @@ def main() -> None:
                         "data": params_to_run.get("data"),
                     }
                     live_view_service.mark_complete()
-                    run_status.update(label="ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ Simulated data saved ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â open the Charts tab", state="complete")
+                    run_status.update(label="Simulated data saved - open the Charts tab", state="complete")
                 else:
                     imported_data = st.session_state.get("imported_data")
                     use_imported = st.session_state.get("use_imported_data", False)
                     if use_imported and imported_data is None:
-                        run_status.update(label="ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ No imported data attached", state="error")
+                        run_status.update(label="No imported data attached", state="error")
                         st.error("Upload a data file or select a saved session first.")
                     else:
                         if use_imported and imported_data is not None:
@@ -2401,10 +2401,10 @@ def main() -> None:
                             "data": run_params.get("data"),
                         }
                         live_view_service.mark_complete()
-                        run_status.update(label="ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ Measurement finished and saved ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â open the Charts tab", state="complete")
+                        run_status.update(label="Measurement finished and saved - open the Charts tab", state="complete")
             except Exception as exc:  # pragma: no cover
                 LOGGER.exception("Measurement failed")
-                run_status.update(label="ÃƒÆ’Ã‚Â¢Ãƒâ€šÃ‚ÂÃƒâ€¦Ã¢â‚¬â„¢ Measurement failed", state="error")
+                run_status.update(label="Measurement failed", state="error")
                 st.error(f"Measurement failed: {exc}")
             finally:
                 st.session_state["_live_view_active"] = False
