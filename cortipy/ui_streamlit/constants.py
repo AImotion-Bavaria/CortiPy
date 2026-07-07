@@ -10,8 +10,8 @@ from typing import Any, Dict, List
 
 SUPPORTED_EXTRA_DEVICES = ["LSL", "Offline", "Dummy"]
 VIEW_OPTIONS = [
-    "Session configuration",
     "Workflow",
+    "Session configuration",
     "Electrodes",
     "Live preview",
     "Preview",

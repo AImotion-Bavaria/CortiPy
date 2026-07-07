@@ -215,7 +215,32 @@ from cortipy.ui_streamlit.constants import (  # noqa: E402
 
 APP_VIEW_OPTIONS = list(VIEW_OPTIONS)
 if "Workflow" not in APP_VIEW_OPTIONS:
-    APP_VIEW_OPTIONS.insert(1, "Workflow")
+    APP_VIEW_OPTIONS.insert(0, "Workflow")
+
+NAVIGATION_STATE_VERSION = "workflow_home_v1"
+
+
+def set_active_view(page: str) -> None:
+    if page not in APP_VIEW_OPTIONS:
+        return
+    st.session_state["active_view"] = page
+    st.session_state["active_view_selector"] = page
+
+
+def ensure_navigation_state() -> None:
+    if st.session_state.get("_navigation_state_version") != NAVIGATION_STATE_VERSION:
+        set_active_view("Workflow")
+        st.session_state["_navigation_state_version"] = NAVIGATION_STATE_VERSION
+        return
+
+    selector_page = st.session_state.get("active_view_selector")
+    active_page = st.session_state.get("active_view")
+    if selector_page in APP_VIEW_OPTIONS:
+        st.session_state["active_view"] = selector_page
+    elif active_page in APP_VIEW_OPTIONS:
+        st.session_state["active_view_selector"] = active_page
+    else:
+        set_active_view("Workflow")
 
 # 10-20 scalp coordinates + lookup live in cortipy.ui_streamlit.coords (first modularization step).
 from cortipy.ui_streamlit.coords import (  # noqa: E402
@@ -2121,9 +2146,14 @@ def render_sidebar_controls() -> SidebarControls:
 
     with sidebar.container(border=True):
         st.subheader("Navigation")
-        if st.button("Workflow / help", width="stretch", key="open_workflow_page"):
-            st.session_state["active_view"] = "Workflow"
-        st.caption("Use this guide for setup order, available views, and export flow.")
+        st.button(
+            "Workflow home",
+            width="stretch",
+            key="open_workflow_page",
+            on_click=set_active_view,
+            args=("Workflow",),
+        )
+        st.caption("Start here for setup order, page shortcuts, and export flow.")
 
     with sidebar.container(border=True):
         st.subheader("Measurement")
@@ -2403,57 +2433,112 @@ def render_workflow_progress(slot, params: Dict[str, Any], validation_issues: Li
             )
 
 
-def render_workflow_page() -> None:
-    """Show a concise operator guide for configuring, recording, and exporting sessions."""
-    st.subheader("Workflow")
-    st.caption("Use this page as the run checklist for a complete EEG session.")
+def _workflow_statuses(params: Dict[str, Any], validation_issues: List[str]) -> Dict[str, str]:
+    parameters = params.get("Parameters", {}) if isinstance(params, dict) else {}
+    participant = (params.get("Metadata", {}) or {}).get("Participant", {}) or {}
+    has_config = bool(params.get("Method") and params.get("Device") and parameters.get("fs"))
+    has_participant = bool(participant.get("Code"))
+    has_electrodes = _has_active_eeg_channels(params)
+    has_result = bool(st.session_state.get("last_results") or st.session_state.get("imported_data") is not None)
+    ready = has_config and has_electrodes and not validation_issues
+    return {
+        "Session configuration": "Ready" if has_config and has_participant else "Needs details",
+        "Electrodes": "Ready" if has_electrodes else "Needs channels",
+        "Live preview": "Ready" if ready else "Needs setup",
+        "Preview": "Ready" if ready else "Checklist",
+        "Charts": "Ready" if has_result else "After run/import",
+        "Saved sessions": "Available",
+    }
 
-    step_cols = st.columns(3)
-    with step_cols[0]:
-        st.markdown("**1. Configure**")
-        st.markdown(
-            "- Choose method, device, and environment.\n"
-            "- Fill method parameters and device settings.\n"
-            "- Set the recording time before starting."
-        )
-    with step_cols[1]:
-        st.markdown("**2. Prepare**")
-        st.markdown(
-            "- Fill participant/proband fields.\n"
-            "- Review electrodes, labels, and active channels.\n"
-            "- Import existing params or data when replaying."
-        )
-    with step_cols[2]:
-        st.markdown("**3. Run and review**")
-        st.markdown(
-            "- Connect the device.\n"
-            "- Start measurement when the checklist is complete.\n"
-            "- Review previews, charts, and exported files."
-        )
 
-    st.divider()
-    st.markdown("**What this UI can do**")
-    ability_cols = st.columns(2)
-    with ability_cols[0]:
-        st.markdown(
-            "- Configure EEG measurement sessions.\n"
-            "- Edit channel metadata and electrode positions.\n"
-            "- Connect supported devices or run dummy/offline data.\n"
-            "- Monitor setup readiness from the top checklist."
-        )
-    with ability_cols[1]:
-        st.markdown(
-            "- Open live preview and chart windows.\n"
-            "- Import params, JSON-LD, and recorded data.\n"
-            "- Export settings and recordings.\n"
-            "- Load saved sessions for review and comparison."
-        )
-
-    st.divider()
-    st.markdown("**Suggested demo path**")
-    st.markdown(
-        "Session configuration -> Workflow -> Electrodes -> Live preview -> Preview -> Charts -> Saved sessions"
+def _workflow_card(title: str, body: str, page: str, status: str, key: str) -> None:
+    st.markdown(f"**{html.escape(title)}**")
+    st.caption(status)
+    st.write(body)
+    st.button(
+        f"Open {page}",
+        width="stretch",
+        key=key,
+        on_click=set_active_view,
+        args=(page,),
     )
+
+
+def render_workflow_page(params: Dict[str, Any], validation_issues: List[str]) -> None:
+    """Show a home page with workflow shortcuts for configuring, recording, and reviewing sessions."""
+    statuses = _workflow_statuses(params, validation_issues)
+
+    st.markdown(
+        """
+        <div class="workflow-home">
+            <div class="workflow-kicker">CortiPy workflow</div>
+            <div class="workflow-title">Start with the workflow, then jump into the exact page you need.</div>
+            <div class="workflow-copy">
+                Configure the run, prepare channels and participant metadata, record or replay data,
+                then inspect and export the session.
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    route_cols = st.columns(3)
+    with route_cols[0]:
+        with st.container(border=True):
+            _workflow_card(
+                "1. Configure session",
+                "Set method, device, environment, method parameters, device settings, and participant details.",
+                "Session configuration",
+                statuses["Session configuration"],
+                "workflow_open_session",
+            )
+    with route_cols[1]:
+        with st.container(border=True):
+            _workflow_card(
+                "2. Prepare electrodes",
+                "Review active channels, labels, electrode rubrics/models, positions, and impedance mapping.",
+                "Electrodes",
+                statuses["Electrodes"],
+                "workflow_open_electrodes",
+            )
+    with route_cols[2]:
+        with st.container(border=True):
+            _workflow_card(
+                "3. Preview signal",
+                "Open live preview for a moving signal window before or during acquisition.",
+                "Live preview",
+                statuses["Live preview"],
+                "workflow_open_live_preview",
+            )
+
+    review_cols = st.columns(3)
+    with review_cols[0]:
+        with st.container(border=True):
+            _workflow_card(
+                "4. Validate setup",
+                "Check the assembled params JSON, completion checklist, and validation messages.",
+                "Preview",
+                statuses["Preview"],
+                "workflow_open_preview",
+            )
+    with review_cols[1]:
+        with st.container(border=True):
+            _workflow_card(
+                "5. Inspect charts",
+                "Review plots from the last run or imported data in pop-out chart windows.",
+                "Charts",
+                statuses["Charts"],
+                "workflow_open_charts",
+            )
+    with review_cols[2]:
+        with st.container(border=True):
+            _workflow_card(
+                "6. Reopen sessions",
+                "Load saved sessions, compare recordings, and review previous outputs.",
+                "Saved sessions",
+                statuses["Saved sessions"],
+                "workflow_open_saved_sessions",
+            )
 
 
 def main() -> None:
@@ -2474,18 +2559,18 @@ def main() -> None:
     start_button = controls.start_button
     imported_data = st.session_state.get("imported_data")
 
-    if st.session_state.get("active_view") not in APP_VIEW_OPTIONS:
-        st.session_state["active_view"] = APP_VIEW_OPTIONS[0]
+    ensure_navigation_state()
 
     page = st.segmented_control(
         "Section",
         APP_VIEW_OPTIONS,
-        key="active_view",
+        key="active_view_selector",
         label_visibility="collapsed",
         width="stretch",
     )
     if page is None:
-        page = "Session configuration"
+        page = st.session_state.get("active_view") or "Workflow"
+    st.session_state["active_view"] = page
 
     # Elevated run-status + live-view region: measurement feedback renders here at the top of the
     # page (vivid start/end via st.status) instead of at the bottom where the run block executes.
@@ -2516,15 +2601,15 @@ def main() -> None:
 
     assembled_params = assemble_params(general_values, method_values, participant_values, device_values)
     validation_issues = validate_params(assembled_params)
-    render_workflow_progress(progress_slot, assembled_params, validation_issues)
 
     if page == "Workflow":
-        render_workflow_page()
+        render_workflow_page(assembled_params, validation_issues)
 
     if page == "Live preview":
         render_live_preview_tab(assembled_params, validation_issues)
 
     if page == "Preview":
+        render_workflow_progress(progress_slot, assembled_params, validation_issues)
         if validation_issues:
             st.warning(" ; ".join(validation_issues))
         st.json(assembled_params)

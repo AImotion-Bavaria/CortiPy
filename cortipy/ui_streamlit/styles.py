@@ -85,6 +85,41 @@ section[data-testid="stSidebar"] > div,
 [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] > div {
     background-color: var(--sidebar-panel-bg) !important;
 }
+.workflow-home {
+    border: 1px solid var(--expander-border);
+    border-radius: 10px;
+    background: linear-gradient(135deg, #eef4f8 0%, #f8fafc 54%, #fff7ed 100%);
+    padding: 1rem 1.15rem;
+    margin: 0.15rem 0 1rem 0;
+}
+.workflow-kicker {
+    color: var(--accent);
+    font-size: 0.82rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0;
+    margin-bottom: 0.25rem;
+}
+.workflow-title {
+    color: var(--expander-text);
+    font-size: 1.45rem;
+    font-weight: 760;
+    line-height: 1.25;
+    margin-bottom: 0.35rem;
+}
+.workflow-copy {
+    color: #475569;
+    max-width: 58rem;
+    line-height: 1.45;
+}
+@media (prefers-color-scheme: dark) {
+    .workflow-home {
+        background: linear-gradient(135deg, #0b1220 0%, #111827 100%);
+    }
+    .workflow-copy {
+        color: #cbd5e1;
+    }
+}
 @media (max-width: 640px) {
     :root {
         --sidebar-width: 85vw;
