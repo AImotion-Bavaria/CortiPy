@@ -88,9 +88,13 @@ section[data-testid="stSidebar"] > div,
 .workflow-home {
     border: 1px solid var(--expander-border);
     border-radius: 10px;
-    background: linear-gradient(135deg, #eef4f8 0%, #f8fafc 54%, #fff7ed 100%);
-    padding: 1rem 1.15rem;
+    background: linear-gradient(135deg, #e8f1f5 0%, #f8fafc 58%, #fff7ed 100%);
+    padding: 1rem;
     margin: 0.15rem 0 1rem 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1.15fr) minmax(18rem, 0.85fr);
+    gap: 1rem;
+    align-items: stretch;
 }
 .workflow-kicker {
     color: var(--accent);
@@ -102,7 +106,7 @@ section[data-testid="stSidebar"] > div,
 }
 .workflow-title {
     color: var(--expander-text);
-    font-size: 1.45rem;
+    font-size: 1.65rem;
     font-weight: 760;
     line-height: 1.25;
     margin-bottom: 0.35rem;
@@ -112,6 +116,129 @@ section[data-testid="stSidebar"] > div,
     max-width: 58rem;
     line-height: 1.45;
 }
+.workflow-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.45rem;
+}
+.workflow-summary-tile {
+    background: rgba(255, 255, 255, 0.72);
+    border: 1px solid rgba(148, 163, 184, 0.6);
+    border-radius: 8px;
+    padding: 0.55rem 0.65rem;
+}
+.workflow-summary-label {
+    color: #64748b;
+    font-size: 0.68rem;
+    font-weight: 760;
+    text-transform: uppercase;
+    letter-spacing: 0;
+}
+.workflow-summary-value {
+    color: #0f172a;
+    font-size: 0.95rem;
+    font-weight: 720;
+    line-height: 1.25;
+    margin-top: 0.15rem;
+    overflow-wrap: anywhere;
+}
+.workflow-lane {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    gap: 0.55rem;
+    margin: 0.4rem 0 1rem 0;
+}
+.workflow-node {
+    border: 1px solid var(--expander-border);
+    border-left-width: 4px;
+    border-radius: 8px;
+    background: #f8fafc;
+    min-height: 5.3rem;
+    padding: 0.55rem 0.6rem;
+}
+.workflow-node.is-ready {
+    border-left-color: #0d9488;
+}
+.workflow-node.is-needed {
+    border-left-color: #f59e0b;
+}
+.workflow-node.is-waiting {
+    border-left-color: #64748b;
+}
+.workflow-node-num {
+    width: 1.65rem;
+    height: 1.65rem;
+    border-radius: 999px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: #e2e8f0;
+    color: #0f172a;
+    font-weight: 760;
+    font-size: 0.72rem;
+    margin-bottom: 0.4rem;
+}
+.workflow-node-title {
+    color: #0f172a;
+    font-weight: 720;
+    line-height: 1.2;
+}
+.workflow-node-status {
+    color: #64748b;
+    font-size: 0.78rem;
+    margin-top: 0.2rem;
+}
+.workflow-section-title {
+    color: #0f172a;
+    font-size: 1.05rem;
+    font-weight: 760;
+    margin: 0.4rem 0 0.55rem 0;
+}
+.workflow-action {
+    min-height: 6.3rem;
+}
+.workflow-action-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.45rem;
+}
+.workflow-index {
+    color: #64748b;
+    font-size: 0.75rem;
+    font-weight: 760;
+}
+.workflow-badge {
+    border-radius: 999px;
+    padding: 0.12rem 0.5rem;
+    font-size: 0.72rem;
+    font-weight: 720;
+}
+.workflow-badge.is-ready {
+    background: #ccfbf1;
+    color: #115e59;
+}
+.workflow-badge.is-needed {
+    background: #fef3c7;
+    color: #92400e;
+}
+.workflow-badge.is-waiting {
+    background: #e2e8f0;
+    color: #334155;
+}
+.workflow-action-title {
+    color: #0f172a;
+    font-size: 1rem;
+    font-weight: 760;
+    line-height: 1.25;
+}
+.workflow-action-copy {
+    color: #475569;
+    font-size: 0.88rem;
+    line-height: 1.35;
+    margin-top: 0.25rem;
+}
 @media (prefers-color-scheme: dark) {
     .workflow-home {
         background: linear-gradient(135deg, #0b1220 0%, #111827 100%);
@@ -119,12 +246,39 @@ section[data-testid="stSidebar"] > div,
     .workflow-copy {
         color: #cbd5e1;
     }
+    .workflow-summary-tile,
+    .workflow-node {
+        background: rgba(15, 23, 42, 0.72);
+        border-color: #334155;
+    }
+    .workflow-summary-label,
+    .workflow-node-status,
+    .workflow-index,
+    .workflow-action-copy {
+        color: #94a3b8;
+    }
+    .workflow-summary-value,
+    .workflow-node-title,
+    .workflow-section-title,
+    .workflow-action-title {
+        color: #e5e7eb;
+    }
+    .workflow-node-num,
+    .workflow-badge.is-waiting {
+        background: #1f2937;
+        color: #e5e7eb;
+    }
 }
 @media (max-width: 640px) {
     :root {
         --sidebar-width: 85vw;
         --app-top-padding: 1.25rem;
         --sidebar-top-padding: 1rem;
+    }
+    .workflow-home,
+    .workflow-lane,
+    .workflow-summary-grid {
+        grid-template-columns: 1fr;
     }
 }
 div[data-testid="stExpander"] > details,

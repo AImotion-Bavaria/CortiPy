@@ -57,6 +57,9 @@ def test_global_css_keeps_pointer_cursor_override() -> None:
     assert "--expander-summary: #b7c4d2" in GLOBAL_CSS
     assert "[data-testid=\"stSidebarUserContent\"]" in GLOBAL_CSS
     assert ".workflow-home" in GLOBAL_CSS
+    assert ".workflow-summary-grid" in GLOBAL_CSS
+    assert ".workflow-lane" in GLOBAL_CSS
+    assert ".workflow-action" in GLOBAL_CSS
     assert "--app-top-padding: 2.1rem" in GLOBAL_CSS
     assert "--sidebar-top-padding: 1.25rem" in GLOBAL_CSS
     assert "[data-testid=\"stMainBlockContainer\"]" in GLOBAL_CSS

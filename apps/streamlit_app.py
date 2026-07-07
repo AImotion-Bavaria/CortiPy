@@ -2145,17 +2145,6 @@ def render_sidebar_controls() -> SidebarControls:
     sidebar.title("Controls")
 
     with sidebar.container(border=True):
-        st.subheader("Navigation")
-        st.button(
-            "Workflow home",
-            width="stretch",
-            key="open_workflow_page",
-            on_click=set_active_view,
-            args=("Workflow",),
-        )
-        st.caption("Start here for setup order, page shortcuts, and export flow.")
-
-    with sidebar.container(border=True):
         st.subheader("Measurement")
 
         default_save = st.text_input(
@@ -2451,10 +2440,73 @@ def _workflow_statuses(params: Dict[str, Any], validation_issues: List[str]) -> 
     }
 
 
-def _workflow_card(title: str, body: str, page: str, status: str, key: str) -> None:
-    st.markdown(f"**{html.escape(title)}**")
-    st.caption(status)
-    st.write(body)
+def _workflow_status_class(status: str) -> str:
+    normalized = status.lower()
+    if "ready" in normalized or "available" in normalized:
+        return "is-ready"
+    if "needs" in normalized or "checklist" in normalized:
+        return "is-needed"
+    return "is-waiting"
+
+
+def _workflow_summary(params: Dict[str, Any]) -> Dict[str, str]:
+    parameters = params.get("Parameters", {}) if isinstance(params, dict) else {}
+    participant = (params.get("Metadata", {}) or {}).get("Participant", {}) or {}
+    active_channels = sum(
+        1
+        for channel in params.get("Channels", []) or []
+        if isinstance(channel, dict) and bool(channel.get("Active", True))
+    )
+    recording_time = parameters.get("RecordingTime") or 0
+    try:
+        recording_label = f"{int(float(recording_time))} s"
+    except (TypeError, ValueError):
+        recording_label = str(recording_time)
+    return {
+        "Method": str(params.get("Method") or "Not set"),
+        "Device": str(params.get("Device") or "Not set"),
+        "Time": recording_label,
+        "Channels": str(active_channels or "Not set"),
+        "Participant": str(participant.get("Code") or "Not set"),
+        "Format": f"{st.session_state.get('export_container', 'SBIDS')} + {st.session_state.get('export_raw_format', 'Parquet')}",
+    }
+
+
+def _workflow_summary_tile(label: str, value: str) -> str:
+    return (
+        "<div class='workflow-summary-tile'>"
+        f"<div class='workflow-summary-label'>{html.escape(label)}</div>"
+        f"<div class='workflow-summary-value'>{html.escape(value)}</div>"
+        "</div>"
+    )
+
+
+def _workflow_lane_item(index: int, label: str, status: str) -> str:
+    status_class = _workflow_status_class(status)
+    return (
+        f"<div class='workflow-node {status_class}'>"
+        f"<div class='workflow-node-num'>{index:02d}</div>"
+        f"<div class='workflow-node-title'>{html.escape(label)}</div>"
+        f"<div class='workflow-node-status'>{html.escape(status)}</div>"
+        "</div>"
+    )
+
+
+def _workflow_card(index: int, title: str, body: str, page: str, status: str, key: str) -> None:
+    status_class = _workflow_status_class(status)
+    st.markdown(
+        (
+            "<div class='workflow-action'>"
+            "<div class='workflow-action-top'>"
+            f"<span class='workflow-index'>{index:02d}</span>"
+            f"<span class='workflow-badge {status_class}'>{html.escape(status)}</span>"
+            "</div>"
+            f"<div class='workflow-action-title'>{html.escape(title)}</div>"
+            f"<div class='workflow-action-copy'>{html.escape(body)}</div>"
+            "</div>"
+        ),
+        unsafe_allow_html=True,
+    )
     st.button(
         f"Open {page}",
         width="stretch",
@@ -2467,17 +2519,37 @@ def _workflow_card(title: str, body: str, page: str, status: str, key: str) -> N
 def render_workflow_page(params: Dict[str, Any], validation_issues: List[str]) -> None:
     """Show a home page with workflow shortcuts for configuring, recording, and reviewing sessions."""
     statuses = _workflow_statuses(params, validation_issues)
+    summary = _workflow_summary(params)
+    summary_html = "".join(_workflow_summary_tile(label, value) for label, value in summary.items())
+    lane_pages = [
+        ("Configure", statuses["Session configuration"]),
+        ("Electrodes", statuses["Electrodes"]),
+        ("Live", statuses["Live preview"]),
+        ("Validate", statuses["Preview"]),
+        ("Charts", statuses["Charts"]),
+        ("Sessions", statuses["Saved sessions"]),
+    ]
+    lane_html = "".join(
+        _workflow_lane_item(index, label, status)
+        for index, (label, status) in enumerate(lane_pages, start=1)
+    )
 
     st.markdown(
-        """
+        f"""
         <div class="workflow-home">
-            <div class="workflow-kicker">CortiPy workflow</div>
-            <div class="workflow-title">Start with the workflow, then jump into the exact page you need.</div>
-            <div class="workflow-copy">
-                Configure the run, prepare channels and participant metadata, record or replay data,
-                then inspect and export the session.
+            <div>
+                <div class="workflow-kicker">CortiPy workflow</div>
+                <div class="workflow-title">Measurement command center</div>
+                <div class="workflow-copy">
+                    Jump directly into setup, signal preview, validation, charts, or saved sessions.
+                </div>
+            </div>
+            <div class="workflow-summary-grid">
+                {summary_html}
             </div>
         </div>
+        <div class="workflow-lane">{lane_html}</div>
+        <div class="workflow-section-title">Open a workspace</div>
         """,
         unsafe_allow_html=True,
     )
@@ -2486,8 +2558,9 @@ def render_workflow_page(params: Dict[str, Any], validation_issues: List[str]) -
     with route_cols[0]:
         with st.container(border=True):
             _workflow_card(
-                "1. Configure session",
-                "Set method, device, environment, method parameters, device settings, and participant details.",
+                1,
+                "Configure session",
+                "Method, device, timing, parameters, and participant.",
                 "Session configuration",
                 statuses["Session configuration"],
                 "workflow_open_session",
@@ -2495,8 +2568,9 @@ def render_workflow_page(params: Dict[str, Any], validation_issues: List[str]) -
     with route_cols[1]:
         with st.container(border=True):
             _workflow_card(
-                "2. Prepare electrodes",
-                "Review active channels, labels, electrode rubrics/models, positions, and impedance mapping.",
+                2,
+                "Prepare electrodes",
+                "Channels, positions, rubrics, models, and impedance.",
                 "Electrodes",
                 statuses["Electrodes"],
                 "workflow_open_electrodes",
@@ -2504,8 +2578,9 @@ def render_workflow_page(params: Dict[str, Any], validation_issues: List[str]) -
     with route_cols[2]:
         with st.container(border=True):
             _workflow_card(
-                "3. Preview signal",
-                "Open live preview for a moving signal window before or during acquisition.",
+                3,
+                "Preview signal",
+                "A moving signal window before or during acquisition.",
                 "Live preview",
                 statuses["Live preview"],
                 "workflow_open_live_preview",
@@ -2515,8 +2590,9 @@ def render_workflow_page(params: Dict[str, Any], validation_issues: List[str]) -
     with review_cols[0]:
         with st.container(border=True):
             _workflow_card(
-                "4. Validate setup",
-                "Check the assembled params JSON, completion checklist, and validation messages.",
+                4,
+                "Validate setup",
+                "Completion checklist, params JSON, and warnings.",
                 "Preview",
                 statuses["Preview"],
                 "workflow_open_preview",
@@ -2524,8 +2600,9 @@ def render_workflow_page(params: Dict[str, Any], validation_issues: List[str]) -
     with review_cols[1]:
         with st.container(border=True):
             _workflow_card(
-                "5. Inspect charts",
-                "Review plots from the last run or imported data in pop-out chart windows.",
+                5,
+                "Inspect charts",
+                "Last run or imported data in pop-out chart windows.",
                 "Charts",
                 statuses["Charts"],
                 "workflow_open_charts",
@@ -2533,8 +2610,9 @@ def render_workflow_page(params: Dict[str, Any], validation_issues: List[str]) -
     with review_cols[2]:
         with st.container(border=True):
             _workflow_card(
-                "6. Reopen sessions",
-                "Load saved sessions, compare recordings, and review previous outputs.",
+                6,
+                "Reopen sessions",
+                "Load, compare, and review previous outputs.",
                 "Saved sessions",
                 statuses["Saved sessions"],
                 "workflow_open_saved_sessions",
