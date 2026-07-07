@@ -47,6 +47,7 @@ def test_global_css_keeps_pointer_cursor_override() -> None:
     assert "[data-baseweb=\"select\"]" in GLOBAL_CSS
     assert "[data-testid=\"stSegmentedControl\"]" in GLOBAL_CSS
     assert "--sidebar-width: 21rem" in GLOBAL_CSS
+    assert "--sidebar-bg: #eef2f6" in GLOBAL_CSS
     assert "--app-top-padding: 2.1rem" in GLOBAL_CSS
     assert "--sidebar-top-padding: 1.25rem" in GLOBAL_CSS
     assert "[data-testid=\"stMainBlockContainer\"]" in GLOBAL_CSS

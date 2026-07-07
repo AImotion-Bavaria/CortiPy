@@ -6,19 +6,21 @@ GLOBAL_CSS = """
     --app-top-padding: 2.1rem;
     --sidebar-top-padding: 1.25rem;
     --sidebar-width: 21rem;
+    --sidebar-bg: #eef2f6;
     --expander-bg: #f8fafc;
     --expander-border: #e5e7eb;
-    --expander-summary: #f1f5f9;
-    --expander-summary-hover: #e2e8f0;
+    --expander-summary: #e2e8f0;
+    --expander-summary-hover: #cbd5e1;
     --expander-text: #0f172a;
     --accent: #0d9488;
 }
 @media (prefers-color-scheme: dark) {
     :root {
+        --sidebar-bg: #0b1220;
         --expander-bg: #0f172a;
         --expander-border: #1f2937;
-        --expander-summary: #111827;
-        --expander-summary-hover: #152238;
+        --expander-summary: #172033;
+        --expander-summary-hover: #223047;
         --expander-text: #e5e7eb;
         --accent: #2dd4bf;
     }
@@ -26,12 +28,15 @@ GLOBAL_CSS = """
 [data-testid="stSidebar"] {
     width: var(--sidebar-width) !important;
     min-width: var(--sidebar-width) !important;
+    background-color: var(--sidebar-bg) !important;
 }
 [data-testid="stSidebar"] > div:first-child {
     width: var(--sidebar-width) !important;
+    background-color: var(--sidebar-bg) !important;
 }
 [data-testid="stSidebarContent"] {
     padding-top: var(--sidebar-top-padding) !important;
+    background-color: var(--sidebar-bg) !important;
 }
 [data-testid="stMain"] .block-container,
 [data-testid="stMainBlockContainer"],
