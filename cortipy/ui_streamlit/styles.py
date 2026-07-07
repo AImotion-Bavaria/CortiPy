@@ -4,6 +4,7 @@ GLOBAL_CSS = """
 <style>
 :root {
     --app-top-padding: 2.1rem;
+    --sidebar-top-padding: 1.25rem;
     --sidebar-width: 21rem;
     --expander-bg: #f8fafc;
     --expander-border: #e5e7eb;
@@ -30,7 +31,7 @@ GLOBAL_CSS = """
     width: var(--sidebar-width) !important;
 }
 [data-testid="stSidebarContent"] {
-    padding-top: var(--app-top-padding) !important;
+    padding-top: var(--sidebar-top-padding) !important;
 }
 [data-testid="stMain"] .block-container,
 [data-testid="stMainBlockContainer"],
@@ -70,6 +71,7 @@ GLOBAL_CSS = """
     :root {
         --sidebar-width: 85vw;
         --app-top-padding: 1.25rem;
+        --sidebar-top-padding: 1rem;
     }
 }
 div[data-testid="stExpander"] > details {

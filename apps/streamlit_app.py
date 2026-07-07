@@ -2136,14 +2136,12 @@ def render_sidebar_controls() -> SidebarControls:
             "Container",
             ["SBIDS", "BIDS"],
             key="export_container",
-            disabled=not can_export,
         )
 
         export_fmt = exp_cols[1].selectbox(
             "Raw format",
             ["Parquet", "EDF"],
             key="export_raw_format",
-            disabled=not can_export,
         )
 
         if st.button(
@@ -2166,7 +2164,7 @@ def render_sidebar_controls() -> SidebarControls:
                 st.error(f"Export failed: {exc}")
 
         if not can_export:
-            st.caption("Run or load a session first to enable recording export.")
+            st.caption("Choose export settings now. Run or load a session to enable the export button.")
 
         handle_upload(st)
 
@@ -2341,7 +2339,15 @@ def render_workflow_progress(slot, params: Dict[str, Any], validation_issues: Li
         st.progress(done / len(steps), text=f"Setup {done}/{len(steps)} - {caption}")
         cols = st.columns(len(steps))
         for col, (label, ok) in zip(cols, steps):
-            col.markdown(f"{'[ok]' if ok else '[ ]'} {label}")
+            marker = "&#10003;" if ok else "&#9675;"
+            color = "#0d9488" if ok else "#9ca3af"
+            col.markdown(
+                (
+                    f"<span style='color:{color};font-weight:700;font-size:1.05rem'>{marker}</span> "
+                    f"{html.escape(label)}"
+                ),
+                unsafe_allow_html=True,
+            )
 
 
 def main() -> None:
