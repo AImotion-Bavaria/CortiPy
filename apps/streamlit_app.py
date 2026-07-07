@@ -302,10 +302,16 @@ PARTICIPANT_CARD_STYLE = """
     text-align: center;
     margin-bottom: 0.4rem;
 }
+.participant-card .fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 0.9rem;
+    row-gap: 0.35rem;
+}
 .participant-card .field {
     display: flex;
     gap: 0.65rem;
-    margin-bottom: 0.35rem;
+    margin-bottom: 0;
     align-items: baseline;
 }
 .participant-card .field:last-child {
@@ -999,7 +1005,10 @@ def _render_participant_card(participant: Dict[str, Any]) -> None:
     notes_html = ""
     if notes_text:
         notes_html = f"<div class='notes'>Notes: {html.escape(notes_text)}</div>"
-    card_html = f"<div class='participant-card'><div class='avatar'>&#9786;</div>{info_html}{notes_html}</div>"
+    card_html = (
+        f"<div class='participant-card'><div class='avatar'>&#9786;</div>"
+        f"<div class='fields'>{info_html}</div>{notes_html}</div>"
+    )
     st.markdown(card_html, unsafe_allow_html=True)
 
 
@@ -1594,7 +1603,7 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
 def render_participant_form() -> Dict[str, Any]:
     participant = st.session_state["participant"]
     with st.expander("Participant / proband information", expanded=True):
-        form_col, viz_col = st.columns((5, 1))
+        form_col, viz_col = st.columns((2, 1))
         with form_col:
             cols = form_col.columns([1.25, 1.0, 0.65, 1.0, 1.0])
             participant["Code"] = cols[0].text_input(
@@ -1615,9 +1624,7 @@ def render_participant_form() -> Dict[str, Any]:
             notes_col, _ = form_col.columns([3, 1])
             participant["Notes"] = notes_col.text_area("Session notes", value=participant.get("Notes", ""), height=80)
         with viz_col:
-            spacer_col, snap_col = viz_col.columns([1, 5])
-            with snap_col:
-                _render_participant_card(participant)
+            _render_participant_card(participant)
     return dict(participant)
 
 
