@@ -46,6 +46,9 @@ def test_streamlit_app_imports() -> None:
     assert module.APP_VIEW_OPTIONS[0] == "Workflow"
     assert callable(module.render_workflow_page)
     assert callable(module.set_active_view)
+    assert callable(module._workflow_next_action)
+    assert callable(module._phase_card)
+    assert module.WORKFLOW_READINESS_ITEMS[0] == ("has_config", "Configuration")
 
 
 def test_global_css_keeps_pointer_cursor_override() -> None:

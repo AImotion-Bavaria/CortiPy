@@ -2422,31 +2422,13 @@ def render_workflow_progress(slot, params: Dict[str, Any], validation_issues: Li
             )
 
 
-def _workflow_statuses(params: Dict[str, Any], validation_issues: List[str]) -> Dict[str, str]:
-    parameters = params.get("Parameters", {}) if isinstance(params, dict) else {}
-    participant = (params.get("Metadata", {}) or {}).get("Participant", {}) or {}
-    has_config = bool(params.get("Method") and params.get("Device") and parameters.get("fs"))
-    has_participant = bool(participant.get("Code"))
-    has_electrodes = _has_active_eeg_channels(params)
-    has_result = bool(st.session_state.get("last_results") or st.session_state.get("imported_data") is not None)
-    ready = has_config and has_electrodes and not validation_issues
-    return {
-        "Session configuration": "Ready" if has_config and has_participant else "Needs details",
-        "Electrodes": "Ready" if has_electrodes else "Needs channels",
-        "Live preview": "Ready" if ready else "Needs setup",
-        "Preview": "Ready" if ready else "Checklist",
-        "Charts": "Ready" if has_result else "After run/import",
-        "Saved sessions": "Available",
-    }
-
-
-def _workflow_status_class(status: str) -> str:
-    normalized = status.lower()
-    if "ready" in normalized or "available" in normalized:
-        return "is-ready"
-    if "needs" in normalized or "checklist" in normalized:
-        return "is-needed"
-    return "is-waiting"
+WORKFLOW_READINESS_ITEMS = (
+    ("has_config", "Configuration"),
+    ("has_participant", "Participant"),
+    ("has_electrodes", "Electrodes"),
+    ("is_valid", "Validation"),
+    ("has_data", "Recorded data"),
+)
 
 
 def _workflow_summary(params: Dict[str, Any]) -> Dict[str, str]:
@@ -2470,16 +2452,6 @@ def _workflow_summary(params: Dict[str, Any]) -> Dict[str, str]:
         "Participant": str(participant.get("Code") or "Not set"),
         "Format": f"{st.session_state.get('export_container', 'SBIDS')} + {st.session_state.get('export_raw_format', 'Parquet')}",
     }
-
-
-def _workflow_status_message(status: str) -> None:
-    status_class = _workflow_status_class(status)
-    if status_class == "is-ready":
-        st.success(status)
-    elif status_class == "is-needed":
-        st.warning(status)
-    else:
-        st.info(status)
 
 
 def _workflow_flags(params: Dict[str, Any], validation_issues: List[str]) -> Dict[str, bool]:
@@ -2533,26 +2505,67 @@ def _workflow_next_action(params: Dict[str, Any], validation_issues: List[str]) 
     )
 
 
-def _phase_card(title: str, status: str, primary_page: str, secondary_page: str, body: str, key_prefix: str) -> None:
+def _workflow_status_tone(status: str) -> tuple[str, str, str]:
+    normalized = status.lower()
+    if "ready" in normalized:
+        return "#ccfbf1", "#115e59", "#5eead4"
+    if "need" in normalized or "missing" in normalized:
+        return "#fef3c7", "#92400e", "#fbbf24"
+    return "#e0f2fe", "#075985", "#7dd3fc"
+
+
+def _render_status_pill(status: str) -> None:
+    bg, fg, border = _workflow_status_tone(status)
+    st.markdown(
+        (
+            f"<span style='display:inline-block;border:1px solid {border};"
+            f"border-radius:999px;background:{bg};color:{fg};"
+            "font-size:0.78rem;font-weight:700;padding:0.12rem 0.55rem;'>"
+            f"{html.escape(status)}</span>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def _render_check_item(label: str, ok: bool) -> None:
+    color = "#0d9488" if ok else "#9ca3af"
+    marker = "&#10003;" if ok else "&#9675;"
+    st.markdown(
+        (
+            f"<span style='color:{color};font-weight:800'>{marker}</span> "
+            f"<span style='font-size:0.9rem'>{html.escape(label)}</span>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def _phase_card(
+    index: int,
+    title: str,
+    status: str,
+    body: str,
+    checks: List[tuple[str, bool]],
+    actions: List[tuple[str, str]],
+    key_prefix: str,
+) -> None:
     with st.container(border=True):
-        st.markdown(f"**{title}**")
-        _workflow_status_message(status)
+        heading_cols = st.columns([0.2, 0.8])
+        heading_cols[0].caption(f"{index:02d}")
+        heading_cols[1].markdown(f"**{title}**")
+        _render_status_pill(status)
         st.caption(body)
-        action_cols = st.columns(2)
-        action_cols[0].button(
-            primary_page,
-            width="stretch",
-            key=f"{key_prefix}_primary",
-            on_click=set_active_view,
-            args=(primary_page,),
-        )
-        action_cols[1].button(
-            secondary_page,
-            width="stretch",
-            key=f"{key_prefix}_secondary",
-            on_click=set_active_view,
-            args=(secondary_page,),
-        )
+        st.divider()
+        for label, ok in checks:
+            _render_check_item(label, ok)
+        action_cols = st.columns(len(actions))
+        for button_idx, (label, page) in enumerate(actions):
+            action_cols[button_idx].button(
+                label,
+                width="stretch",
+                key=f"{key_prefix}_{button_idx}",
+                on_click=set_active_view,
+                args=(page,),
+            )
 
 
 def render_workflow_page(params: Dict[str, Any], validation_issues: List[str]) -> None:
@@ -2560,19 +2573,18 @@ def render_workflow_page(params: Dict[str, Any], validation_issues: List[str]) -
     summary = _workflow_summary(params)
     flags = _workflow_flags(params, validation_issues)
     next_title, next_body, next_page, next_key = _workflow_next_action(params, validation_issues)
-    completed = sum(
-        1
-        for key in ("has_config", "has_participant", "has_electrodes", "is_valid", "has_data")
-        if flags[key]
-    )
+    completed = sum(1 for key, _ in WORKFLOW_READINESS_ITEMS if flags[key])
+    total = len(WORKFLOW_READINESS_ITEMS)
+    secondary_page = "Preview" if next_page != "Preview" else "Session configuration"
 
     top_left, top_right = st.columns([1.9, 1])
     with top_left:
         with st.container(border=True):
-            st.caption("Next step")
-            st.subheader(next_title)
+            st.caption("Next best action")
+            st.markdown(f"### {next_title}")
             st.write(next_body)
-            st.button(
+            action_cols = st.columns([1.15, 0.85])
+            action_cols[0].button(
                 f"Open {next_page}",
                 type="primary",
                 width="stretch",
@@ -2580,46 +2592,72 @@ def render_workflow_page(params: Dict[str, Any], validation_issues: List[str]) -
                 on_click=set_active_view,
                 args=(next_page,),
             )
+            action_cols[1].button(
+                f"Open {secondary_page}",
+                width="stretch",
+                key=f"{next_key}_secondary",
+                on_click=set_active_view,
+                args=(secondary_page,),
+            )
     with top_right:
         with st.container(border=True):
             st.caption("Session readiness")
-            st.progress(completed / 5, text=f"{completed}/5 ready")
-            status_cols = st.columns(2)
-            status_cols[0].metric("Method", summary["Method"])
-            status_cols[1].metric("Device", summary["Device"])
-            status_cols[0].metric("Time", summary["Time"])
-            status_cols[1].metric("Channels", summary["Channels"])
+            st.progress(completed / total, text=f"{completed}/{total} ready")
+            checklist_cols = st.columns(2)
+            for idx, (key, label) in enumerate(WORKFLOW_READINESS_ITEMS):
+                with checklist_cols[idx % 2]:
+                    _render_check_item(label, flags[key])
+
+    st.markdown("**Current session**")
+    summary_cols = st.columns(6)
+    for col, (label, value) in zip(summary_cols, summary.items()):
+        col.metric(label, value)
 
     st.markdown("**Guided flow**")
     phase_cols = st.columns(3)
     with phase_cols[0]:
         prepare_status = "Ready" if flags["has_config"] and flags["has_participant"] and flags["has_electrodes"] else "Needs setup"
         _phase_card(
+            1,
             "Prepare",
             prepare_status,
-            "Session configuration",
-            "Electrodes",
             "Define the run and make the channel table physically meaningful before acquisition.",
+            [
+                ("Method/device/fs selected", flags["has_config"]),
+                ("Participant code entered", flags["has_participant"]),
+                ("Active electrodes available", flags["has_electrodes"]),
+            ],
+            [("Configure", "Session configuration"), ("Electrodes", "Electrodes")],
             "workflow_prepare",
         )
     with phase_cols[1]:
         acquire_status = "Ready" if flags["is_valid"] and flags["has_electrodes"] else "Needs validation"
         _phase_card(
+            2,
             "Acquire",
             acquire_status,
-            "Live preview",
-            "Preview",
             "Check signal behavior, validate the params payload, then use the sidebar run controls.",
+            [
+                ("Electrodes ready", flags["has_electrodes"]),
+                ("No validation blockers", flags["is_valid"]),
+                ("Run controls stay in sidebar", True),
+            ],
+            [("Live preview", "Live preview"), ("Validate", "Preview")],
             "workflow_acquire",
         )
     with phase_cols[2]:
         review_status = "Ready" if flags["has_data"] else "After run/import"
         _phase_card(
+            3,
             "Review",
             review_status,
-            "Charts",
-            "Saved sessions",
             "Inspect plotted output, compare saved sessions, and export the selected container/format.",
+            [
+                ("Recording/import available", flags["has_data"]),
+                (f"Export: {summary['Format']}", True),
+                ("Saved sessions accessible", True),
+            ],
+            [("Charts", "Charts"), ("Sessions", "Saved sessions")],
             "workflow_review",
         )
 
