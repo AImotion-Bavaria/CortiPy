@@ -11,6 +11,7 @@ import mne
 
 from cortipy.evaluation.base import EvaluatorBase, save_new_figures
 from cortipy.shared import assr_calc_snr, assr_compute_psd as _assr_compute_psd, assr_f_test, calc_fft, plot_cortipy_topomap, plot_assr_spectrum
+from cortipy.shared.reference import apply_eeg_reference
 
 assr_compute_psd = _assr_compute_psd
 
@@ -56,10 +57,9 @@ class AssrEvaluator(EvaluatorBase):
         param_block["TopomapFrequencyHz"] = topomap_freq
 
         data_array = np.asarray(data, dtype=float)
-        device = params.get("Device")
-        if device == "ActiCHamp":
-            ref_idx = int(param_block.get("ReferenceChannel", 1)) - 1
-            data_array = data_array - data_array[:, [ref_idx]]
+        device = str(params.get("Device") or "").lower()
+        if device in {"actichamp", "unicorn"}:
+            data_array = apply_eeg_reference(data_array, param_block)
 
         # Allow overriding plotting channel by label (e.g., T8) for comparison plots.
         plot_channel_label = param_block.get("PlotChannelLabel")

@@ -30,6 +30,7 @@ from cortipy.shared import (
     ssvep_f_test,
     ssvep_snr,
 )
+from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
 
 LOGGER = logging.getLogger("cortipy.evaluation.ssvep")
 
@@ -176,15 +177,15 @@ class SsvepEvaluator(EvaluatorBase):
         if num_channels <= 0:
             num_channels = data.shape[1]
         if device == "actichamp":
-            ref_idx = int(param_block.get("ReferenceChannel", 1)) - 1
-            if ref_idx < 0 or ref_idx >= data.shape[1]:
-                ref_idx = 0
-            referenced = data - data[:, [ref_idx]]
+            referenced = apply_eeg_reference(data, param_block)
+            num_channels = eeg_channel_count(param_block, referenced.shape[1])
             if referenced.shape[1] > num_channels:
                 referenced = referenced[:, :num_channels]
             return referenced
         if device == "unicorn":
-            return data[:, :8]
+            referenced = apply_eeg_reference(data, param_block)
+            num_channels = min(8, eeg_channel_count(param_block, referenced.shape[1]))
+            return referenced[:, :num_channels]
         # Generic fallback: keep the first `num_channels` channels without re-referencing.
         if data.shape[1] > num_channels:
             return data[:, :num_channels]

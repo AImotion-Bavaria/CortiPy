@@ -24,6 +24,7 @@ else:
 import matplotlib.pyplot as plt
 
 from cortipy.evaluation.base import EvaluatorBase, save_new_figures
+from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
 from cortipy.shared.signal import hann_window, time_vector
 
 EPS = np.finfo(np.float64).eps
@@ -249,12 +250,11 @@ def _apply_reference(data: np.ndarray, params: MutableMapping[str, Any]) -> Tupl
     n_channels = data_ref.shape[1]
 
     if device == "actichamp":
-        reference_idx = int(param_block.get("ReferenceChannel", 1)) - 1
-        mask = np.arange(n_channels) != trig_idx
-        data_ref[:, mask] = data_ref[:, mask] - data_ref[:, [reference_idx]]
-        n_channels = min(int(param_block.get("NumberEEGChannels", n_channels)), n_channels)
+        data_ref = apply_eeg_reference(data_ref, param_block)
+        n_channels = eeg_channel_count(param_block, n_channels)
     elif device == "unicorn":
-        n_channels = min(8, n_channels)
+        data_ref = apply_eeg_reference(data_ref, param_block)
+        n_channels = min(8, eeg_channel_count(param_block, n_channels))
     else:
         n_channels = data_ref.shape[1]
 

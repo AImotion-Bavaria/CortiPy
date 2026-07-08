@@ -18,6 +18,7 @@ from cortipy.shared import (
     trigger_adc,
 )
 from cortipy.shared.notifications import info_end_live, info_start_live
+from cortipy.shared.reference import apply_eeg_reference
 
 from .base import ModuleBase
 
@@ -92,16 +93,7 @@ class BeraModule(ModuleBase):
 
     def _apply_reference(self, params: dict, data: np.ndarray) -> np.ndarray:
         param_block = params.get("Parameters", {})
-        ref_idx = int(param_block.get("ReferenceChannel", 1)) - 1
-        trig_idx = int(param_block.get("TriggerChannel", data.shape[1])) - 1
-        referenced = np.array(data, copy=True)
-        mask = np.ones(referenced.shape[1], dtype=bool)
-        if 0 <= trig_idx < mask.size:
-            mask[trig_idx] = False
-        if 0 <= ref_idx < mask.size:
-            mask[ref_idx] = False
-        referenced[:, mask] = referenced[:, mask] - referenced[:, [ref_idx]]
-        return referenced
+        return apply_eeg_reference(data, param_block)
 
     def _compute_live_metrics(self, params: dict, data: np.ndarray, fs: float):
         param_block = params.get("Parameters", {})

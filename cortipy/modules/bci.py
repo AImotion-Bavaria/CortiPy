@@ -20,6 +20,7 @@ from cortipy.shared import (
     send_prediction_bt,
 )
 from cortipy.shared.notifications import info_end_live, info_start_live
+from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
 
 from .base import ModuleBase
 
@@ -141,16 +142,10 @@ class BciModule(ModuleBase):
         device = str(params.get("Device", "")).lower()
         referenced = np.array(data, copy=True)
         if device == "actichamp":
-            ref_idx = int(params_block.get("ReferenceChannel", 1)) - 1
-            num_cols = referenced.shape[1]
-            mask = np.ones(num_cols, dtype=bool)
-            trig_idx = int(params_block.get("TriggerChannel", num_cols)) - 1
-            if 0 <= trig_idx < num_cols:
-                mask[trig_idx] = False
-            mask &= np.arange(num_cols) < int(params_block.get("NumberEEGChannels", num_cols))
-            referenced[:, mask] = referenced[:, mask] - referenced[:, [ref_idx]]
+            referenced = apply_eeg_reference(referenced, params_block)
         elif device == "unicorn":
-            referenced = referenced[:, : min(referenced.shape[1], params_block.get("NumberEEGChannels", 8))]
+            referenced = apply_eeg_reference(referenced, params_block)
+            referenced = referenced[:, :eeg_channel_count(params_block, referenced.shape[1])]
         else:
             referenced = referenced[:, : min(referenced.shape[1], params_block.get("NumberEEGChannels", referenced.shape[1]))]
             if not self._unknown_device_warned:
@@ -159,7 +154,7 @@ class BciModule(ModuleBase):
         return referenced
 
     def _resolve_detection_channels(self, params_block: dict, total_columns: int) -> np.ndarray:
-        num_eeg = min(total_columns, int(params_block.get("NumberEEGChannels", total_columns)))
+        num_eeg = eeg_channel_count(params_block, total_columns)
         exclude = set()
         ref_idx = int(params_block.get("ReferenceChannel", 0)) - 1
         trig_idx = int(params_block.get("TriggerChannel", 0)) - 1

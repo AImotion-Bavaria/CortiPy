@@ -27,6 +27,7 @@ import matplotlib.pyplot as plt
 from cortipy.evaluation.base import EvaluatorBase, save_new_figures
 from cortipy.shared import plot_cortipy_topomap
 from cortipy.shared.filtering import filter_vep
+from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
 from cortipy.shared.segmentation import seg_sig_fast
 from cortipy.shared.signal import time_vector
 from cortipy.shared.triggers import trigger_adc
@@ -203,13 +204,10 @@ def _apply_reference(data: np.ndarray, device: Optional[str], params: MutableMap
     dev = (device or "").lower()
 
     if dev == "actichamp":
-        reference_idx = int(params.get("ReferenceChannel", 1)) - 1
-        mask = np.ones(array.shape[1], dtype=bool)
-        if 0 <= trigger_idx < mask.size:
-            mask[trigger_idx] = False
-        array[:, mask] = array[:, mask] - array[:, [reference_idx]]
+        array = apply_eeg_reference(array, params)
     elif dev == "unicorn":
-        array = array[:, : min(array.shape[1], 8)]
+        array = apply_eeg_reference(array, params)
+        array = array[:, : min(8, eeg_channel_count(params, array.shape[1]))]
 
     return array, trigger_idx
 

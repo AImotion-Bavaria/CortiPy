@@ -22,6 +22,7 @@ else:
 
 from cortipy.evaluation.base import EvaluatorBase, save_new_figures
 from cortipy.shared import filter_vep, plot_cortipy_topomap, plot_p300_results, seg_sig_fast, time_vector, trigger_adc
+from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
 
 LOGGER = logging.getLogger("cortipy.evaluation.p300")
 
@@ -162,17 +163,10 @@ class P300Evaluator(EvaluatorBase):
     def _apply_reference(self, device: str, param_block: dict, data: np.ndarray) -> np.ndarray:
         device = (device or "").lower()
         if device == "actichamp":
-            ref_idx = int(param_block.get("ReferenceChannel", 1)) - 1
-            trig_idx = int(param_block.get("TriggerChannel", data.shape[1])) - 1
-            referenced = np.array(data, copy=True)
-            mask = np.ones(referenced.shape[1], dtype=bool)
-            mask[ref_idx] = False
-            if 0 <= trig_idx < mask.size:
-                mask[trig_idx] = False
-            referenced[:, mask] = referenced[:, mask] - referenced[:, [ref_idx]]
-            return referenced
+            return apply_eeg_reference(data, param_block)
         if device == "unicorn":
-            return data[:, : min(8, data.shape[1])]
+            referenced = apply_eeg_reference(data, param_block)
+            return referenced[:, : min(8, eeg_channel_count(param_block, referenced.shape[1]))]
         return data
 
     def _channels_to_plot(self, device: str, param_block: dict, total_channels: int, trig_idx: int) -> np.ndarray:

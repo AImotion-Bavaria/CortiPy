@@ -9,6 +9,7 @@ from cortipy.evaluation.vep import VepEvaluator
 from cortipy.shared.filtering import filter_vep
 from cortipy.shared.notifications import info_end_live, info_start_live
 from cortipy.shared.plotting import plot_live_avg_vep
+from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
 from cortipy.shared.segmentation import seg_sig_fast
 from cortipy.shared.triggers import trigger_adc
 
@@ -72,14 +73,10 @@ class VepModule(ModuleBase):
         data_ref = np.array(data, copy=True)
 
         if device == "actichamp":
-            ref_idx = int(param_block.get("ReferenceChannel", 1)) - 1
-            trig_idx = int(param_block.get("TriggerChannel", data_ref.shape[1])) - 1
-            mask = np.ones(data_ref.shape[1], dtype=bool)
-            if 0 <= trig_idx < mask.size:
-                mask[trig_idx] = False
-            data_ref[:, mask] = data_ref[:, mask] - data_ref[:, [ref_idx]]
+            data_ref = apply_eeg_reference(data_ref, param_block)
         elif device == "unicorn":
-            data_ref = data_ref[:, : min(8, data_ref.shape[1])]
+            data_ref = apply_eeg_reference(data_ref, param_block)
+            data_ref = data_ref[:, : min(8, eeg_channel_count(param_block, data_ref.shape[1]))]
 
         return data_ref
 

@@ -8,6 +8,7 @@ from cortipy.core.context import ModuleContext
 from cortipy.evaluation.ssvep import SsvepEvaluator
 from cortipy.shared.notifications import info_end_live, info_start_live
 from cortipy.shared.plotting import plot_fft_live
+from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
 from cortipy.shared.signal import calc_fft
 
 from .base import ModuleBase
@@ -57,10 +58,8 @@ class SsvepModule(ModuleBase):
         params_block = params.get("Parameters", {})
         device = params.get("Device")
         if device == "ActiCHamp":
-            ref_channel = int(params_block.get("ReferenceChannel", 1)) - 1
-            data_ref = data.copy()
-            data_ref = data_ref - data_ref[:, [ref_channel]]
-            return data_ref
+            return apply_eeg_reference(data, params_block)
         if device == "UNICORN":
-            return data[:, :8]
+            data_ref = apply_eeg_reference(data, params_block)
+            return data_ref[:, : min(8, eeg_channel_count(params_block, data_ref.shape[1]))]
         return data
