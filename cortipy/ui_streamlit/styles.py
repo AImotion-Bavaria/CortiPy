@@ -6,24 +6,31 @@ GLOBAL_CSS = """
     --app-top-padding: 2.35rem;
     --sidebar-top-padding: 1.25rem;
     --sidebar-width: 21rem;
-    --sidebar-bg: #cbd5e1;
-    --sidebar-panel-bg: #dbe4ee;
-    --expander-bg: #f8fafc;
-    --expander-border: #9fb0c2;
-    --expander-summary: #b7c4d2;
-    --expander-summary-hover: #a7b7c8;
-    --expander-text: #0f172a;
+    --pane-bg: #e8eef6;
+    --pane-border: #c4cedb;
+    --pane-text: #0f172a;
+    --pane-muted: #475569;
+    --field-bg: #ffffff;
+    --field-border: #d7e1ed;
+    --field-disabled-text: #64748b;
+    --sidebar-bg: #d7e0ea;
+    --sidebar-panel-bg: var(--pane-bg);
+    --expander-bg: var(--pane-bg);
+    --expander-border: var(--pane-border);
+    --expander-summary: #d3deea;
+    --expander-summary-hover: #c7d4e2;
+    --expander-text: var(--pane-text);
     --accent: #0d9488;
 }
 @media (prefers-color-scheme: dark) {
     :root {
-        --sidebar-bg: #020617;
-        --sidebar-panel-bg: #0b1220;
-        --expander-bg: #0f172a;
-        --expander-border: #334155;
-        --expander-summary: #111827;
-        --expander-summary-hover: #1f2937;
-        --expander-text: #e5e7eb;
+        --sidebar-bg: #d7e0ea;
+        --sidebar-panel-bg: var(--pane-bg);
+        --expander-bg: var(--pane-bg);
+        --expander-border: var(--pane-border);
+        --expander-summary: #d3deea;
+        --expander-summary-hover: #c7d4e2;
+        --expander-text: var(--pane-text);
         --accent: #2dd4bf;
     }
 }
@@ -85,6 +92,20 @@ section[data-testid="stSidebar"] > div,
 [data-testid="stSidebar"] [data-testid="stVerticalBlockBorderWrapper"] > div {
     background-color: var(--sidebar-panel-bg) !important;
 }
+[data-testid="stVerticalBlockBorderWrapper"] {
+    border-color: var(--pane-border) !important;
+    background-color: var(--pane-bg) !important;
+}
+[data-testid="stVerticalBlockBorderWrapper"] > div {
+    background-color: var(--pane-bg) !important;
+}
+[data-testid="stVerticalBlockBorderWrapper"] p,
+[data-testid="stVerticalBlockBorderWrapper"] label,
+[data-testid="stVerticalBlockBorderWrapper"] h2,
+[data-testid="stVerticalBlockBorderWrapper"] h3,
+[data-testid="stVerticalBlockBorderWrapper"] h4 {
+    color: var(--pane-text);
+}
 @media (max-width: 640px) {
     :root {
         --sidebar-width: 85vw;
@@ -121,6 +142,36 @@ div[data-testid="stExpander"] > details > div[role="group"],
     padding-top: 1rem;
     padding-bottom: 0.9rem;
     color: var(--expander-text);
+}
+[data-testid="stTextInput"] input,
+[data-testid="stNumberInput"] input,
+[data-testid="stTextArea"] textarea,
+[data-testid="stDateInput"] input,
+[data-testid="stTimeInput"] input {
+    background-color: var(--field-bg) !important;
+    color: var(--pane-text) !important;
+    border-color: var(--field-border) !important;
+}
+[data-testid="stTextInput"] input:disabled,
+[data-testid="stNumberInput"] input:disabled,
+[data-testid="stTextArea"] textarea:disabled,
+[data-testid="stDateInput"] input:disabled,
+[data-testid="stTimeInput"] input:disabled {
+    background-color: var(--field-bg) !important;
+    color: var(--field-disabled-text) !important;
+    opacity: 1 !important;
+    -webkit-text-fill-color: var(--field-disabled-text) !important;
+}
+[data-baseweb="select"] > div,
+[data-testid="stMultiSelect"] [data-baseweb="select"] > div {
+    background-color: var(--field-bg) !important;
+    border-color: var(--field-border) !important;
+}
+[data-baseweb="select"] input,
+[data-baseweb="select"] span,
+[data-baseweb="select"] svg {
+    color: var(--pane-text) !important;
+    fill: var(--pane-text) !important;
 }
 button,
 [role="button"],
