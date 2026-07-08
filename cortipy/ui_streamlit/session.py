@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import sys
@@ -675,6 +676,16 @@ def load_params_into_state(params: Dict[str, Any], data_override: Optional[np.nd
         st.session_state.pop(f"{method}_{f.name}", None)
     for f in DEVICE_CONFIG_SCHEMA.get(device, []):
         st.session_state.pop(f"device_{device}_{f['name']}", None)
+        st.session_state.pop(f"device_{device}_{f['name']}_manual", None)
+    for key in (
+        "participant_Code",
+        "participant_Initials",
+        "participant_Age",
+        "participant_Gender",
+        "participant_DominantHand",
+        "participant_Notes",
+    ):
+        st.session_state.pop(key, None)
     _bump_channel_editor_revision(device)
 
     data_array = data_override
@@ -970,6 +981,7 @@ def render_general_form() -> Dict[str, Any]:
             options=method_options,
             index=method_options.index(method_value),
             help=method_field.tooltip or None,
+            key="general_Method",
         )
         device_options = sorted(set((device_field.options or []) + SUPPORTED_EXTRA_DEVICES))
         device_value = resolve_choice(device_options, general.get("Device"))
@@ -978,6 +990,7 @@ def render_general_form() -> Dict[str, Any]:
             options=device_options,
             index=device_options.index(device_value),
             help=device_field.tooltip or None,
+            key="general_Device",
         )
         if environment_field is not None:
             env_options = environment_field.options or [""]
@@ -1248,8 +1261,8 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
             _bump_channel_editor_revision(device)
             st.rerun()
 
-        # Reference electrode (#8): designate which EEG channel is the reference. ReferenceChannel is
-        # a 1-based index over the EEG channels (excluding Ground/Reference extras), matching analysis.
+        # ReferenceChannel is a 1-based index over EEG channels. Analysis subtracts the
+        # selected channel from every EEG channel; Ground/Reference extras are not EEG columns.
         method = st.session_state.get("general_form", {}).get("Method")
         method_has_ref = any(f.name == "ReferenceChannel" for f in METHOD_SCHEMAS.get(method, []))
         eeg_rows = [row for row in rows if row["Channel"] not in extras_set]
@@ -1262,12 +1275,12 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 cur_idx = 0
             cur_idx = cur_idx if 0 <= cur_idx < len(ref_labels) else 0
             choice = st.selectbox(
-                "Reference electrode",
+                "Reference channel",
                 options=list(range(len(ref_labels))),
                 format_func=lambda i: ref_labels[i],
                 index=cur_idx,
                 key=f"ref_electrode_{device}",
-                help="Channel used as the reference (ReferenceChannel) during analysis.",
+                help="Analysis uses all EEG channels minus this selected ReferenceChannel.",
             )
             new_ref = choice + 1
             if str(new_ref) != str(current_ref):
@@ -1507,22 +1520,46 @@ def render_participant_form() -> Dict[str, Any]:
         with form_col:
             cols = form_col.columns([1.25, 1.0, 0.65, 1.0, 1.0])
             participant["Code"] = cols[0].text_input(
-                "Participant code", value=participant.get("Code", ""), placeholder="e.g. VEP_023"
+                "Participant code",
+                value=participant.get("Code", ""),
+                placeholder="e.g. VEP_023",
+                key="participant_Code",
             )
-            participant["Initials"] = cols[1].text_input("Initials", value=participant.get("Initials", ""))
+            participant["Initials"] = cols[1].text_input(
+                "Initials",
+                value=participant.get("Initials", ""),
+                key="participant_Initials",
+            )
             age_number = coerce_number(participant.get("Age"))
             age_default = int(age_number) if isinstance(age_number, (int, float)) and age_number > 0 else 0
-            participant["Age"] = cols[2].number_input("Age", min_value=0, max_value=110, value=age_default)
+            participant["Age"] = cols[2].number_input(
+                "Age",
+                min_value=0,
+                max_value=110,
+                value=age_default,
+                key="participant_Age",
+            )
             gender_value = resolve_choice(GENDER_OPTIONS, participant.get("Gender"))
             hand_value = resolve_choice(HANDEDNESS_OPTIONS, participant.get("DominantHand"))
             participant["Gender"] = cols[3].selectbox(
-                "Gender", options=GENDER_OPTIONS, index=GENDER_OPTIONS.index(gender_value)
+                "Gender",
+                options=GENDER_OPTIONS,
+                index=GENDER_OPTIONS.index(gender_value),
+                key="participant_Gender",
             )
             participant["DominantHand"] = cols[4].selectbox(
-                "Dominant hand", options=HANDEDNESS_OPTIONS, index=HANDEDNESS_OPTIONS.index(hand_value)
+                "Dominant hand",
+                options=HANDEDNESS_OPTIONS,
+                index=HANDEDNESS_OPTIONS.index(hand_value),
+                key="participant_DominantHand",
             )
             notes_col, _ = form_col.columns([3, 1])
-            participant["Notes"] = notes_col.text_area("Session notes", value=participant.get("Notes", ""), height=128)
+            participant["Notes"] = notes_col.text_area(
+                "Session notes",
+                value=participant.get("Notes", ""),
+                height=128,
+                key="participant_Notes",
+            )
         with viz_col:
             _render_participant_card(participant)
     return dict(participant)
@@ -1602,6 +1639,10 @@ def assemble_params(
         value = convert_value(field, method_values.get(field.name))
         if value not in (None, "", []):
             params["Parameters"][field.name] = value
+    if any(field.name == "ReferenceChannel" for field in METHOD_SCHEMAS.get(params["Method"], [])):
+        reference_value = coerce_number(params["Parameters"].get("ReferenceChannel"))
+        if reference_value is None or reference_value < 1:
+            params["Parameters"]["ReferenceChannel"] = 1
     if device_specific:
         for key, value in device_specific.items():
             if value in (None, "", []):
@@ -2011,36 +2052,50 @@ def handle_upload(target) -> None:
         )
 
         if uploaded:
-            config_bytes = uploaded.read()
-            suffix = Path(uploaded.name).suffix.lower()
-            try:
-                if suffix in {".toml", ".tml"}:
-                    config = tomllib.loads(config_bytes.decode("utf-8"))
-                    params = normalize_params(config)
-                elif suffix == ".jsonld":
-                    config = json.loads(config_bytes.decode("utf-8"))
-                    params = _params_from_jsonld_doc(config, uploaded.name)
-                    if params is None:
-                        return
-                else:
-                    config = json.loads(config_bytes.decode("utf-8"))
-                    params = normalize_params(config)
-            except Exception as exc:  # pragma: no cover
-                st.error(f"Failed to parse uploaded config: {exc}")
+            config_bytes = uploaded.getvalue()
+            config_digest = f"{uploaded.name}:{hashlib.sha1(config_bytes).hexdigest()}"
+            if st.session_state.get("_last_config_upload_digest") == config_digest:
+                st.caption(f"Loaded '{uploaded.name}'. Upload a different file to apply new settings.")
             else:
-                load_params_into_state(params)
-                st.session_state["_flash"] = f"Imported parameters from '{uploaded.name}'."
-                st.rerun()
+                suffix = Path(uploaded.name).suffix.lower()
+                try:
+                    if suffix in {".toml", ".tml"}:
+                        config = tomllib.loads(config_bytes.decode("utf-8"))
+                        params = normalize_params(config)
+                    elif suffix == ".jsonld":
+                        config = json.loads(config_bytes.decode("utf-8"))
+                        params = _params_from_jsonld_doc(config, uploaded.name)
+                        if params is None:
+                            return
+                    else:
+                        config = json.loads(config_bytes.decode("utf-8"))
+                        params = normalize_params(config)
+                except Exception as exc:  # pragma: no cover
+                    st.error(f"Failed to parse uploaded config: {exc}")
+                else:
+                    load_params_into_state(params)
+                    st.session_state["_last_config_upload_digest"] = config_digest
+                    st.session_state["_flash"] = f"Imported parameters from '{uploaded.name}'."
+                    st.rerun()
 
         if data_upload:
             uploads = list(data_upload) if isinstance(data_upload, list) else [data_upload]
             jsonld_upload = next((item for item in uploads if Path(item.name).suffix.lower() == ".jsonld"), None)
             data_file = next((item for item in uploads if Path(item.name).suffix.lower() in {".npz", ".parquet", ".edf"}), None)
+            upload_digest = hashlib.sha1(
+                b"".join(item.name.encode("utf-8") + b"\0" + item.getvalue() for item in uploads)
+            ).hexdigest()
+            already_loaded = st.session_state.get("_last_data_upload_digest") == upload_digest
+            if already_loaded:
+                st.caption("Attached data already loaded. Upload different files to replace it.")
+                return
             params_from_jsonld: Optional[Dict[str, Any]] = None
             if jsonld_upload is not None:
                 try:
-                    jsonld_upload.seek(0)
-                    params_from_jsonld = _params_from_jsonld_doc(json.loads(jsonld_upload.read().decode("utf-8")), jsonld_upload.name)
+                    params_from_jsonld = _params_from_jsonld_doc(
+                        json.loads(jsonld_upload.getvalue().decode("utf-8")),
+                        jsonld_upload.name,
+                    )
                 except Exception as exc:  # pragma: no cover
                     st.error(f"Failed to parse uploaded JSON-LD: {exc}")
                     params_from_jsonld = None
@@ -2049,8 +2104,10 @@ def handle_upload(target) -> None:
                 st.session_state["imported_data"] = data_array
                 st.session_state["use_imported_data"] = True
                 st.success(f"Attached data from '{data_file.name}'.")
+                st.session_state["_last_data_upload_digest"] = upload_digest
             if params_from_jsonld is not None:
                 load_params_into_state(params_from_jsonld, data_array)
+                st.session_state["_last_data_upload_digest"] = upload_digest
                 st.session_state["_flash"] = f"Imported JSON-LD metadata from '{jsonld_upload.name}'."
                 st.rerun()
 
@@ -2115,7 +2172,11 @@ def render_sidebar_controls() -> SidebarControls:
         )
 
         last = st.session_state.get("last_results") or {}
-        can_export = last.get("data") is not None
+        imported_data = st.session_state.get("imported_data")
+        last_data = last.get("data")
+        export_data = last_data if last_data is not None else imported_data
+        export_params = last.get("params") or snapshot or st.session_state.get("imported_params_raw") or {}
+        can_export = export_data is not None and bool(export_params)
 
         st.markdown("**Export recording**")
 
@@ -2154,8 +2215,8 @@ def render_sidebar_controls() -> SidebarControls:
         ):
             try:
                 out = export_recording(
-                    last.get("data"),
-                    last.get("params") or {},
+                    export_data,
+                    export_params,
                     Path(default_save).expanduser(),
                     export_container,
                     export_fmt,
@@ -2166,7 +2227,8 @@ def render_sidebar_controls() -> SidebarControls:
                 st.error(f"Export failed: {exc}")
 
         if can_export:
-            st.caption("Use the button to write another copy of the last run in the selected export format.")
+            source_label = "last run" if last_data is not None else "imported data"
+            st.caption(f"Use the button to write another copy of the {source_label} in the selected export format.")
         else:
             st.caption(
                 "Choose export settings now. Each new run writes this format into the run folder; "
