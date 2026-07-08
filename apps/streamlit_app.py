@@ -92,6 +92,12 @@ def main() -> None:
 
     assembled_params = ui.assemble_params(general_values, method_values, participant_values, device_values)
     validation_issues = ui.validate_params(assembled_params)
+    if simulate:
+        validation_issues = [
+            issue
+            for issue in validation_issues
+            if issue != "UNICORN configuration requires a serial port / address."
+        ]
     if page in {"Session configuration", "Preview"}:
         render_workflow_progress(progress_slot, assembled_params, validation_issues)
 
