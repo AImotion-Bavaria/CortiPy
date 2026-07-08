@@ -17,14 +17,12 @@ WORKFLOW_READINESS_ITEMS = (
     ("has_data", "Recorded data"),
 )
 
-CORTIPY_CAPABILITIES = (
-    "Configure EEG methods, devices, timing, and participants",
-    "Edit electrodes, 10-20 positions, rubrics, models, and impedance",
-    "Preview live EEG, FFT, and per-channel windows during setup",
-    "Run hardware, simulated, or imported-data sessions",
-    "Reopen saved sessions and compare chart outputs",
-    "Export JSON-LD or BIDS with Parquet/EDF raw data",
-)
+PANE_BG = "#e8eef6"
+PANE_BORDER = "#c4cedb"
+PANE_TEXT = "#0f172a"
+PANE_MUTED = "#475569"
+INNER_PANE_BG = "#ffffff"
+INNER_PANE_BORDER = "#d7e1ed"
 
 
 def has_active_eeg_channels(params: Dict[str, Any]) -> bool:
@@ -165,6 +163,31 @@ def _workflow_status_tone(status: str) -> tuple[str, str, str]:
     return "#e0f2fe", "#075985", "#38bdf8"
 
 
+def _inject_workflow_styles() -> None:
+    st.markdown(
+        f"""
+        <style>
+        [data-testid="stVerticalBlockBorderWrapper"]:has(.workflow-pane-marker) {{
+            background: {PANE_BG} !important;
+            border-color: {PANE_BORDER} !important;
+        }}
+        [data-testid="stVerticalBlockBorderWrapper"]:has(.workflow-pane-marker) > div {{
+            background: {PANE_BG} !important;
+        }}
+        [data-testid="stVerticalBlockBorderWrapper"]:has(.workflow-pane-marker) p,
+        [data-testid="stVerticalBlockBorderWrapper"]:has(.workflow-pane-marker) label {{
+            color: {PANE_TEXT};
+        }}
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _workflow_pane_marker() -> None:
+    st.markdown("<span class='workflow-pane-marker' style='display:none'></span>", unsafe_allow_html=True)
+
+
 def _render_workflow_banner(
     eyebrow: str,
     title: str,
@@ -183,14 +206,14 @@ def _render_workflow_banner(
     st.markdown(
         (
             f"<div style='border:1px solid {border};border-left:6px solid {border};"
-            f"border-radius:10px;background:{bg};padding:1.12rem 1.16rem;margin-bottom:1.1rem;"
+            f"border-radius:10px;background:{PANE_BG};padding:1.12rem 1.16rem;margin-bottom:1.1rem;"
             f"min-height:{min_height};'>"
             f"{eyebrow_html}"
-            f"<div style='color:#111827;font-size:1.25rem;font-weight:800;line-height:1.25;margin-top:0.15rem;'>"
+            f"<div style='color:{PANE_TEXT};font-size:1.25rem;font-weight:800;line-height:1.25;margin-top:0.15rem;'>"
             f"{html.escape(title)}</div>"
-            f"<div style='color:#374151;line-height:1.4;margin-top:0.45rem;'>{html.escape(body)}</div>"
+            f"<div style='color:{PANE_MUTED};line-height:1.4;margin-top:0.45rem;'>{html.escape(body)}</div>"
             f"<div style='margin-top:0.72rem;'><span style='display:inline-block;border:1px solid {border};"
-            f"border-radius:999px;background:rgba(255,255,255,0.72);color:{fg};"
+            f"border-radius:999px;background:{PANE_BG};color:{border};"
             f"font-size:0.78rem;font-weight:750;padding:0.13rem 0.58rem;'>{html.escape(status)}</span></div>"
             "</div>"
         ),
@@ -206,11 +229,11 @@ def _render_summary_tile(label: str, value: str, status: str) -> None:
     bg, fg, border = _workflow_status_tone(status)
     st.markdown(
         (
-            f"<div style='border:1px solid {border};border-radius:9px;background:{bg};"
+            f"<div style='border:1px solid {border};border-radius:9px;background:{INNER_PANE_BG};"
             "padding:0.8rem 0.9rem;min-height:5.35rem;'>"
-            f"<div style='color:{fg};font-size:0.72rem;font-weight:800;text-transform:uppercase;'>"
+            f"<div style='color:{border};font-size:0.72rem;font-weight:800;text-transform:uppercase;'>"
             f"{html.escape(label)}</div>"
-            f"<div style='color:#111827;font-size:1.35rem;font-weight:760;line-height:1.25;"
+            f"<div style='color:{PANE_TEXT};font-size:1.35rem;font-weight:760;line-height:1.25;"
             f"margin-top:0.38rem;overflow-wrap:anywhere;'>{html.escape(value)}</div>"
             "</div>"
         ),
@@ -238,7 +261,7 @@ def _render_check_block(checks: List[tuple[str, bool]], *, min_height: str = "5.
         items.append(
             "<div style='display:flex;align-items:flex-start;gap:0.45rem;'>"
             f"<span style='color:{color};font-weight:850;line-height:1.35;'>{marker}</span>"
-            f"<span style='font-size:0.9rem;line-height:1.35;color:#1f2937;'>{html.escape(label)}</span>"
+            f"<span style='font-size:0.9rem;line-height:1.35;color:{PANE_TEXT};'>{html.escape(label)}</span>"
             "</div>"
         )
     st.markdown(
@@ -251,7 +274,7 @@ def _render_check_block(checks: List[tuple[str, bool]], *, min_height: str = "5.
     )
 
 
-def _render_check_grid(items: List[tuple[str, bool]]) -> None:
+def _render_check_grid(items: List[tuple[str, bool]], columns: int = 2) -> None:
     cells = []
     for label, ok in items:
         color = "#0d9488" if ok else "#9ca3af"
@@ -259,12 +282,12 @@ def _render_check_grid(items: List[tuple[str, bool]]) -> None:
         cells.append(
             "<div style='display:flex;align-items:flex-start;gap:0.45rem;min-height:1.7rem;'>"
             f"<span style='color:{color};font-weight:850;line-height:1.3;'>{marker}</span>"
-            f"<span style='font-size:0.9rem;line-height:1.3;color:#1f2937;'>{html.escape(label)}</span>"
+            f"<span style='font-size:0.9rem;line-height:1.3;color:{PANE_TEXT};'>{html.escape(label)}</span>"
             "</div>"
         )
     st.markdown(
         (
-            "<div style='display:grid;grid-template-columns:repeat(2,minmax(0,1fr));"
+            f"<div style='display:grid;grid-template-columns:repeat({columns},minmax(0,1fr));"
             "column-gap:1.1rem;row-gap:0.65rem;margin-top:0.55rem;'>"
             f"{''.join(cells)}</div>"
         ),
@@ -272,24 +295,100 @@ def _render_check_grid(items: List[tuple[str, bool]]) -> None:
     )
 
 
-def _render_capability_panel() -> None:
+def _render_action_panel(title: str, body: str, status: str, *, min_height: str = "8.65rem") -> None:
+    bg, fg, border = _workflow_status_tone(status)
+    st.markdown(
+        (
+            f"<div style='border-left:7px solid {border};border-radius:10px;background:{PANE_BG};"
+            "padding:1.05rem 1.12rem;margin-bottom:0.85rem;"
+            f"min-height:{min_height};'>"
+            f"<div style='display:flex;justify-content:space-between;gap:1rem;align-items:flex-start;'>"
+            "<div>"
+            f"<div style='color:{PANE_TEXT};font-size:1.38rem;font-weight:850;line-height:1.18;'>"
+            f"{html.escape(title)}</div>"
+            f"<div style='color:{PANE_MUTED};font-size:0.98rem;line-height:1.45;margin-top:0.5rem;max-width:58rem;'>"
+            f"{html.escape(body)}</div>"
+            "</div>"
+            f"<span style='display:inline-block;border:1px solid {border};border-radius:999px;"
+            f"background:{PANE_BG};color:{border};font-size:0.78rem;font-weight:800;"
+            f"padding:0.2rem 0.65rem;white-space:nowrap;'>{html.escape(status)}</span>"
+            "</div>"
+            "<div style='display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0.65rem;margin-top:1rem;'>"
+            f"<div style='border:1px solid {INNER_PANE_BORDER};border-radius:9px;background:{INNER_PANE_BG};"
+            f"padding:0.48rem 0.55rem;color:{PANE_TEXT};font-weight:780;font-size:0.84rem;'>Setup</div>"
+            f"<div style='border:1px solid {INNER_PANE_BORDER};border-radius:9px;background:{INNER_PANE_BG};"
+            f"padding:0.48rem 0.55rem;color:{PANE_TEXT};font-weight:780;font-size:0.84rem;'>Preview</div>"
+            f"<div style='border:1px solid {INNER_PANE_BORDER};border-radius:9px;background:{INNER_PANE_BG};"
+            f"padding:0.48rem 0.55rem;color:{PANE_TEXT};font-weight:780;font-size:0.84rem;'>Record</div>"
+            f"<div style='border:1px solid {INNER_PANE_BORDER};border-radius:9px;background:{INNER_PANE_BG};"
+            f"padding:0.48rem 0.55rem;color:{PANE_TEXT};font-weight:780;font-size:0.84rem;'>Export</div>"
+            "</div></div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def _render_readiness_panel(completed: int, total: int, flags: Dict[str, bool], status: str) -> None:
+    bg, fg, border = _workflow_status_tone(status)
+    st.markdown(
+        (
+            f"<div style='border-left:7px solid {border};border-radius:10px;background:{PANE_BG};"
+            "padding:1rem 1.08rem;margin-bottom:0.85rem;min-height:4.15rem;'>"
+            "<div style='display:flex;justify-content:space-between;align-items:baseline;gap:1rem;'>"
+            f"<div style='color:{PANE_TEXT};font-size:1.05rem;font-weight:820;'>Session readiness</div>"
+            f"<div style='color:{border};font-size:0.9rem;font-weight:820;'>{completed}/{total}</div>"
+            "</div></div>"
+        ),
+        unsafe_allow_html=True,
+    )
+    st.progress(completed / total, text=f"{completed}/{total} ready")
+    _render_spacer("0.35rem")
+    _render_check_grid([(label, flags[key]) for key, label in WORKFLOW_READINESS_ITEMS], columns=3)
+
+
+def _render_session_panel(summary: Dict[str, str], summary_status: Dict[str, str]) -> None:
     cells = []
-    for label in CORTIPY_CAPABILITIES:
+    for label, value in summary.items():
+        bg, fg, border = _workflow_status_tone(summary_status[label])
         cells.append(
-            "<div style='display:flex;align-items:flex-start;gap:0.5rem;'>"
-            "<span style='color:#0d9488;font-weight:900;line-height:1.35;'>&#10003;</span>"
-            f"<span style='font-size:0.94rem;line-height:1.35;color:#1f2937;'>{html.escape(label)}</span>"
+            f"<div style='border:1px solid {border};border-radius:10px;background:{INNER_PANE_BG};"
+            "padding:0.78rem 0.86rem;min-height:4.9rem;'>"
+            f"<div style='color:{border};font-size:0.72rem;font-weight:850;text-transform:uppercase;'>"
+            f"{html.escape(label)}</div>"
+            f"<div style='color:{PANE_TEXT};font-size:1.32rem;font-weight:800;line-height:1.2;"
+            f"margin-top:0.38rem;overflow-wrap:anywhere;'>{html.escape(value)}</div>"
             "</div>"
         )
     st.markdown(
         (
-            "<div style='border:1px solid #5eead4;border-left:6px solid #0d9488;"
-            "border-radius:10px;background:#ecfdf5;padding:1.1rem 1.16rem;margin-bottom:1rem;'>"
-            "<div style='color:#111827;font-size:1.25rem;font-weight:820;line-height:1.25;margin-top:0.16rem;'>"
-            "What CortiPy can do</div>"
-            "<div style='display:grid;grid-template-columns:repeat(2,minmax(0,1fr));"
-            "column-gap:1.3rem;row-gap:0.7rem;margin-top:0.85rem;'>"
+            f"<div style='border:1px solid {PANE_BORDER};border-radius:12px;background:{PANE_BG};"
+            "padding:1rem 1.05rem;margin-top:0.4rem;'>"
+            "<div style='display:flex;justify-content:space-between;gap:1rem;align-items:baseline;margin-bottom:0.8rem;'>"
+            f"<div style='color:{PANE_TEXT};font-size:1.02rem;font-weight:820;'>Session at a glance</div>"
+            f"<div style='color:{PANE_MUTED};font-size:0.78rem;font-weight:760;text-transform:uppercase;'>"
+            "Current editor state</div></div>"
+            "<div style='display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:0.7rem;'>"
             f"{''.join(cells)}</div></div>"
+        ),
+        unsafe_allow_html=True,
+    )
+
+
+def _render_lane_header(index: int, title: str, status: str, body: str) -> None:
+    bg, fg, border = _workflow_status_tone(status)
+    st.markdown(
+        (
+            f"<div style='border-left:6px solid {border};border-radius:10px;background:{PANE_BG};"
+            "padding:0.9rem 0.95rem;margin-bottom:0.82rem;min-height:7rem;'>"
+            "<div style='display:flex;justify-content:space-between;gap:0.75rem;align-items:center;'>"
+            f"<div style='color:{border};font-size:0.78rem;font-weight:850;'>Step {index:02d}</div>"
+            f"<span style='border:1px solid {border};border-radius:999px;background:{PANE_BG};"
+            f"color:{border};font-size:0.72rem;font-weight:780;padding:0.12rem 0.5rem;'>{html.escape(status)}</span>"
+            "</div>"
+            f"<div style='color:{PANE_TEXT};font-size:1.2rem;font-weight:850;line-height:1.2;margin-top:0.48rem;'>"
+            f"{html.escape(title)}</div>"
+            f"<div style='color:{PANE_MUTED};font-size:0.9rem;line-height:1.35;margin-top:0.45rem;'>"
+            f"{html.escape(body)}</div></div>"
         ),
         unsafe_allow_html=True,
     )
@@ -306,8 +405,9 @@ def _phase_card(
     set_active_view: Callable[[str], None],
 ) -> None:
     with st.container(border=True):
-        _render_workflow_banner(f"Step {index:02d}", title, body, status, min_height="8.6rem")
-        _render_check_block(checks)
+        _workflow_pane_marker()
+        _render_lane_header(index, title, status, body)
+        _render_check_block(checks, min_height="5.2rem")
         _render_spacer("0.65rem")
         action_cols = st.columns(len(actions))
         for button_idx, (label, page) in enumerate(actions):
@@ -326,6 +426,7 @@ def render_workflow_page(
     set_active_view: Callable[[str], None],
 ) -> None:
     """Show a home page with workflow shortcuts for configuring, recording, and reviewing sessions."""
+    _inject_workflow_styles()
     summary = _workflow_summary(params)
     flags = _workflow_flags(params, validation_issues)
     next_title, next_body, next_page, next_key = _workflow_next_action(params, validation_issues)
@@ -334,41 +435,32 @@ def render_workflow_page(
     total = len(WORKFLOW_READINESS_ITEMS)
     secondary_page = "Preview" if next_page != "Preview" else "Session configuration"
 
-    top_left, top_right = st.columns([1.9, 1])
+    top_left, top_right = st.columns([1.45, 1])
     with top_left:
-        _render_capability_panel()
-        _render_workflow_banner("", next_title, next_body, next_status, min_height="5.5rem")
-        action_cols = st.columns([1.15, 0.85])
-        action_cols[0].button(
-            f"Open {next_page}",
-            type="primary",
-            width="stretch",
-            key=next_key,
-            on_click=set_active_view,
-            args=(next_page,),
-        )
-        action_cols[1].button(
-            f"Open {secondary_page}",
-            width="stretch",
-            key=f"{next_key}_secondary",
-            on_click=set_active_view,
-            args=(secondary_page,),
-        )
+        with st.container(border=True):
+            _workflow_pane_marker()
+            _render_action_panel(next_title, next_body, next_status)
+            action_cols = st.columns([1.15, 0.85])
+            action_cols[0].button(
+                f"Open {next_page}",
+                type="primary",
+                width="stretch",
+                key=next_key,
+                on_click=set_active_view,
+                args=(next_page,),
+            )
+            action_cols[1].button(
+                f"Open {secondary_page}",
+                width="stretch",
+                key=f"{next_key}_secondary",
+                on_click=set_active_view,
+                args=(secondary_page,),
+            )
     with top_right:
         with st.container(border=True):
-            _render_workflow_banner(
-                "Readiness",
-                "Session state",
-                f"{completed} of {total} checkpoints are complete.",
-                next_status,
-                min_height="7.4rem",
-            )
-            st.progress(completed / total, text=f"{completed}/{total} ready")
-            _render_spacer("0.4rem")
-            _render_check_grid([(label, flags[key]) for key, label in WORKFLOW_READINESS_ITEMS])
+            _workflow_pane_marker()
+            _render_readiness_panel(completed, total, flags, next_status)
 
-    _render_spacer("0.65rem")
-    summary_cols = st.columns(6)
     summary_status = {
         "Method": "Ready" if summary["Method"] != "Not set" else "Needs setup",
         "Device": "Ready" if summary["Device"] != "Not set" else "Needs setup",
@@ -377,11 +469,9 @@ def render_workflow_page(
         "Participant": "Ready" if summary["Participant"] != "Not set" else "Needs setup",
         "Format": "Available",
     }
-    for col, (label, value) in zip(summary_cols, summary.items()):
-        with col:
-            _render_summary_tile(label, value, summary_status[label])
+    _render_session_panel(summary, summary_status)
 
-    _render_spacer("0.75rem")
+    _render_spacer("0.85rem")
     phase_cols = st.columns(3)
     with phase_cols[0]:
         prepare_status = "Ready" if flags["has_config"] and flags["has_participant"] and flags["has_electrodes"] else "Needs setup"
