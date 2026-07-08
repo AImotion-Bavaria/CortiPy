@@ -17,9 +17,15 @@ def calc_fft(data: np.ndarray, fs: float) -> Tuple[np.ndarray, np.ndarray]:
     """Return the single-sided FFT magnitude spectrum."""
     data = np.asarray(data)
     n = data.shape[0]
-    xdft = np.fft.rfft(data, axis=0)
-    xdft = np.abs(xdft) / n
-    freq = np.linspace(0.0, fs / 2.0, xdft.shape[0])
+    if n <= 0:
+        return np.asarray([]), np.asarray([])
+    xdft = np.abs(np.fft.rfft(data, axis=0)) / n
+    if xdft.shape[0] > 1:
+        if n % 2 == 0:
+            xdft[1:-1] *= 2.0
+        else:
+            xdft[1:] *= 2.0
+    freq = np.fft.rfftfreq(n, d=1.0 / float(fs))
     return xdft, freq
 
 

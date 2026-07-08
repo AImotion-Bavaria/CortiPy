@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from cortipy.ui_streamlit.charts import _chart_from_raw_data, referenced_eeg_view
+from cortipy.ui_streamlit.charts import _chart_from_psd, _chart_from_raw_data, referenced_eeg_view
 from cortipy.ui_streamlit.reports import autoevaluate_if_needed
 
 
@@ -53,3 +53,18 @@ def test_autoevaluate_does_not_store_evaluation_on_input_params(monkeypatch) -> 
 
     assert "fft" in evaluation
     assert "Evaluation" not in params
+
+
+def test_psd_chart_places_50hz_component_on_50hz_bin() -> None:
+    fs = 250.0
+    n_samples = 375
+    t = np.arange(n_samples) / fs
+    data = np.sin(2 * np.pi * 50.0 * t)[:, None]
+    params = {"Device": "ActiCHamp", "Parameters": {"fs": fs, "NumberEEGChannels": 1}}
+
+    chart = _chart_from_psd("run", params, data)
+
+    assert chart is not None
+    peak_idx = int(np.argmax(chart.series[0].y))
+    assert np.isclose(chart.series[0].x[peak_idx], 50.0)
+    assert chart.y_label == "Power (dB/Hz)"

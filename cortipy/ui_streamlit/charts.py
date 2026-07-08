@@ -60,7 +60,7 @@ def referenced_eeg_view(params: Dict[str, Any], data: np.ndarray) -> np.ndarray:
         return arr
 
     param_block = params.get("Parameters", {}) if params else {}
-    referenced = apply_eeg_reference(arr, param_block)
+    referenced = apply_eeg_reference(arr, param_block) if "ReferenceChannel" in param_block else arr.copy()
     eeg_count = eeg_channel_count(param_block, referenced.shape[1])
     device = str(params.get("Device", "") if params else "").lower()
     if device == "unicorn":

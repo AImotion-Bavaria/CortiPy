@@ -15,6 +15,20 @@ def test_calc_fft_returns_expected_spectrum():
     spectrum, freq = calc_fft(data, fs)
     assert np.isclose(freq[-1], fs / 2.0)
     assert np.argmax(spectrum) == 10
+    assert np.isclose(float(np.max(spectrum)), 1.0)
+
+
+def test_calc_fft_labels_50hz_bin_with_odd_sample_count():
+    fs = 250.0
+    n_samples = 375
+    t = np.arange(n_samples) / fs
+    data = 2.0 * np.sin(2 * np.pi * 50.0 * t)
+
+    spectrum, freq = calc_fft(data, fs)
+    peak_idx = int(np.argmax(spectrum))
+
+    assert np.isclose(freq[peak_idx], 50.0)
+    assert np.isclose(spectrum[peak_idx], 2.0)
 
 
 def test_time_vector_supports_seconds_and_milliseconds():
