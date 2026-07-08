@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 from typing import Optional, Sequence
 
 import numpy as np
@@ -66,15 +67,34 @@ class UnicornDevice(DeviceInterface):
     def connect(self) -> None:
         if self._serial is not None:
             return
-        ser = serial.Serial(self.port, self.BAUD_RATE, timeout=self.timeout)
-        ser.reset_input_buffer()
-        ser.write(self.START_ACQ)
-        ack = ser.read(len(self.START_RESPONSE))
-        if ack != self.START_RESPONSE:
-            ser.close()
-            raise RuntimeError(
-                f"UNICORN device '{self.device_name}' did not acknowledge the start command (got {ack!r})."
-            )
+        ser = serial.Serial(
+            port=self.port,
+            baudrate=self.BAUD_RATE,
+            timeout=self.timeout,
+            write_timeout=self.timeout,
+        )
+        try:
+            for attr in ("dtr", "rts"):
+                try:
+                    setattr(ser, attr, True)
+                except Exception:
+                    pass
+            time.sleep(0.15)
+            ack = self._send_start_command(ser)
+            if ack != self.START_RESPONSE:
+                # Bluetooth serial stacks can expose stale bytes immediately after opening.
+                # Flush and try once more before reporting the raw ACK for diagnosis.
+                ack = self._send_start_command(ser)
+            if ack != self.START_RESPONSE:
+                ser.close()
+                raise RuntimeError(
+                    f"UNICORN device '{self.device_name}' did not acknowledge the start command "
+                    f"on {self.port} (got {ack!r})."
+                )
+        except Exception:
+            if ser.is_open:
+                ser.close()
+            raise
         self._serial = ser
 
     def acquire(self, duration_seconds: float, aux_channels: int = 0) -> np.ndarray:
@@ -122,6 +142,22 @@ class UnicornDevice(DeviceInterface):
                 raise RuntimeError("UNICORN stream ended unexpectedly.")
             buffer.extend(chunk)
         return bytes(buffer)
+
+    def _send_start_command(self, ser: serial.Serial) -> bytes:
+        try:
+            ser.reset_input_buffer()
+        except Exception:
+            pass
+        try:
+            ser.reset_output_buffer()
+        except Exception:
+            pass
+        ser.write(self.START_ACQ)
+        try:
+            ser.flush()
+        except Exception:
+            pass
+        return ser.read(len(self.START_RESPONSE))
 
     def _decode_packet(self, packet: bytes) -> UnicornPacket:
         if len(packet) != self.PACKET_BYTES:

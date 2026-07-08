@@ -1265,6 +1265,11 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                         rows = st.session_state["channel_tables"].get("ActiCHamp", rows)
                         editor_revision = int(st.session_state["_channel_editor_revision"].get(device, 0))
                     auto_cols[2].caption("Updates whenever Streamlit reruns while the toggle is enabled.")
+        else:
+            st.caption(
+                f"Continuous impedance polling is not available for {device}; "
+                "enter measured impedance values manually when needed."
+            )
 
         # Quick setup: fill the standard montage / bulk-toggle active channels without hand-editing.
         extras_set = set(DEVICE_EXTRA_LABELS.get(device, []))
