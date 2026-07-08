@@ -70,6 +70,7 @@ def main() -> None:
 
     controls = ui.render_sidebar_controls()
     default_save = controls.default_save
+    active_dataset_dir = controls.active_dataset_dir
     simulate = controls.simulate
     live_view_enabled = controls.live_view_enabled
     live_view_window = controls.live_view_window
@@ -208,6 +209,9 @@ def main() -> None:
             selected_indices = list(range(max(1, channels_for_run)))
         save_dir = Path(default_save).expanduser()
         save_dir.mkdir(parents=True, exist_ok=True)
+        target_dir = Path(active_dataset_dir).expanduser() if active_dataset_dir else None
+        if target_dir is not None:
+            target_dir.mkdir(parents=True, exist_ok=True)
         params_to_run = dict(assembled_params)
         params_to_run.pop("Evaluation", None)
         params_to_run.pop("data", None)
@@ -253,7 +257,7 @@ def main() -> None:
             try:
                 if simulate:
                     params_to_run["data"] = ui.simulated_recording_data(params_to_run)
-                    saved_path = SaveManager(save_dir)(params_to_run)
+                    saved_path = SaveManager(save_dir)(params_to_run, target_dir=target_dir)
                     export_path, export_error = _export_selected_recording(
                         params_to_run.get("data"),
                         params_to_run,
@@ -286,6 +290,7 @@ def main() -> None:
                             save_dir,
                             live_view=live_view_service,
                             connected_device=connected_device,
+                            target_dir=target_dir,
                         )
                         st.session_state["last_results"] = {
                             "label": getattr(saved_path, "name", "Last run"),

@@ -109,7 +109,9 @@ from cortipy.ui_streamlit.plot_windows import (  # noqa: E402
     render_plotly_window_launcher as _render_plotly_window_launcher,
 )
 from cortipy.ui_streamlit.data_import import (  # noqa: E402
+    load_edf_array as _load_edf_array,
     load_npz_array as _load_npz_array,
+    load_parquet_array as _load_parquet_array,
     load_uploaded_data_array as _load_uploaded_data_array,
     params_from_jsonld_doc as _params_from_jsonld_doc_base,
 )
@@ -140,6 +142,7 @@ from cortipy.ui_streamlit.workflow import (  # noqa: E402
 @dataclass(frozen=True)
 class SidebarControls:
     default_save: str
+    active_dataset_dir: Optional[str]
     simulate: bool
     live_view_enabled: bool
     live_view_window: int
@@ -734,6 +737,8 @@ def ensure_state() -> None:
         st.session_state["_live_view_active"] = False
     if "_channel_editor_revision" not in st.session_state:
         st.session_state["_channel_editor_revision"] = {}
+    if "active_dataset_dir" not in st.session_state:
+        st.session_state["active_dataset_dir"] = ""
 
 
 def get_live_view_placeholder():
@@ -1951,6 +1956,7 @@ def run_pipeline_once(
     save_dir: Path,
     live_view: Optional[LiveViewService] = None,
     connected_device: Optional[DeviceInterface] = None,
+    target_dir: Optional[Path] = None,
 ) -> tuple[Dict[str, Any], Optional[Path]]:
     saver = SaveManager(save_dir)
     provider_called = {"done": False}
@@ -1964,7 +1970,7 @@ def run_pipeline_once(
 
     def save_and_capture(run_params: Dict[str, Any]) -> None:
         captured["params"] = run_params
-        saver(run_params)
+        saver(run_params, target_dir=target_dir)
         captured["path"] = getattr(saver, "last_target_dir", None)
 
     def attach_context(context):
@@ -2003,6 +2009,94 @@ def _load_session_contents(session_dir: Path) -> tuple[Optional[Dict[str, Any]],
     return params_content, data_array
 
 
+def _load_data_file_path(path: Path) -> Optional[np.ndarray]:
+    suffix = path.suffix.lower()
+    if suffix == ".npz":
+        return _load_npz_array(path)
+    if suffix == ".parquet":
+        return _load_parquet_array(path)
+    if suffix == ".edf":
+        return _load_edf_array(path)
+    return None
+
+
+def _find_first_existing_file(base_dir: Path, candidates: List[str]) -> Optional[Path]:
+    for candidate in candidates:
+        path = base_dir / candidate
+        if path.exists() and path.is_file():
+            return path
+    return None
+
+
+def _load_dataset_folder(dataset_dir: Path) -> tuple[Optional[Dict[str, Any]], Optional[np.ndarray], str]:
+    """Load params/metadata plus raw data from an existing dataset folder."""
+    dataset_dir = Path(dataset_dir).expanduser()
+    if not dataset_dir.exists() or not dataset_dir.is_dir():
+        return None, None, f"Dataset folder not found: {dataset_dir}"
+
+    params_content: Optional[Dict[str, Any]] = None
+    source_label = ""
+    params_path = _find_first_existing_file(dataset_dir, ["params.json"])
+    if params_path is None:
+        jsonld_files = sorted(dataset_dir.rglob("*.jsonld"))
+        if jsonld_files:
+            params_path = jsonld_files[0]
+    if params_path is None:
+        json_files = sorted(path for path in dataset_dir.glob("*.json") if path.name.lower() != "dataset_description.json")
+        if json_files:
+            params_path = json_files[0]
+
+    if params_path is not None:
+        try:
+            parsed = json.loads(params_path.read_text(encoding="utf-8"))
+            if params_path.suffix.lower() == ".jsonld":
+                params_content = _params_from_jsonld_doc(parsed, params_path.name)
+            else:
+                params_content = normalize_params(parsed)
+            source_label = params_path.name
+        except Exception as exc:
+            return None, None, f"Failed to load settings from {params_path.name}: {exc}"
+
+    data_array: Optional[np.ndarray] = None
+    data_path: Optional[Path] = None
+    if params_content:
+        raw_name = params_content.get("DataFile")
+        if raw_name:
+            raw_path = Path(str(raw_name))
+            raw_candidates = [
+                dataset_dir / raw_path,
+                dataset_dir / "raw_data" / raw_path.name,
+                dataset_dir / "jsonld_export" / "raw_data" / raw_path.name,
+            ]
+            data_path = next((path for path in raw_candidates if path.exists() and path.is_file()), None)
+    if data_path is None:
+        data_path = _find_first_existing_file(dataset_dir, ["data.npz"])
+    if data_path is None:
+        for pattern in ("*.npz", "*.parquet", "*.edf"):
+            matches = sorted(dataset_dir.rglob(pattern))
+            if matches:
+                data_path = matches[0]
+                break
+    if data_path is not None:
+        data_array = _load_data_file_path(data_path)
+
+    if params_content is None:
+        return None, data_array, f"No params.json, JSON config, or JSON-LD metadata found in {dataset_dir}."
+
+    data_note = f" with {data_path.name}" if data_path is not None and data_array is not None else ""
+    return params_content, data_array, f"Loaded {source_label or 'settings'}{data_note} from {dataset_dir.name}."
+
+
+def active_dataset_path(default_save: str | Path) -> Optional[Path]:
+    raw = str(st.session_state.get("active_dataset_dir") or "").strip()
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = Path(default_save).expanduser() / path
+    return path
+
+
 def render_saved_sessions(base_dir: Path) -> tuple[Optional[tuple[str, Dict[str, Any], Optional[np.ndarray]]], List[tuple[str, Dict[str, Any], Optional[np.ndarray]]]]:
     st.subheader("Saved sessions")
     refresh = st.button("Refresh list")
@@ -2033,12 +2127,14 @@ def render_saved_sessions(base_dir: Path) -> tuple[Optional[tuple[str, Dict[str,
             st.json(params_content)
             if st.button("Load session into editor", key=f"load_session_{primary.name}"):
                 load_params_into_state(normalize_params(params_content), data_array)
+                st.session_state["active_dataset_dir"] = str(primary)
+                st.session_state.pop("active_dataset_dir_input", None)
                 st.session_state["last_results"] = {
                     "label": primary.name,
                     "params": normalize_params(params_content),
                     "data": data_array,
                 }
-                st.session_state["_flash"] = "Session loaded. Review settings before running."
+                st.session_state["_flash"] = "Session loaded. This folder is now the active dataset target."
                 st.rerun()
         else:
             st.warning("params.json missing.")
@@ -2071,7 +2167,7 @@ def render_saved_sessions(base_dir: Path) -> tuple[Optional[tuple[str, Dict[str,
 
 
 def handle_upload(target) -> None:
-    with target.expander("Import config / params", expanded=False):
+    with target.expander("Load settings / data", expanded=False):
         uploaded = st.file_uploader(
             "Load JSON/TOML config, params.json, or JSON-LD metadata",
             type=["json", "jsonld", "toml", "tml"],
@@ -2160,6 +2256,53 @@ def render_sidebar_controls() -> SidebarControls:
         exp_dir = Path(default_save).expanduser()
         prior_sessions = list_saved_sessions(exp_dir) if exp_dir.exists() else []
 
+        active_default = str(st.session_state.get("active_dataset_dir") or "")
+        active_dataset_value = st.text_input(
+            "Active dataset folder",
+            value=active_default,
+            help=(
+                "Optional. When set, Start measurement saves params.json, data.npz, and exports into this folder "
+                "instead of creating a new timestamped run folder."
+            ),
+            placeholder="Leave empty for a new timestamped run folder",
+            key="active_dataset_dir_input",
+        ).strip()
+        st.session_state["active_dataset_dir"] = active_dataset_value
+        dataset_path = active_dataset_path(default_save)
+        dataset_cols = st.columns(2)
+        if dataset_cols[0].button(
+            "Load dataset folder",
+            key="load_active_dataset_folder",
+            width="stretch",
+            disabled=dataset_path is None,
+            help="Load params.json or JSON-LD metadata, plus data.npz/parquet/edf when present.",
+        ):
+            assert dataset_path is not None
+            params_content, data_array, message = _load_dataset_folder(dataset_path)
+            if params_content:
+                load_params_into_state(params_content, data_array)
+                st.session_state["active_dataset_dir"] = str(dataset_path)
+                st.session_state["last_results"] = {
+                    "label": dataset_path.name,
+                    "params": params_content,
+                    "data": data_array,
+                }
+                st.session_state["_flash"] = message
+                st.rerun()
+            else:
+                st.warning(message)
+        if dataset_cols[1].button(
+            "Clear active folder",
+            key="clear_active_dataset_folder",
+            width="stretch",
+            disabled=dataset_path is None,
+        ):
+            st.session_state["active_dataset_dir"] = ""
+            st.session_state.pop("active_dataset_dir_input", None)
+            st.rerun()
+        if dataset_path is not None:
+            st.caption(f"Active target: {dataset_path}")
+
         if prior_sessions:
             latest = prior_sessions[0]
             st.caption(f"{len(prior_sessions)} prior session(s) - latest: {latest.name}")
@@ -2176,6 +2319,8 @@ def render_sidebar_controls() -> SidebarControls:
                     load_params_into_state(normalize_params(params_content))
                     st.session_state["imported_data"] = None
                     st.session_state["use_imported_data"] = False
+                    st.session_state["active_dataset_dir"] = ""
+                    st.session_state.pop("active_dataset_dir_input", None)
                     st.session_state["_flash"] = (
                         f"Loaded settings from {latest.name}. Update the participant, then start the recording."
                     )
@@ -2254,10 +2399,12 @@ def render_sidebar_controls() -> SidebarControls:
                 )
             else:
                 try:
+                    export_dir = active_dataset_path(default_save) or Path(default_save).expanduser()
+                    export_dir.mkdir(parents=True, exist_ok=True)
                     out = export_recording(
                         export_data,
                         export_params,
-                        Path(default_save).expanduser(),
+                        export_dir,
                         export_container,
                         export_fmt,
                     )
@@ -2400,6 +2547,7 @@ def render_sidebar_controls() -> SidebarControls:
 
     return SidebarControls(
         default_save=default_save,
+        active_dataset_dir=str(active_dataset_path(default_save)) if active_dataset_path(default_save) else None,
         simulate=simulate,
         live_view_enabled=live_view_enabled,
         live_view_window=int(live_view_window),

@@ -23,10 +23,13 @@ class SaveManager:
         self.database_callback = database_callback
         self.last_target_dir: Optional[Path] = None
 
-    def __call__(self, params: Dict[str, Any]) -> None:
+    def __call__(self, params: Dict[str, Any], target_dir: str | Path | None = None) -> Path:
         method = params.get("Method", "Unknown")
-        timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        target_dir = self.base_dir / f"{timestamp}_{method}"
+        if target_dir is None:
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            target_dir = self.base_dir / f"{timestamp}_{method}"
+        else:
+            target_dir = Path(target_dir)
         target_dir.mkdir(parents=True, exist_ok=True)
         self.last_target_dir = target_dir
 
