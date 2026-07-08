@@ -1094,7 +1094,23 @@ def render_method_form(method: str) -> Dict[str, Any]:
             target = cols[idx % ncols]
             key = f"{method}_{field.name}"
             current = method_state.get(field.name)
-            if field.kind == "dropdown":
+            if field.name == "ReferenceChannel":
+                device = st.session_state.get("general_form", {}).get("Device", "")
+                ref_options, ref_labels = _reference_channel_options(device)
+                if ref_options:
+                    current_ref = coerce_number(current)
+                    resolved_ref = int(current_ref) if current_ref in ref_options else ref_options[0]
+                    value = target.selectbox(
+                        "Reference: all EEG - selected channel",
+                        options=ref_options,
+                        index=ref_options.index(resolved_ref),
+                        format_func=lambda option: ref_labels.get(option, str(option)),
+                        help="During analysis, every EEG channel is referenced as EEG channel minus this selected channel.",
+                        key=key,
+                    )
+                else:
+                    value = render_numeric_input(target, field, current, key)
+            elif field.kind == "dropdown":
                 options = field.options or [""]
                 resolved = resolve_choice(options, current)
                 value = target.selectbox(field.name, options=options, index=options.index(resolved), help=field.tooltip or None, key=key)
@@ -1104,6 +1120,23 @@ def render_method_form(method: str) -> Dict[str, Any]:
                 value = target.text_input(field.name, value=current or "", help=field.tooltip or None, key=key)
             method_state[field.name] = value
     return dict(method_state)
+
+
+def _reference_channel_options(device: str) -> tuple[List[int], Dict[int, str]]:
+    rows = ensure_channel_rows(device, st.session_state["channel_tables"].get(device))
+    extras = set(DEVICE_EXTRA_LABELS.get(device, []))
+    eeg_rows = [row for row in rows if row.get("Channel") not in extras]
+    active_rows = [row for row in eeg_rows if bool(row.get("Active"))]
+    display_rows = active_rows or eeg_rows
+    options: List[int] = []
+    labels: Dict[int, str] = {}
+    for eeg_index, row in enumerate(eeg_rows, start=1):
+        if row not in display_rows:
+            continue
+        label = row.get("Position") or row.get("Channel") or f"Ch {eeg_index}"
+        options.append(eeg_index)
+        labels[eeg_index] = f"{eeg_index}: {label}"
+    return options, labels
 
 
 def ensure_channel_rows(device: str, existing: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
@@ -2176,7 +2209,8 @@ def render_sidebar_controls() -> SidebarControls:
         last_data = last.get("data")
         export_data = last_data if last_data is not None else imported_data
         export_params = last.get("params") or snapshot or st.session_state.get("imported_params_raw") or {}
-        can_export = export_data is not None and bool(export_params)
+        has_export_params = bool(export_params)
+        has_export_data = export_data is not None
 
         st.markdown("**Export recording**")
 
@@ -2209,26 +2243,34 @@ def render_sidebar_controls() -> SidebarControls:
 
         if st.button(
             f"Export as {export_container} + {export_fmt}",
-            disabled=not can_export,
+            disabled=not has_export_params,
             width="stretch",
             key="export_recording_btn",
         ):
-            try:
-                out = export_recording(
-                    export_data,
-                    export_params,
-                    Path(default_save).expanduser(),
-                    export_container,
-                    export_fmt,
+            if not has_export_data:
+                st.info(
+                    f"{export_container} + {export_fmt} is selected for the next run. "
+                    "Run or import data to write an export immediately."
                 )
-                st.success(f"Exported {export_container} + {export_fmt} -> {out}")
-            except Exception as exc:
-                LOGGER.exception("Recording export failed")
-                st.error(f"Export failed: {exc}")
+            else:
+                try:
+                    out = export_recording(
+                        export_data,
+                        export_params,
+                        Path(default_save).expanduser(),
+                        export_container,
+                        export_fmt,
+                    )
+                    st.success(f"Exported {export_container} + {export_fmt} -> {out}")
+                except Exception as exc:
+                    LOGGER.exception("Recording export failed")
+                    st.error(f"Export failed: {exc}")
 
-        if can_export:
+        if has_export_data:
             source_label = "last run" if last_data is not None else "imported data"
             st.caption(f"Use the button to write another copy of the {source_label} in the selected export format.")
+        elif has_export_params:
+            st.caption("Click the export button to keep these settings for the next run; no recording data is attached yet.")
         else:
             st.caption(
                 "Choose export settings now. Each new run writes this format into the run folder; "
