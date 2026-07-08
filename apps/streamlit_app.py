@@ -33,6 +33,30 @@ from cortipy.ui_streamlit.workflow import (  # noqa: E402
     render_workflow_progress,
 )
 
+DEFAULT_EXPORT_CONTAINER = "JSON-LD"
+DEFAULT_EXPORT_RAW_FORMAT = "Parquet"
+
+
+def _selected_export_settings() -> tuple[str, str]:
+    container = st.session_state.get("export_container") or DEFAULT_EXPORT_CONTAINER
+    raw_format = st.session_state.get("export_raw_format") or DEFAULT_EXPORT_RAW_FORMAT
+    return str(container), str(raw_format)
+
+
+def _export_selected_recording(
+    data: Any,
+    params: Dict[str, Any],
+    target_dir: Optional[Path],
+) -> tuple[Optional[Path], Optional[str]]:
+    if data is None or target_dir is None:
+        return None, None
+    container, raw_format = _selected_export_settings()
+    try:
+        return ui.export_recording(data, params, Path(target_dir), container, raw_format), None
+    except Exception as exc:
+        ui.LOGGER.exception("Selected recording export failed")
+        return None, str(exc)
+
 
 def main() -> None:
     st.set_page_config(page_title="cortipy UI", layout="wide")
@@ -230,13 +254,23 @@ def main() -> None:
                 if simulate:
                     params_to_run["data"] = ui.simulated_recording_data(params_to_run)
                     saved_path = SaveManager(save_dir)(params_to_run)
+                    export_path, export_error = _export_selected_recording(
+                        params_to_run.get("data"),
+                        params_to_run,
+                        saved_path,
+                    )
                     st.session_state["last_results"] = {
                         "label": getattr(saved_path, "name", "Simulated run"),
                         "params": params_to_run,
                         "data": params_to_run.get("data"),
+                        "export_path": export_path,
+                        "export_error": export_error,
                     }
                     live_view_service.mark_complete()
-                    run_status.update(label="Simulated data saved - open the Charts tab", state="complete")
+                    export_note = f" Exported -> {export_path}" if export_path else ""
+                    run_status.update(label=f"Simulated data saved.{export_note} Open the Charts tab.", state="complete")
+                    if export_error:
+                        st.warning(f"Recording saved, but selected export failed: {export_error}")
                 else:
                     if use_imported and imported_data is None:
                         run_status.update(label="No imported data attached", state="error")
@@ -258,8 +292,21 @@ def main() -> None:
                             "params": run_params,
                             "data": run_params.get("data"),
                         }
+                        export_path, export_error = _export_selected_recording(
+                            run_params.get("data"),
+                            run_params,
+                            saved_path,
+                        )
+                        st.session_state["last_results"]["export_path"] = export_path
+                        st.session_state["last_results"]["export_error"] = export_error
                         live_view_service.mark_complete()
-                        run_status.update(label="Measurement finished and saved - open the Charts tab", state="complete")
+                        export_note = f" Exported -> {export_path}" if export_path else ""
+                        run_status.update(
+                            label=f"Measurement finished and saved.{export_note} Open the Charts tab.",
+                            state="complete",
+                        )
+                        if export_error:
+                            st.warning(f"Recording saved, but selected export failed: {export_error}")
             except Exception as exc:  # pragma: no cover
                 ui.LOGGER.exception("Measurement failed")
                 run_status.update(label="Measurement failed", state="error")

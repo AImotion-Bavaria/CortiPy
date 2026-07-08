@@ -2152,8 +2152,13 @@ def render_sidebar_controls() -> SidebarControls:
                 LOGGER.exception("Recording export failed")
                 st.error(f"Export failed: {exc}")
 
-        if not can_export:
-            st.caption("Choose export settings now. Run or load a session to enable the export button.")
+        if can_export:
+            st.caption("Use the button to write another copy of the last run in the selected export format.")
+        else:
+            st.caption(
+                "Choose export settings now. Each new run writes this format into the run folder; "
+                "run or load a session to enable manual re-export."
+            )
 
         handle_upload(st)
 
