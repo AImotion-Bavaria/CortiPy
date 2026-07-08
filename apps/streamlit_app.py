@@ -250,6 +250,7 @@ def main() -> None:
                 progress_placeholder=progress_placeholder,
                 total_seconds=_selected_recording_seconds(params_to_run),
                 max_update_seconds=0.5,
+                final_channel_windows=bool(selection and "All" not in selection),
             )
             if live_view_enabled:
                 st.session_state["_live_view_active"] = True

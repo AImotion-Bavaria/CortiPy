@@ -63,12 +63,14 @@ def _plot_live_buffer(
     channel_indices: Optional[List[int]] = None,
     interactive: bool = False,
     window_seconds: Optional[float] = None,
+    sample_offset: int = 0,
 ) -> None:
     if buffer.size == 0:
         return
 
     samples = buffer.shape[0]
-    time_axis = np.arange(samples) / fs if fs > 0 else np.arange(samples)
+    offset = max(0, int(sample_offset))
+    time_axis = (offset + np.arange(samples)) / fs if fs > 0 else offset + np.arange(samples)
     if fs > 0:
         time_axis = np.round(time_axis, 3)  # positive elapsed seconds from the start of the buffer
     if window_seconds is not None and fs > 0:
@@ -277,14 +279,17 @@ def _plot_fft_spectrum(
 def _plot_individual_channels(
     buffer: np.ndarray,
     fs: float,
-    placeholders: List["st.delta_generator.DeltaGenerator"],
+    placeholders: Optional[List["st.delta_generator.DeltaGenerator"]],
     indices: List[int],
     interactive: bool = True,
     window_seconds: Optional[float] = None,
+    sample_offset: int = 0,
 ) -> None:
-    if not placeholders or buffer.size == 0:
+    if buffer.size == 0:
         return
-    time_axis = np.arange(buffer.shape[0]) / fs if fs > 0 else np.arange(buffer.shape[0])
+    placeholders = placeholders or []
+    offset = max(0, int(sample_offset))
+    time_axis = (offset + np.arange(buffer.shape[0])) / fs if fs > 0 else offset + np.arange(buffer.shape[0])
     if fs > 0:
         time_axis = np.round(time_axis, 3)  # positive elapsed seconds, newest on the right
     if window_seconds is not None and fs > 0:
@@ -296,9 +301,7 @@ def _plot_individual_channels(
     palette = list(getattr(plt.cm, "tab10").colors) if hasattr(plt.cm, "tab10") else []
     default_color = (0.2, 0.4, 0.8)
     for plot_idx, ch in enumerate(indices):
-        if plot_idx >= len(placeholders):
-            break
-        placeholder = placeholders[plot_idx]
+        placeholder = placeholders[plot_idx] if plot_idx < len(placeholders) else None
         color = palette[plot_idx % len(palette)] if palette else default_color
         base_color = color if len(color) >= 3 else (list(color) + list(default_color))[:3]
         rgb = tuple(int(max(0, min(255, round(float(val) * 255)))) for val in base_color)
@@ -419,6 +422,7 @@ class LiveViewService:
         progress_placeholder: Optional["st.delta_generator.DeltaGenerator"] = None,
         total_seconds: Optional[float] = None,
         max_update_seconds: float = 0.5,
+        final_channel_windows: bool = False,
     ) -> None:
         self.placeholder = placeholder
         self.fft_placeholder = fft_placeholder
@@ -427,6 +431,7 @@ class LiveViewService:
         self.channel_indices = channel_indices or []
         self.total_seconds = float(total_seconds or 0.0)
         self.max_update_seconds = max(0.1, float(max_update_seconds))
+        self.final_channel_windows = bool(final_channel_windows)
         self.buffer: np.ndarray = np.empty((0, 0))
         self.samples_seen = 0
         self.fs = 0.0
@@ -454,6 +459,7 @@ class LiveViewService:
             self.progress_placeholder.progress(1.0, text=f"Recording {self.total_seconds:.1f}s / {self.total_seconds:.1f}s")
         if self.placeholder is not None and self.buffer.size:
             indices = _normalize_channel_indices(self.channel_indices, self.buffer.shape[1])
+            offset = max(0, self.samples_seen - self.buffer.shape[0])
             _plot_live_buffer(
                 self.buffer,
                 self.fs,
@@ -461,6 +467,7 @@ class LiveViewService:
                 channel_indices=indices,
                 interactive=True,
                 window_seconds=self.window_seconds,
+                sample_offset=offset,
             )
             if self.fft_placeholder is not None:
                 _plot_fft_spectrum(
@@ -469,6 +476,16 @@ class LiveViewService:
                     self.fft_placeholder,
                     channel_indices=indices,
                     interactive=True,
+                )
+            if self.final_channel_windows:
+                _plot_individual_channels(
+                    self.buffer,
+                    self.fs,
+                    None,
+                    indices,
+                    interactive=True,
+                    window_seconds=self.window_seconds,
+                    sample_offset=offset,
                 )
 
     def _update_progress(self, fs: float) -> None:
@@ -499,7 +516,15 @@ class LiveViewService:
         if max_window > 0 and self.buffer.shape[0] > max_window:
             self.buffer = self.buffer[-max_window:]
         indices = _normalize_channel_indices(self.channel_indices, self.buffer.shape[1])
-        _plot_live_buffer(self.buffer, fs, self.placeholder, channel_indices=indices)
+        offset = max(0, self.samples_seen - self.buffer.shape[0])
+        _plot_live_buffer(
+            self.buffer,
+            fs,
+            self.placeholder,
+            channel_indices=indices,
+            window_seconds=self.window_seconds,
+            sample_offset=offset,
+        )
         if self.fft_placeholder is not None:
             _plot_fft_spectrum(self.buffer, fs, self.fft_placeholder, channel_indices=indices)
 
@@ -543,20 +568,32 @@ def run_live_preview(
         buffer = np.asarray(initial_buffer, dtype=float) if initial_buffer is not None else np.empty((0, 0))
         if buffer.size and buffer.ndim == 1:
             buffer = buffer[:, np.newaxis]
+        samples_seen = int(buffer.shape[0]) if buffer.size else 0
         max_window = int(math.ceil(fs * window)) if fs > 0 else None
         if buffer.size and max_window:
             buffer = buffer[-max_window:]
+        sample_offset = max(0, samples_seen - buffer.shape[0])
         prime_chunk = np.asarray(device.prime(min(update_interval, duration), aux_channels), dtype=float)
         if prime_chunk.ndim == 1:
             prime_chunk = prime_chunk[:, np.newaxis]
+        samples_seen += int(prime_chunk.shape[0]) if prime_chunk.size else 0
         if buffer.size == 0:
             buffer = prime_chunk
         else:
             buffer = np.vstack([buffer, prime_chunk])
         if max_window and buffer.shape[0] > max_window:
             buffer = buffer[-max_window:]
+        sample_offset = max(0, samples_seen - buffer.shape[0])
         # Live view writes auto-refreshing pop-out windows; the page stays as a control surface.
-        _plot_live_buffer(buffer, fs, placeholder, channel_indices=indices, interactive=False, window_seconds=window)
+        _plot_live_buffer(
+            buffer,
+            fs,
+            placeholder,
+            channel_indices=indices,
+            interactive=False,
+            window_seconds=window,
+            sample_offset=sample_offset,
+        )
         _plot_fft_spectrum(buffer, fs, fft_placeholder, channel_indices=indices, interactive=False)
         # To keep UI smooth, only show the aggregated view + FFT during streaming.
         start = time.time()
@@ -566,6 +603,7 @@ def run_live_preview(
             if chunk.ndim == 1:
                 chunk = chunk[:, np.newaxis]
             if chunk.size > 0:
+                samples_seen += int(chunk.shape[0])
                 if buffer.size == 0:
                     buffer = chunk
                 else:
@@ -573,16 +611,42 @@ def run_live_preview(
                 max_window = int(math.ceil(fs * window)) if fs > 0 else buffer.shape[0]
                 if buffer.shape[0] > max_window:
                     buffer = buffer[-max_window:]
-                _plot_live_buffer(buffer, fs, placeholder, channel_indices=indices, interactive=False, window_seconds=window)
+                sample_offset = max(0, samples_seen - buffer.shape[0])
+                _plot_live_buffer(
+                    buffer,
+                    fs,
+                    placeholder,
+                    channel_indices=indices,
+                    interactive=False,
+                    window_seconds=window,
+                    sample_offset=sample_offset,
+                )
                 _plot_fft_spectrum(buffer, fs, fft_placeholder, channel_indices=indices, interactive=False)
             else:
                 time.sleep(update_interval)
         # After capture, replace auto-refreshing windows with editable final plot windows.
         if final_interactive:
-            _plot_live_buffer(buffer, fs, placeholder, channel_indices=indices, interactive=True, window_seconds=window)
+            sample_offset = max(0, samples_seen - buffer.shape[0])
+            _plot_live_buffer(
+                buffer,
+                fs,
+                placeholder,
+                channel_indices=indices,
+                interactive=True,
+                window_seconds=window,
+                sample_offset=sample_offset,
+            )
             _plot_fft_spectrum(buffer, fs, fft_placeholder, channel_indices=indices, interactive=True)
             if channels_enabled:
-                _plot_individual_channels(buffer, fs, channel_placeholders or [], indices, interactive=True, window_seconds=window)
+                _plot_individual_channels(
+                    buffer,
+                    fs,
+                    channel_placeholders or [],
+                    indices,
+                    interactive=True,
+                    window_seconds=window,
+                    sample_offset=sample_offset,
+                )
         return buffer
     finally:
         device.disconnect()
