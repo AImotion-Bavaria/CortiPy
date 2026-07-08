@@ -1807,7 +1807,7 @@ def verify_device_connection(params: Dict[str, Any]) -> tuple[bool, str]:
 
 
 def export_recording(data: Any, params: Dict[str, Any], out_dir: Path, container: str, raw_format: str) -> Path:
-    """Export a recording as BIDS or JSON-LD metadata with a Parquet/EDF raw layer."""
+    """Export a recording as BIDS or JSON-LD metadata with a selectable raw layer."""
     from cortipy.shared.bids import BIDSLoader, BIDSLoadResult, _coerce_to_raw_array
 
     arr = np.asarray(data, dtype=float)
@@ -1827,6 +1827,11 @@ def export_recording(data: Any, params: Dict[str, Any], out_dir: Path, container
     container_key = str(container or "").upper().replace("-", "").replace("_", "").replace(" ", "")
 
     if container_key == "BIDS":
+        if fmt == "npz":
+            raise ValueError(
+                "BIDS export does not support NPZ raw data. "
+                "Choose JSON-LD + NPZ, or use BIDS + Parquet/EDF."
+            )
         root = out_dir / "bids_export"
         BIDSLoader(root).to_bids(
             arr, sampling_rate=fs, ch_names=ch_names, subject=subject, task=task,
@@ -2127,9 +2132,17 @@ def render_sidebar_controls() -> SidebarControls:
             key="export_container",
         )
 
+        export_format_options = (
+            ["Parquet", "EDF", "NPZ"]
+            if export_container == "JSON-LD"
+            else ["Parquet", "EDF"]
+        )
+        if st.session_state.get("export_raw_format") not in export_format_options:
+            st.session_state["export_raw_format"] = "Parquet"
+
         export_fmt = exp_cols[1].selectbox(
             "Raw format",
-            ["Parquet", "EDF"],
+            export_format_options,
             key="export_raw_format",
         )
 
