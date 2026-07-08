@@ -1528,9 +1528,30 @@ def render_participant_form() -> Dict[str, Any]:
     return dict(participant)
 
 
-def build_channels(device: str) -> List[Dict[str, Any]]:
+def build_channels(device: str, requested_eeg_channels: Optional[int] = None) -> List[Dict[str, Any]]:
     rows = st.session_state["channel_tables"].get(device) or ensure_channel_rows(device)
     extras = set(DEVICE_EXTRA_LABELS.get(device, []))
+    if requested_eeg_channels and requested_eeg_channels > 0:
+        active_eeg_rows = [
+            row for row in rows
+            if (row.get("Channel") or row.get("Label")) not in extras and bool(row.get("Active"))
+        ]
+        if not active_eeg_rows:
+            remaining = int(requested_eeg_channels)
+            synced_rows: List[Dict[str, Any]] = []
+            for row in rows:
+                updated = dict(row)
+                channel_name = updated.get("Channel") or updated.get("Label")
+                if channel_name in extras:
+                    updated["Active"] = True
+                elif remaining > 0:
+                    updated["Active"] = True
+                    remaining -= 1
+                else:
+                    updated["Active"] = False
+                synced_rows.append(updated)
+            rows = synced_rows
+            st.session_state["channel_tables"][device] = rows
     active_rows: List[Dict[str, Any]] = []
     for row in rows:
         channel_name = row.get("Channel") or row.get("Label")
@@ -1592,7 +1613,9 @@ def assemble_params(
     if params["Device"].lower() == "unicorn":
         params["Parameters"]["fs"] = 250
 
-    channels = build_channels(params["Device"])
+    requested_channels_value = coerce_number(params["Parameters"].get("NumberEEGChannels"))
+    requested_channels = int(requested_channels_value) if requested_channels_value and requested_channels_value > 0 else None
+    channels = build_channels(params["Device"], requested_channels)
     if channels:
         params["Channels"] = channels
 
