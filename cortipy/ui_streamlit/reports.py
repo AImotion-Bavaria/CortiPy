@@ -30,16 +30,13 @@ LOGGER = logging.getLogger(__name__)
 
 
 def autoevaluate_if_needed(params: Dict[str, Any], data: Optional[np.ndarray]) -> Dict[str, Any]:
-    if "Evaluation" in params:
-        return params.get("Evaluation") or {}
-
     if data is None:
-        return {}
+        return params.get("Evaluation") or {}
 
     data_array = np.asarray(data)
     if data_array.size == 0 or (data_array.ndim >= 2 and data_array.shape[1] == 0):
         LOGGER.warning("Skipping auto-evaluation: empty data buffer", extra={"shape": data_array.shape})
-        return {}
+        return params.get("Evaluation") or {}
 
     evaluation: Dict[str, Any] = {}
     method_name = str(params.get("Method", "")).lower()
@@ -73,16 +70,30 @@ def autoevaluate_if_needed(params: Dict[str, Any], data: Optional[np.ndarray]) -
         else:
             return evaluation
 
-        temp_params = dict(params)
+        temp_params = _params_for_evaluation(params)
         temp_params["Parameters"] = dict(params.get("Parameters", {}))
         temp_params["data"] = data
         ctx = ModuleContext(temp_params)
         EvalCls(show_plots=False).evaluate(ctx)
         evaluation = ctx.params.get("Evaluation") or {}
-        params["Evaluation"] = evaluation
     except Exception as exc:
         LOGGER.warning("Evaluation generation failed for method %s: %s", method_name, exc)
+        return params.get("Evaluation") or {}
     return evaluation
+
+
+def _params_for_evaluation(params: Dict[str, Any]) -> Dict[str, Any]:
+    temp_params = {key: value for key, value in (params or {}).items() if key not in {"Evaluation", "data"}}
+    temp_params["Parameters"] = dict((params or {}).get("Parameters", {}) or {})
+    if isinstance((params or {}).get("Channels"), list):
+        temp_params["Channels"] = [
+            dict(row) if isinstance(row, dict) else row
+            for row in (params or {}).get("Channels", [])
+        ]
+    metadata = (params or {}).get("Metadata")
+    if isinstance(metadata, dict):
+        temp_params["Metadata"] = dict(metadata)
+    return temp_params
 
 
 def render_evaluation_figures(params: Dict[str, Any], data: Optional[np.ndarray]) -> List[plt.Figure]:
@@ -120,8 +131,7 @@ def render_evaluation_figures(params: Dict[str, Any], data: Optional[np.ndarray]
             return []
 
         before = set(plt.get_fignums())
-        temp_params = dict(params)
-        temp_params["Parameters"] = dict(params.get("Parameters", {}))
+        temp_params = _params_for_evaluation(params)
         temp_params["ReportAnalyzer"] = False
         temp_params["data"] = data
         EvalCls(show_plots=True).evaluate(ModuleContext(temp_params))

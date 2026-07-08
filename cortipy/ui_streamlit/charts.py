@@ -19,6 +19,7 @@ from cortipy.ui_streamlit.plot_windows import (
     render_plotly_window_launcher,
     safe_window_key,
 )
+from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
 
 try:  # pragma: no cover - optional UI dependency
     import plotly.graph_objects as go
@@ -48,6 +49,23 @@ def downsample_series(x: np.ndarray, y: np.ndarray, max_points: int = 2000) -> t
         return x, y
     step = max(1, math.ceil(len(x) / max_points))
     return x[::step], y[::step]
+
+
+def referenced_eeg_view(params: Dict[str, Any], data: np.ndarray) -> np.ndarray:
+    """Return a copied EEG view with the selected analysis reference applied."""
+    arr = np.asarray(data, dtype=float)
+    if arr.ndim == 1:
+        arr = arr[:, None]
+    if arr.ndim != 2 or arr.shape[1] == 0:
+        return arr
+
+    param_block = params.get("Parameters", {}) if params else {}
+    referenced = apply_eeg_reference(arr, param_block)
+    eeg_count = eeg_channel_count(param_block, referenced.shape[1])
+    device = str(params.get("Device", "") if params else "").lower()
+    if device == "unicorn":
+        eeg_count = min(8, eeg_count)
+    return referenced[:, :eeg_count]
 
 
 def _chart_to_plotly(chart: ChartData) -> Optional["go.Figure"]:
@@ -129,7 +147,7 @@ def render_chart(chart: ChartData) -> None:
 def _chart_from_raw_data(label: str, params: Dict[str, Any], data: np.ndarray, aggregate: bool = False) -> Optional[ChartData]:
     if data is None:
         return None
-    arr = np.asarray(data)
+    arr = referenced_eeg_view(params, data)
     if arr.ndim < 2 or arr.shape[0] == 0:
         return None
 
@@ -156,18 +174,18 @@ def _chart_from_raw_data(label: str, params: Dict[str, Any], data: np.ndarray, a
 
     return ChartData(
         key="raw",
-        title="Raw EEG preview",
+        title="EEG preview (reference applied)",
         x_label="Time (s)" if fs > 0 else "Sample",
         y_label="Amplitude (uV)",
         series=series,
-        description="First 10 seconds" if fs > 0 else "Full buffer preview",
+        description="First 10 seconds; saved raw data remains unchanged" if fs > 0 else "Full buffer preview; saved raw data remains unchanged",
     )
 
 
 def _chart_from_psd(label: str, params: Dict[str, Any], data: np.ndarray, aggregate: bool = False) -> Optional[ChartData]:
     if data is None:
         return None
-    arr = np.asarray(data)
+    arr = referenced_eeg_view(params, data)
     if arr.ndim < 2 or arr.shape[0] == 0:
         return None
 
