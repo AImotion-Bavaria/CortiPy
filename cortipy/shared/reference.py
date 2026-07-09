@@ -16,7 +16,19 @@ def _safe_int(value: Any, default: int) -> int:
 
 def eeg_channel_count(params_block: Mapping[str, Any], total_columns: int) -> int:
     """Return the number of leading columns that represent EEG channels."""
-    count = _safe_int(params_block.get("NumberEEGChannels"), total_columns)
+    explicit = _safe_int(params_block.get("NumberEEGChannels"), 0)
+    if explicit > 0:
+        return min(explicit, total_columns)
+
+    count = total_columns
+    trigger_idx = _safe_int(params_block.get("TriggerChannel"), 0) - 1
+    if 0 <= trigger_idx < total_columns:
+        count = min(count, trigger_idx)
+
+    aux_count = _safe_int(params_block.get("NumberAUXChannels"), 0)
+    if aux_count > 0:
+        count = min(count, max(0, total_columns - aux_count))
+
     if count <= 0:
         count = total_columns
     return min(count, total_columns)
@@ -30,10 +42,17 @@ def reference_channel_index(params_block: Mapping[str, Any], eeg_count: int) -> 
     return index if 0 <= index < eeg_count else 0
 
 
-def apply_eeg_reference(data: np.ndarray, params_block: Mapping[str, Any]) -> np.ndarray:
+def apply_eeg_reference(
+    data: np.ndarray,
+    params_block: Mapping[str, Any],
+    *,
+    zero_reference: bool = True,
+) -> np.ndarray:
     """Apply all-EEG-channel minus selected-reference-channel referencing."""
     referenced = np.asarray(data, dtype=float).copy()
     if referenced.ndim != 2 or referenced.shape[1] == 0:
+        return referenced
+    if "ReferenceChannel" not in params_block:
         return referenced
 
     eeg_count = eeg_channel_count(params_block, referenced.shape[1])
@@ -41,5 +60,13 @@ def apply_eeg_reference(data: np.ndarray, params_block: Mapping[str, Any]) -> np
         return referenced
 
     ref_idx = reference_channel_index(params_block, eeg_count)
-    referenced[:, :eeg_count] = referenced[:, :eeg_count] - referenced[:, [ref_idx]]
+    trigger_idx = _safe_int(params_block.get("TriggerChannel"), 0) - 1
+    eeg_indices = [idx for idx in range(eeg_count) if idx != trigger_idx]
+    if not eeg_indices:
+        return referenced
+
+    reference_values = referenced[:, [ref_idx]]
+    target_indices = eeg_indices if zero_reference else [idx for idx in eeg_indices if idx != ref_idx]
+    if target_indices:
+        referenced[:, target_indices] = referenced[:, target_indices] - reference_values
     return referenced

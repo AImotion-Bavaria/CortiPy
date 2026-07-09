@@ -93,7 +93,7 @@ class BeraModule(ModuleBase):
 
     def _apply_reference(self, params: dict, data: np.ndarray) -> np.ndarray:
         param_block = params.get("Parameters", {})
-        return apply_eeg_reference(data, param_block)
+        return apply_eeg_reference(data, param_block, zero_reference=False)
 
     def _compute_live_metrics(self, params: dict, data: np.ndarray, fs: float):
         param_block = params.get("Parameters", {})
