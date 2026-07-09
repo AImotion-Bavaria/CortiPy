@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import contextlib
 import json
 import logging
 import sys
@@ -749,7 +750,14 @@ def get_live_view_placeholder():
     return placeholder
 
 
-def _fetch_actichamp_impedances(fs_value: Any, *, force: bool = False) -> None:
+def _fetch_actichamp_impedances(
+    fs_value: Any,
+    *,
+    force: bool = False,
+    quiet: bool = False,
+    wait_seconds: float = 7.0,
+    settle_seconds: float = 1.5,
+) -> None:
     if st.session_state.get("_actichamp_impedance_loaded") and not force:
         return
 
@@ -772,16 +780,21 @@ def _fetch_actichamp_impedances(fs_value: Any, *, force: bool = False) -> None:
     values: List[float] = []
 
     try:
-        with st.spinner("Checking ActiCHamp impedances..."):
+        with (contextlib.nullcontext() if quiet else st.spinner("Checking ActiCHamp impedances...")):
             device = DeviceFactory.create(params)
             try:
                 reader = getattr(device, "read_impedances", None)
-                values = reader(wait_seconds=7.0, settle_seconds=1.5) if callable(reader) else []
+                values = (
+                    reader(wait_seconds=wait_seconds, settle_seconds=settle_seconds)
+                    if callable(reader)
+                    else []
+                )
             finally:
                 device.disconnect()
     except Exception as exc:  # pragma: no cover
         LOGGER.exception("ActiCHamp impedance read failed")
-        st.warning(f"ActiCHamp impedance read failed: {exc}")
+        if not quiet:
+            st.warning(f"ActiCHamp impedance read failed: {exc}")
         st.session_state["_actichamp_impedance_status"] = f"ActiCHamp impedance read failed: {exc}"
         return
 
@@ -811,6 +824,21 @@ def _fetch_actichamp_impedances(fs_value: Any, *, force: bool = False) -> None:
             f"Loaded {len(values)} impedance values ({low:.1f}-{high:.1f} kOhm)."
         )
     st.session_state["_actichamp_impedance_timestamp"] = time.time()
+
+
+def _impedance_status_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    display_rows: List[Dict[str, Any]] = []
+    for row in rows:
+        channel = row.get("Channel") or row.get("Label") or ""
+        impedance = coerce_number(row.get("Impedance"))
+        display_rows.append(
+            {
+                "Channel": channel,
+                "Position": row.get("Position") or channel,
+                "Impedance (kOhm)": round(float(impedance), 1) if impedance is not None else None,
+            }
+        )
+    return display_rows
 
 
 def _position_angle(label: str, fallback_idx: int) -> float:
@@ -1205,66 +1233,61 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
             fs_value = st.session_state.get("general_form", {}).get("fs")
             status = st.session_state.get("_actichamp_impedance_status")
             last_ts = st.session_state.get("_actichamp_impedance_timestamp")
-            btn_cols = st.columns([1, 1, 2])
-            if btn_cols[0].button("Read ActiCHamp impedances", key="actichamp_impedance_button"):
+            impedance_cols = st.columns([0.8, 0.8, 2.4])
+            continuous_impedance = impedance_cols[0].toggle(
+                "Live impedance",
+                value=bool(st.session_state.get("_actichamp_impedance_auto", False)),
+                key="_actichamp_impedance_auto",
+                help="Continuously refresh measured ActiChamp impedance values while this page is open.",
+            )
+            if impedance_cols[1].button("Read once", key="actichamp_impedance_button", disabled=continuous_impedance):
                 st.session_state["_actichamp_impedance_loaded"] = False
                 _fetch_actichamp_impedances(fs_value)
                 rows = st.session_state["channel_tables"].get("ActiCHamp", rows)
                 editor_revision = int(st.session_state["_channel_editor_revision"].get(device, 0))
-            if btn_cols[1].button("Clear impedances", key="actichamp_impedance_clear"):
-                st.session_state["_actichamp_impedance_loaded"] = False
-                st.session_state["_actichamp_impedance_timestamp"] = None
-                st.session_state["_actichamp_impedance_status"] = "Cleared previously loaded impedances."
-                for row in rows:
-                    row["Impedance"] = 0.0
-                channel_state["ActiCHamp"] = rows
-                _bump_channel_editor_revision("ActiCHamp")
-                editor_revision = int(st.session_state["_channel_editor_revision"].get(device, 0))
-            with btn_cols[2]:
-                if status:
-                    st.info(status)
-                if last_ts:
-                    ts_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(last_ts))
-                    st.caption(f"Last read: {ts_str}")
-            auto_cols = st.columns([1, 1, 2])
-            continuous_impedance = auto_cols[0].toggle(
-                "Continuous impedance refresh",
-                value=bool(st.session_state.get("_actichamp_impedance_auto", False)),
-                key="_actichamp_impedance_auto",
-            )
-            refresh_interval = auto_cols[1].number_input(
-                "Refresh interval (s)",
-                min_value=5,
-                max_value=60,
-                value=max(5, int(st.session_state.get("_actichamp_impedance_interval", 10) or 10)),
-                step=1,
-                key="_actichamp_impedance_interval",
-                disabled=not continuous_impedance,
-            )
+            if status:
+                impedance_cols[2].caption(status)
+            if last_ts:
+                ts_str = time.strftime("%H:%M:%S", time.localtime(last_ts))
+                impedance_cols[2].caption(f"Last impedance read: {ts_str}")
+
             if continuous_impedance:
-                run_every = float(refresh_interval)
+                run_every = 5.0
                 fragment = getattr(st, "fragment", None)
                 if callable(fragment):
                     @fragment(run_every=run_every)
-                    def _poll_actichamp_impedance() -> None:
-                        before = st.session_state.get("_actichamp_impedance_timestamp")
-                        _fetch_actichamp_impedances(fs_value, force=True)
-                        after = st.session_state.get("_actichamp_impedance_timestamp")
+                    def _live_actichamp_impedance() -> None:
+                        _fetch_actichamp_impedances(
+                            fs_value,
+                            force=True,
+                            quiet=True,
+                            wait_seconds=4.0,
+                            settle_seconds=0.5,
+                        )
+                        live_rows = st.session_state["channel_tables"].get("ActiCHamp", rows)
                         message = st.session_state.get("_actichamp_impedance_status")
                         if message:
                             st.caption(message)
-                        if after and after != before:
-                            st.rerun()
+                        st.dataframe(
+                            _impedance_status_rows(live_rows),
+                            hide_index=True,
+                            use_container_width=True,
+                        )
 
-                    _poll_actichamp_impedance()
-                    auto_cols[2].caption(f"Polling every {int(run_every)}s while this page is open.")
+                    _live_actichamp_impedance()
                 else:
                     now = time.time()
-                    if not last_ts or now - float(last_ts) >= run_every:
-                        _fetch_actichamp_impedances(fs_value, force=True)
+                    if not last_ts or now - float(last_ts) >= 5.0:
+                        _fetch_actichamp_impedances(
+                            fs_value,
+                            force=True,
+                            quiet=True,
+                            wait_seconds=4.0,
+                            settle_seconds=0.5,
+                        )
                         rows = st.session_state["channel_tables"].get("ActiCHamp", rows)
                         editor_revision = int(st.session_state["_channel_editor_revision"].get(device, 0))
-                    auto_cols[2].caption("Updates whenever Streamlit reruns while the toggle is enabled.")
+                    st.dataframe(_impedance_status_rows(rows), hide_index=True, use_container_width=True)
         else:
             st.caption(
                 f"Continuous impedance polling is not available for {device}; "
@@ -1273,36 +1296,37 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
 
         # Quick setup: fill the standard montage / bulk-toggle active channels without hand-editing.
         extras_set = set(DEVICE_EXTRA_LABELS.get(device, []))
-        qs = st.columns(3)
-        if qs[0].button("Fill standard positions", key=f"fill_pos_{device}",
-                        help="Set each channel's Position from the device's standard montage and activate it."):
-            preset = DEVICE_POSITION_DEFAULTS.get(device, [])
-            eeg_idx = 0
-            for row in rows:
-                if row["Channel"] in extras_set:
-                    continue
-                if eeg_idx < len(preset):
-                    row["Position"] = preset[eeg_idx]
-                    row["PosX"], row["PosY"] = _safe_channel_coords(preset[eeg_idx], eeg_idx)
-                row["Active"] = True
-                eeg_idx += 1
-            channel_state[device] = rows
-            _bump_channel_editor_revision(device)
-            st.rerun()
-        if qs[1].button("Activate all", key=f"activate_all_{device}"):
-            for row in rows:
-                row["Active"] = True
-            channel_state[device] = rows
-            _bump_channel_editor_revision(device)
-            st.rerun()
-        if qs[2].button("Deactivate EEG", key=f"deactivate_eeg_{device}",
-                        help="Turn off all EEG channels (Ground/Reference stay on)."):
-            for row in rows:
-                if row["Channel"] not in extras_set:
-                    row["Active"] = False
-            channel_state[device] = rows
-            _bump_channel_editor_revision(device)
-            st.rerun()
+        with st.expander("Channel setup shortcuts", expanded=False):
+            qs = st.columns(3)
+            if qs[0].button("Fill positions", key=f"fill_pos_{device}",
+                            help="Set each channel's Position from the device's standard montage and activate it."):
+                preset = DEVICE_POSITION_DEFAULTS.get(device, [])
+                eeg_idx = 0
+                for row in rows:
+                    if row["Channel"] in extras_set:
+                        continue
+                    if eeg_idx < len(preset):
+                        row["Position"] = preset[eeg_idx]
+                        row["PosX"], row["PosY"] = _safe_channel_coords(preset[eeg_idx], eeg_idx)
+                    row["Active"] = True
+                    eeg_idx += 1
+                channel_state[device] = rows
+                _bump_channel_editor_revision(device)
+                st.rerun()
+            if qs[1].button("Activate all", key=f"activate_all_{device}"):
+                for row in rows:
+                    row["Active"] = True
+                channel_state[device] = rows
+                _bump_channel_editor_revision(device)
+                st.rerun()
+            if qs[2].button("Deactivate EEG", key=f"deactivate_eeg_{device}",
+                            help="Turn off all EEG channels (Ground/Reference stay on)."):
+                for row in rows:
+                    if row["Channel"] not in extras_set:
+                        row["Active"] = False
+                channel_state[device] = rows
+                _bump_channel_editor_revision(device)
+                st.rerun()
 
         # ReferenceChannel is a 1-based index over EEG channels. Analysis subtracts the
         # selected channel from every EEG channel; Ground/Reference extras are not EEG columns.
@@ -2025,6 +2049,57 @@ def _load_data_file_path(path: Path) -> Optional[np.ndarray]:
     return None
 
 
+def _load_settings_file_path(path: Path) -> Dict[str, Any]:
+    suffix = path.suffix.lower()
+    content = path.read_bytes()
+    if suffix in {".toml", ".tml"}:
+        return normalize_params(tomllib.loads(content.decode("utf-8")))
+    parsed = json.loads(content.decode("utf-8"))
+    if suffix == ".jsonld":
+        params = _params_from_jsonld_doc(parsed, path.name)
+        if params is None:
+            raise ValueError("JSON-LD file did not contain usable CortiPy metadata.")
+        return params
+    return normalize_params(parsed)
+
+
+def _dataset_dir_for_settings_file(path: Path) -> Path:
+    parent = path.parent
+    if parent.name in {"jsonld_export", "bids_export"}:
+        return parent.parent
+    return parent
+
+
+def _open_settings_file_dialog(initial_dir: Path) -> Optional[Path]:
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except Exception as exc:
+        raise RuntimeError(f"Native file dialog is unavailable: {exc}") from exc
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        root.attributes("-topmost", True)
+    except Exception:
+        pass
+    try:
+        selected = filedialog.askopenfilename(
+            title="Load CortiPy settings",
+            initialdir=str(initial_dir if initial_dir.exists() else Path.cwd()),
+            filetypes=[
+                ("CortiPy settings", "*.json *.jsonld *.toml *.tml"),
+                ("JSON settings", "*.json"),
+                ("JSON-LD metadata", "*.jsonld"),
+                ("TOML settings", "*.toml *.tml"),
+                ("All files", "*.*"),
+            ],
+        )
+    finally:
+        root.destroy()
+    return Path(selected) if selected else None
+
+
 def _find_first_existing_file(base_dir: Path, candidates: List[str]) -> Optional[Path]:
     for candidate in candidates:
         path = base_dir / candidate
@@ -2172,7 +2247,7 @@ def render_saved_sessions(base_dir: Path) -> tuple[Optional[tuple[str, Dict[str,
 
 
 def handle_upload(target) -> None:
-    with target.expander("Load settings / data", expanded=False):
+    with target.expander("Fallback upload / attach data", expanded=False):
         uploaded = st.file_uploader(
             "Load JSON/TOML config, params.json, or JSON-LD metadata",
             type=["json", "jsonld", "toml", "tml"],
@@ -2353,6 +2428,38 @@ def render_sidebar_controls() -> SidebarControls:
             width="stretch",
             help="Download the current method/device/electrode configuration to reuse later.",
         )
+
+        if st.button(
+            "Load settings",
+            key="load_settings_file_dialog",
+            width="stretch",
+            help="Open a file picker for params.json, JSON-LD metadata, or TOML settings.",
+        ):
+            try:
+                selected_path = _open_settings_file_dialog(Path(default_save).expanduser())
+            except Exception as exc:
+                st.warning(f"Could not open native file dialog: {exc}. Use the uploader below.")
+            else:
+                if selected_path is None:
+                    st.info("No settings file selected.")
+                else:
+                    try:
+                        params_loaded = _load_settings_file_path(selected_path)
+                        dataset_dir = _dataset_dir_for_settings_file(selected_path)
+                        _, data_loaded, _ = _load_dataset_folder(dataset_dir)
+                    except Exception as exc:
+                        st.error(f"Failed to load settings: {exc}")
+                    else:
+                        load_params_into_state(params_loaded, data_loaded)
+                        st.session_state["active_dataset_dir"] = str(dataset_dir)
+                        st.session_state.pop("active_dataset_dir_input", None)
+                        st.session_state["last_results"] = {
+                            "label": dataset_dir.name,
+                            "params": params_loaded,
+                            "data": data_loaded,
+                        }
+                        st.session_state["_flash"] = f"Loaded settings from {selected_path.name}."
+                        st.rerun()
 
         last = st.session_state.get("last_results") or {}
         imported_data = st.session_state.get("imported_data")

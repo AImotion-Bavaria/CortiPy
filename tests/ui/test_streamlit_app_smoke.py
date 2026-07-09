@@ -106,6 +106,21 @@ def test_impedance_mapping_uses_measured_positive_values() -> None:
     assert mapped[2]["Impedance"] == 0.0
 
 
+def test_settings_file_loader_accepts_json(tmp_path) -> None:
+    module = load_session_module()
+    settings_path = tmp_path / "params.json"
+    settings_path.write_text(
+        '{"Method":"Alpha","Device":"Dummy","Parameters":{"fs":250,"RecordingTime":1}}',
+        encoding="utf-8",
+    )
+
+    params = module._load_settings_file_path(settings_path)
+
+    assert params["Method"] == "Alpha"
+    assert params["Device"] == "Dummy"
+    assert params["Parameters"]["fs"] == 250
+
+
 def test_topography_replaces_non_finite_coordinates() -> None:
     module = load_session_module()
 
