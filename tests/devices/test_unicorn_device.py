@@ -66,3 +66,55 @@ def test_unicorn_connect_retries_start_ack(monkeypatch) -> None:
     assert fake.kwargs["baudrate"] == UnicornDevice.BAUD_RATE
     assert fake.writes == [UnicornDevice.START_ACQ, UnicornDevice.START_ACQ]
     assert device._serial is fake
+
+
+def test_unicorn_connect_syncs_to_packet_after_missed_ack(monkeypatch) -> None:
+    packet = (
+        UnicornDevice.START_SEQUENCE
+        + b"\x00"
+        + (b"\x00" * 24)
+        + (b"\x00" * 6)
+        + (b"\x00" * 6)
+        + (b"\x00" * 4)
+        + UnicornDevice.STOP_SEQUENCE
+    )
+    assert len(packet) == UnicornDevice.PACKET_BYTES
+    serial_instances = []
+
+    class FakeSerial:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            self.is_open = True
+            self.writes = []
+            self.reads = [b"bad", b"\x01\x02\x03", packet]
+            serial_instances.append(self)
+
+        def reset_input_buffer(self):
+            pass
+
+        def reset_output_buffer(self):
+            pass
+
+        def write(self, data):
+            self.writes.append(data)
+
+        def flush(self):
+            pass
+
+        def read(self, size):
+            del size
+            return self.reads.pop(0) if self.reads else b""
+
+        def close(self):
+            self.is_open = False
+
+    monkeypatch.setattr("cortipy.devices.unicorn.serial.Serial", FakeSerial)
+    monkeypatch.setattr("cortipy.devices.unicorn.time.sleep", lambda _seconds: None)
+
+    device = UnicornDevice("COM7", timeout=0.5)
+    device.connect()
+    data = device.acquire(1 / device.sampling_rate)
+
+    assert serial_instances[0].writes == [UnicornDevice.START_ACQ, UnicornDevice.START_ACQ]
+    assert data.shape == (1, UnicornDevice.TOTAL_COLUMNS)
+    assert not device._pending
