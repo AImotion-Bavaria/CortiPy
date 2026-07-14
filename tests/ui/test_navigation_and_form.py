@@ -140,3 +140,48 @@ class TestStagedConfiguration:
         assert session.CONFIG_STEPS == (
             "Device", "Connection", "Method", "Acquisition", "Channels", "Session details",
         )
+
+
+class TestRequiredStimulusFrequencies:
+    """A stimulus frequency left at 0 must be refused, not silently replaced.
+
+    SSVEP's evaluator substitutes 10 Hz when StimFreq is missing or zero, so a run
+    configured with the schema default produced metrics against a frequency nobody chose.
+    """
+
+    def test_ssvep_rejects_a_zero_stim_freq(self):
+        issues = session.missing_method_frequencies("SSVEP", {"StimFreq": 0})
+        assert issues and "StimFreq" in issues[0]
+
+    def test_ssvep_rejects_a_missing_stim_freq(self):
+        assert session.missing_method_frequencies("SSVEP", {}) != []
+
+    def test_ssvep_accepts_a_real_stim_freq(self):
+        assert session.missing_method_frequencies("SSVEP", {"StimFreq": 12.0}) == []
+
+    def test_assr_needs_both_carrier_and_modulation(self):
+        both_zero = session.missing_method_frequencies(
+            "ASSR", {"ASSRCarrierFrequency": 0, "ASSRModulationFrequency": 0}
+        )
+        assert len(both_zero) == 2
+        half = session.missing_method_frequencies(
+            "ASSR", {"ASSRCarrierFrequency": 1000, "ASSRModulationFrequency": 0}
+        )
+        assert len(half) == 1 and "Modulation" in half[0]
+        ok = session.missing_method_frequencies(
+            "ASSR", {"ASSRCarrierFrequency": 1000, "ASSRModulationFrequency": 40}
+        )
+        assert ok == []
+
+    @pytest.mark.parametrize("method", ["Alpha", "P300"])
+    def test_methods_without_a_stimulus_frequency_are_unaffected(self, method):
+        assert session.missing_method_frequencies(method, {}) == []
+
+    def test_validation_blocks_the_run(self):
+        params = {
+            "Method": "SSVEP",
+            "Device": "Dummy",
+            "Parameters": {"fs": 250, "NumberEEGChannels": 8, "StimFreq": 0},
+            "Channels": [{"Channel": "Ch 1", "Active": True}],
+        }
+        assert any("StimFreq" in issue for issue in session.validate_params(params))

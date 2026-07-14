@@ -206,6 +206,7 @@ from cortipy.ui_streamlit.constants import (  # noqa: E402
     HIDDEN_VIEWS,
     IMPEDANCE_CAPABLE_DEVICES,
     REQUIRED_DEVICE_FIELDS,
+    REQUIRED_METHOD_FREQUENCIES,
     field_applies_to_device as _field_applies_to_device,
     SUPPORTED_EXTRA_DEVICES,
     VIEW_OPTIONS,
@@ -1344,6 +1345,14 @@ def render_method_form(method: str) -> Dict[str, Any]:
             else:
                 value = target.text_input(field.name, value=current or "", help=field.tooltip or None, key=key)
             method_state[field.name] = value
+
+        missing = missing_method_frequencies(method, method_state)
+        if missing:
+            st.warning(
+                "  ".join(missing)
+                + "  Leaving it at 0 makes the evaluator fall back to its own default, so the "
+                "results would describe a stimulus you never set."
+            )
     return dict(method_state)
 
 
@@ -1546,13 +1555,39 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 st.session_state.setdefault("method_forms", {}).setdefault(method, {})["ReferenceChannel"] = new_ref
                 st.session_state.pop(f"{method}_ReferenceChannel", None)  # keep the method form in sync
 
-        table_col, map_col = st.columns((2, 1))
+        table_col, map_col = st.columns((3, 1))
         with table_col:
+            # Only four columns used to fit, so Impedance and the "Use channel" toggle were
+            # pushed out of view entirely — the impedance column looked like it had stopped
+            # being filled when it was simply never on screen. Coordinates are rarely typed
+            # by hand (that is what the scalp map is for), so they hide behind a toggle and
+            # the columns that matter always fit.
+            edit_coords = st.checkbox(
+                "Edit coordinates",
+                value=False,
+                key=f"edit_coords_{device}",
+                help="Show the PosX/PosY columns. Normally you place electrodes on the scalp map instead.",
+            )
+            if edit_coords:
+                # Coordinates go straight after Position, otherwise they land past the right
+                # edge of the grid and are virtualized away — the toggle would appear to do
+                # nothing.
+                column_order = ["Channel", "Position", "PosX", "PosY", "Active", "Impedance", "Rubrik", "Model"]
+            else:
+                column_order = ["Channel", "Position", "Active", "Impedance", "Rubrik", "Model"]
+
+            # The editor drops columns it is not showing, so remember the coordinates and
+            # put them back afterwards — otherwise hiding them would silently reset them.
+            saved_coords = {
+                row.get("Channel"): (row.get("PosX"), row.get("PosY")) for row in rows
+            }
+
             edited = st.data_editor(
                 rows,
                 num_rows="fixed",
                 hide_index=True,
-                key=f"channels_{device}_{editor_revision}",
+                key=f"channels_{device}_{editor_revision}_{int(edit_coords)}",
+                column_order=column_order,
                 column_config={
                     "Channel": st.column_config.TextColumn("Channel", disabled=True, width="small"),
                     "Position": st.column_config.TextColumn(
@@ -1567,7 +1602,7 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                     ),
                     "Model": st.column_config.TextColumn(
                         "Model",
-                        width="large",
+                        width="small",
                         disabled=True,
                         help="Automatically selected from the electrode type (Rubrik).",
                     ),
@@ -1605,6 +1640,12 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                     row["Position"] = row["Channel"].replace(" ", "")
                 pos_x = coerce_number(row.get("PosX"))
                 pos_y = coerce_number(row.get("PosY"))
+                if (pos_x is None or pos_y is None) and not edit_coords:
+                    # Not shown => not returned. Restore rather than regenerate, or a hidden
+                    # column would wipe coordinates the user had placed on the scalp map.
+                    prev_x, prev_y = saved_coords.get(row["Channel"], (None, None))
+                    pos_x = coerce_number(prev_x) if pos_x is None else pos_x
+                    pos_y = coerce_number(prev_y) if pos_y is None else pos_y
                 if pos_x is None or pos_y is None:
                     pos_x, pos_y = _safe_channel_coords(row["Position"], row_idx)
                 row["PosX"] = float(pos_x)
@@ -1667,6 +1708,13 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
         "Stream a short window from the configured device. This uses the current session settings and renders up to "
         "four channels in real time."
     )
+
+    # Simulate run promises no hardware is touched. The preview built its device straight
+    # from params, so with Simulate on it still tried to open the real port and failed.
+    if _is_simulating():
+        params = dict(params)
+        params["Device"] = "Dummy"
+        st.info("**Simulate run is on** — previewing synthetic data; no hardware is opened.")
 
     if validation_issues:
         st.warning("Fix configuration issues in the Session tab before starting a live preview.")
@@ -1997,6 +2045,22 @@ def validate_params(params: Dict[str, Any]) -> List[str]:
         )
         if not port:
             issues.append("UNICORN configuration requires a serial port / address.")
+
+    issues.extend(missing_method_frequencies(method, parameters))
+    return issues
+
+
+def missing_method_frequencies(method: Any, parameters: Dict[str, Any]) -> List[str]:
+    """Stimulus frequencies the method needs but that are still zero.
+
+    Left at zero, the evaluators silently substitute their own value — SSVEP computes
+    everything against 10 Hz — so the results describe a stimulus the operator never set.
+    """
+    issues: List[str] = []
+    for name in REQUIRED_METHOD_FREQUENCIES.get(str(method or ""), ()):
+        value = coerce_number(parameters.get(name))
+        if value is None or float(value) <= 0:
+            issues.append(f"{method} requires {name} to be greater than 0 Hz.")
     return issues
 
 

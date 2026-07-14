@@ -106,6 +106,19 @@ def field_applies_to_device(field_name: str, device: str) -> bool:
         return True
     return str(device or "") in allowed
 
+
+# Method parameters that must be a positive number for the recording to mean anything.
+# Their schema default is 0, and the evaluators quietly substitute a value when they find
+# one (SSVEP falls back to 10 Hz, ASSR to 0) — so a run configured with zeros produces
+# results computed against a frequency nobody chose. Require them up front instead.
+REQUIRED_METHOD_FREQUENCIES: Dict[str, tuple] = {
+    "SSVEP": ("StimFreq",),
+    "VEP": ("StimFreq",),
+    "BERA": ("StimFreq",),
+    "BCI": ("StimFreq",),
+    "ASSR": ("ASSRCarrierFrequency", "ASSRModulationFrequency"),
+}
+
 # Sampling rates actually offered per device. Others fall back to the general schema list.
 # Requesting a rate the hardware can't do gets clamped by the producer, which makes a recording
 # run longer than RecordingTime (see the acquire() wall-time cap) — so constrain the choices here.
