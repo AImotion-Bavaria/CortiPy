@@ -9,24 +9,51 @@
     "Flo-Res, TDE-200 Spike",
     "Flo-Res, TDE-210 Spike",
     "Flo-Res, TDE-202 Flat",
-    "g.te, Unicorn Hybrid"
+    "g.tec, Unicorn Hybrid",
+    "g.tec, g.SAHARA Dry Pin",
+    "g.tec, g.SAHARAhybrid",
+    "Brain Products, actiCAP Xpress Twist",
+    "Brain Products, actiCAP Xpress",
+    "Wearable Sensing, DSI Dry Sensor",
+    "CGX, Flex Dry Sensor",
+    "CGX, Drypad Sensor",
+    "OpenBCI, Dry Comb Electrode",
+    "OpenBCI, Dry Flat Electrode",
+    "IDUN Technologies, Dryode",
+    "Other / not listed"
   ],
   "Wet Electrodes": [
     "EasyCap, Ring Ag/AgCl B18",
+    "EasyCap, Sintered Ag/AgCl Ring",
     "Spes Medica, Cup Ag/AgCl DAGM152600",
     "Spes Medica, Cup Ag/AgCl DGAGAT152600",
-    "Spes Medica, Cup Ag DESM152600"
+    "Spes Medica, Cup Ag DESM152600",
+    "Brain Products, actiCAP snap (Ag/AgCl)",
+    "Brain Products, actiCAP slim (Ag/AgCl)",
+    "BioSemi, ActiveTwo Pin Electrode",
+    "Compumedics Neuroscan, Quik-Cap Ag/AgCl",
+    "Grass, Gold Cup E5GH",
+    "Natus, Gold Cup Electrode",
+    "Neuroelectrics, Geltrode",
+    "Other / not listed"
   ],
   "Single Use Electrodes": [
     "AMBU, Blue Sensor SP-00-S",
+    "AMBU, Neuroline 700",
+    "AMBU, Neuroline 720",
+    "AMBU, Neuroline Cup",
     "BIOPAC, EL503 Einmalelektroden",
     "Kendall, H93SG",
-    "TIGA-MED, 10000099",
-    "Clinical S55H (MSGLT-15DC)",
-    "FIAB, Nassgelelektroden (ZB38.AR3)",     
     "Kendall, H69P",
     "Kendall, H124SG",
-    "Kendall, H135SG"   
+    "Kendall, H135SG",
+    "TIGA-MED, 10000099",
+    "Clinical S55H (MSGLT-15DC)",
+    "FIAB, Nassgelelektroden (ZB38.AR3)",
+    "3M, Red Dot 2560",
+    "Rhythmlink, Disposable Cup Electrode",
+    "Rhythmlink, Sticky Pad Electrode",
+    "Other / not listed"
   ],
   "In Ear and Around Ear Electrodes": [
     "Datwyler SoftPulse In-Ear",
@@ -35,12 +62,24 @@
     "DGS Diagnostics, Gold Eartip Electrode EM-1000-9400",
     "DGS Diagnostics, Gold Eartip Electrode EM-1000-9410",
     "EasyCap, cEEGrid",
+    "Natus, TIPtrode Gold Foil Eartip",
+    "Etymotic, ER3-14A Foam Eartip",
+    "IDUN Technologies, Guardian Earbud",
     "Stefan Specialty V1",
-    "Stefan Specialty V2"  
+    "Stefan Specialty V2",
+    "Other / not listed"
+  ],
+  "Subdermal Needle Electrodes": [
+    "Rhythmlink, Disposable Subdermal Needle",
+    "AMBU, Neuroline Subdermal",
+    "Technomed, Disposable Subdermal Needle",
+    "Other / not listed"
   ],
   "Sonstiges": [
     "Brain Products, actiCAP",
+    "Brain Products, R-Net",
     "tens shop, Handschuh-Elektrode Art.Nr. 35506x",
-    "tens shop, Ellenbogen-Elektrode Art.Nr. 35505x-355057"
+    "tens shop, Ellenbogen-Elektrode Art.Nr. 35505x-355057",
+    "Other / not listed"
   ]
 }

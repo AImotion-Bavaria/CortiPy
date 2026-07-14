@@ -224,3 +224,36 @@ class TestConfigProgressSteps:
         status = {name: True for name in session.CONFIG_STEPS}
         steps = self.steps(monkeypatch, status)
         assert all(done for _, done in steps)
+
+
+class TestElectrodeLibrary:
+    def test_every_rubric_offers_an_escape_hatch(self):
+        # No catalogue is complete; the operator must always be able to say "not listed".
+        for rubric, models in session.ELECTRODE_LIBRARY.items():
+            assert "Other / not listed" in models, rubric
+
+    def test_model_to_rubric_resolves_a_unique_owner(self):
+        assert session.MODEL_TO_RUBRIK["Grass, Gold Cup E5GH"] == "Wet Electrodes"
+        assert session.MODEL_TO_RUBRIK["OpenBCI, Dry Comb Electrode"] == "Dry Electrodes"
+
+    def test_a_model_shared_by_several_rubrics_forces_none(self):
+        # "Other / not listed" appears everywhere, so it must not drag the category around.
+        assert "Other / not listed" not in session.MODEL_TO_RUBRIK
+
+    def test_a_known_model_survives_its_own_rubric(self):
+        assert session._model_for_rubrik("Wet Electrodes", "Grass, Gold Cup E5GH") == "Grass, Gold Cup E5GH"
+
+    def test_an_unknown_model_is_kept_not_overwritten(self):
+        # Imported datasets carry model names this build has never heard of. Rewriting them
+        # to the first entry of the category would quietly falsify the recording's metadata.
+        legacy = "g.te, Unicorn Hybrid"  # the old typo, before it was corrected to g.tec
+        assert session._model_for_rubrik("Dry Electrodes", legacy) == legacy
+
+    def test_an_empty_model_falls_back_to_the_rubric_default(self):
+        assert session._model_for_rubrik("Wet Electrodes", "") in session.ELECTRODE_LIBRARY["Wet Electrodes"]
+
+    def test_a_model_from_the_wrong_rubric_is_not_silently_reset(self):
+        # It belongs to another category; the editor moves the category to it instead.
+        got = session._model_for_rubrik("Wet Electrodes", "OpenBCI, Dry Comb Electrode")
+        assert got in session.ELECTRODE_LIBRARY["Wet Electrodes"]
+        assert session.MODEL_TO_RUBRIK["OpenBCI, Dry Comb Electrode"] == "Dry Electrodes"

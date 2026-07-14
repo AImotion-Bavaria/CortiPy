@@ -176,6 +176,15 @@ for schema_path in SCHEMA_DIR.glob("*.json"):
 ELECTRODE_LIBRARY: Dict[str, List[str]] = json.loads((SCHEMA_DIR / "electrodes.json").read_text(encoding="utf-8"))
 ELECTRODE_RUBRICS = list(ELECTRODE_LIBRARY.keys())
 ELECTRODE_MODELS = sorted({model for models in ELECTRODE_LIBRARY.values() for model in models})
+# Which category a model belongs to, so picking a model can correct the category for you.
+# "Other / not listed" appears under every rubric, so it maps to none of them.
+MODEL_TO_RUBRIK: Dict[str, str] = {}
+for _rubric, _models in ELECTRODE_LIBRARY.items():
+    for _model in _models:
+        MODEL_TO_RUBRIK.setdefault(_model, _rubric)
+for _shared in [m for m, r in list(MODEL_TO_RUBRIK.items())
+                if sum(m in models for models in ELECTRODE_LIBRARY.values()) > 1]:
+    MODEL_TO_RUBRIK.pop(_shared, None)
 
 
 def _valid_electrode_rubrik(value: Any) -> str:
@@ -186,11 +195,19 @@ def _valid_electrode_rubrik(value: Any) -> str:
 
 
 def _model_for_rubrik(rubrik: Any, current: Any = None) -> str:
+    """Resolve the model for a row, without discarding one we simply do not know.
+
+    A model that is not in the library is kept as-is: imported datasets and older exports
+    carry model names this build has never heard of, and silently rewriting them to the
+    first entry of the category would quietly falsify the recording's metadata.
+    """
     rubric_key = _valid_electrode_rubrik(rubrik)
     models = ELECTRODE_LIBRARY.get(rubric_key, [])
     current_text = str(current or "").strip()
     if current_text in models:
         return current_text
+    if current_text and current_text not in ELECTRODE_MODELS:
+        return current_text  # unknown to us, but it is the operator's answer
     if models:
         return models[0]
     return current_text or (ELECTRODE_MODELS[0] if ELECTRODE_MODELS else "")
@@ -1420,6 +1437,15 @@ def ensure_channel_rows(device: str, existing: Optional[List[Dict[str, Any]]] = 
 
 
 def render_channel_editor(device: str) -> List[Dict[str, Any]]:
+    if not device:
+        # Without a device there is no montage, no channel count and no impedance support,
+        # so the editor rendered an "Electrodes ()" table of meaningless Ch1..Ch8 rows.
+        st.info(
+            "**Pick a device first.** Open *Session configuration* and choose one — the "
+            "electrode table is built from the device's montage."
+        )
+        return []
+
     channel_state = st.session_state["channel_tables"]
     rows = ensure_channel_rows(device, channel_state.get(device))
     editor_revision = int(st.session_state.setdefault("_channel_editor_revision", {}).get(device, 0))
@@ -1583,6 +1609,16 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 row.get("Channel"): (row.get("PosX"), row.get("PosY")) for row in rows
             }
 
+            # Model names are long and the identifying part is at the end ("... TDE-212B
+            # Spike"), so Model gets the room and the short columns give theirs back.
+            # Anything already on a row that we do not know stays selectable, or loading a
+            # dataset recorded with another build would strip its electrode model.
+            model_options = list(ELECTRODE_MODELS)
+            for row in rows:
+                model = str(row.get("Model") or "").strip()
+                if model and model not in model_options:
+                    model_options.append(model)
+
             edited = st.data_editor(
                 rows,
                 num_rows="fixed",
@@ -1590,25 +1626,27 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 key=f"channels_{device}_{editor_revision}_{int(edit_coords)}",
                 column_order=column_order,
                 column_config={
-                    "Channel": st.column_config.TextColumn("Channel", disabled=True, width="small"),
+                    "Channel": st.column_config.TextColumn("Channel", disabled=True, width=80),
                     "Position": st.column_config.TextColumn(
                         "Electrode / Position",
                         help="10-20 label or custom montage description",
-                        width="medium",
+                        width=140,
                     ),
                     "Rubrik": st.column_config.SelectboxColumn(
                         "Electrode type (Rubrik)",
                         options=ELECTRODE_RUBRICS,
-                        width="medium",
+                        width=190,
                     ),
-                    "Model": st.column_config.TextColumn(
+                    "Model": st.column_config.SelectboxColumn(
                         "Model",
-                        width="small",
-                        disabled=True,
-                        help="Automatically selected from the electrode type (Rubrik).",
+                        options=model_options,
+                        width=340,
+                        help="Pick the electrode model. Choosing one from another category "
+                        "updates the category to match.",
                     ),
                     "Impedance": st.column_config.NumberColumn(
                         "Impedance (kOhm)",
+                        width=145,
                         min_value=0.0,
                         step=0.5,
                         format="%.1f",
@@ -1629,14 +1667,24 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                         step=0.05,
                         format="%.2f",
                     ),
-                    "Active": st.column_config.CheckboxColumn("Use channel"),
+                    "Active": st.column_config.CheckboxColumn("Use channel", width=105),
                 },
             )
             extras = set(DEVICE_EXTRA_LABELS.get(device, []))
+            previous_models = {row.get("Channel"): row.get("Model") for row in rows}
             corrected_model = False
             for row_idx, row in enumerate(edited):
                 if row["Channel"] in extras:
                     row["Active"] = True
+
+                # A model picked from a different category moves the category to it, rather
+                # than the category silently overwriting the choice just made.
+                model_now = str(row.get("Model") or "").strip()
+                if model_now != previous_models.get(row.get("Channel")):
+                    owning_rubric = MODEL_TO_RUBRIK.get(model_now)
+                    if owning_rubric and owning_rubric != row.get("Rubrik"):
+                        row["Rubrik"] = owning_rubric
+                        corrected_model = True
                 if not row.get("Position"):
                     row["Position"] = row["Channel"].replace(" ", "")
                 pos_x = coerce_number(row.get("PosX"))
