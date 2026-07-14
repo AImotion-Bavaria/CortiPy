@@ -16,7 +16,6 @@ if str(ROOT) not in sys.path:
 from cortipy.ui import SaveManager  # noqa: E402
 from cortipy.ui_streamlit import session as ui  # noqa: E402
 from cortipy.ui_streamlit.constants import DEVICE_DEFAULT_CHANNELS  # noqa: E402
-from cortipy.ui_streamlit.device_settings import render_device_config  # noqa: E402
 from cortipy.ui_streamlit.fields import default_values  # noqa: E402
 from cortipy.ui_streamlit.live import (  # noqa: E402
     LiveViewService,
@@ -106,19 +105,16 @@ def main() -> None:
     participant_values = dict(st.session_state["participant"])
 
     if page == "Session configuration":
-        general_values = ui.render_general_form()
-        # Progressive disclosure: the device panel appears once a device is chosen, the
-        # method parameters once a method is chosen. Nothing is rendered for a blank
-        # selection, so the page shows only what can actually be filled in right now.
-        if general_values.get("Device"):
-            method_col, device_col = st.columns(2)
-            with device_col:
-                device_values = render_device_config(general_values["Device"])
-            if general_values.get("Method"):
-                with method_col:
-                    method_values = ui.render_method_form(general_values["Method"])
-        if general_values.get("Method") and general_values.get("Device"):
-            participant_values = ui.render_participant_form()
+        # One staged renderer owns the whole page: each step appears only once the previous
+        # one is satisfied, so the operator is never shown fields they cannot answer yet.
+        (
+            general_values,
+            staged_method_values,
+            staged_device_values,
+            participant_values,
+        ) = ui.render_session_configuration()
+        method_values = staged_method_values or method_values
+        device_values = staged_device_values or device_values
 
     if page == "Electrodes":
         ui.render_channel_editor(general_values["Device"])

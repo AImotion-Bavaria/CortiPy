@@ -55,6 +55,13 @@ DEVICE_CONFIG_SCHEMA: Dict[str, List[Dict[str, Any]]] = {
         },
     ]
 }
+# Device settings that must be filled before the device can be addressed at all. The
+# staged session form will not move past its connection step without these — unless the
+# run is simulated, which never touches the hardware.
+REQUIRED_DEVICE_FIELDS: Dict[str, tuple] = {
+    "UNICORN": ("UNICORNPort",),
+}
+
 DEVICE_FIELD_ALIASES: Dict[str, List[str]] = {}
 for _fields in DEVICE_CONFIG_SCHEMA.values():
     for _field in _fields:

@@ -78,3 +78,65 @@ class TestImpedanceMapping:
     def test_too_few_values_are_ignored(self):
         rows = [{"Channel": "GND", "Impedance": 1.0}]
         assert map_impedances_to_channels(rows, [1.0, 2.0])[0]["Impedance"] == 1.0
+
+
+class TestStagedConfiguration:
+    """Each step reveals the next only when its own required fields are filled."""
+
+    def base(self, **general):
+        g = {"Device": "", "Method": "", "fs": "", "RecordingTime": 0}
+        g.update(general)
+        return g
+
+    def status(self, general, device_values=None, method_values=None):
+        return session._step_status(general, device_values or {}, method_values or {})
+
+    def test_nothing_is_done_on_a_blank_form(self):
+        s = self.status(self.base())
+        assert s["Device"] is False
+        assert s["Method"] is False
+        assert s["Acquisition"] is False
+        assert s["Channels"] is False
+
+    def test_device_without_a_required_port_is_connected_immediately(self):
+        # ActiCHamp has no port to enter, so its connection step must not block.
+        s = self.status(self.base(Device="ActiCHamp"))
+        assert s["Device"] is True
+        assert s["Connection"] is True
+
+    def test_unicorn_blocks_until_a_port_is_given(self):
+        g = self.base(Device="UNICORN")
+        assert self.status(g, device_values={})["Connection"] is False
+        assert self.status(g, device_values={"UNICORNPort": "COM7"})["Connection"] is True
+
+    def test_simulating_relaxes_the_port_requirement(self, monkeypatch):
+        # A simulated run never touches hardware, so a missing port must not wall off the form.
+        monkeypatch.setattr(session, "_is_simulating", lambda: True)
+        assert self.status(self.base(Device="UNICORN"), device_values={})["Connection"] is True
+
+    def test_acquisition_needs_a_rate_and_a_nonzero_duration(self):
+        assert self.status(self.base(fs="250", RecordingTime=0))["Acquisition"] is False
+        assert self.status(self.base(fs="", RecordingTime=5))["Acquisition"] is False
+        assert self.status(self.base(fs="250", RecordingTime=5))["Acquisition"] is True
+
+    def test_channels_step_needs_a_positive_channel_count(self):
+        assert self.status(self.base(), method_values={"NumberEEGChannels": 0})["Channels"] is False
+        assert self.status(self.base(), method_values={"NumberEEGChannels": 8})["Channels"] is True
+
+    def test_session_details_never_blocks(self):
+        assert self.status(self.base())["Session details"] is True
+
+    def test_first_incomplete_walks_the_steps_in_order(self):
+        assert session._first_incomplete(self.status(self.base())) == "Device"
+        assert session._first_incomplete(self.status(self.base(Device="ActiCHamp"))) == "Method"
+        g = self.base(Device="ActiCHamp", Method="Alpha")
+        assert session._first_incomplete(self.status(g)) == "Acquisition"
+        g = self.base(Device="ActiCHamp", Method="Alpha", fs="250", RecordingTime=5)
+        assert session._first_incomplete(self.status(g)) == "Channels"
+        done = self.status(g, method_values={"NumberEEGChannels": 8})
+        assert session._first_incomplete(done) is None
+
+    def test_step_names_are_ordered(self):
+        assert session.CONFIG_STEPS == (
+            "Device", "Connection", "Method", "Acquisition", "Channels", "Session details",
+        )

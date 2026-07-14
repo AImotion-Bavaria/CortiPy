@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import html
 import math
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -205,6 +205,7 @@ from cortipy.ui_streamlit.constants import (  # noqa: E402
     DEVICE_POSITION_DEFAULTS,
     HIDDEN_VIEWS,
     IMPEDANCE_CAPABLE_DEVICES,
+    REQUIRED_DEVICE_FIELDS,
     field_applies_to_device as _field_applies_to_device,
     SUPPORTED_EXTRA_DEVICES,
     VIEW_OPTIONS,
@@ -1054,125 +1055,244 @@ def _selectbox_with_placeholder(target, label: str, options: List[str], current:
     return "" if picked == SELECT_PLACEHOLDER else str(picked)
 
 
-def render_general_form() -> Dict[str, Any]:
-    general = st.session_state["general_form"]
-    method_field = next(field for field in GENERAL_SCHEMA if field.name == "Method")
-    device_field = next(field for field in GENERAL_SCHEMA if field.name == "Device")
-    environment_field = next((field for field in GENERAL_SCHEMA if field.name == "Environment"), None)
+def _render_general_field(target, field, general: Dict[str, Any], device: str) -> None:
+    """Render one GeneralParams field into `target` and store its value."""
+    key = f"general_{field.name}"
+    current = general.get(field.name)
 
+    if field.name == "fs" and device.lower() == "unicorn":
+        locked_value = "250"
+        if st.session_state.get(key) != locked_value:
+            st.session_state[key] = locked_value
+        options = [locked_value] + [opt for opt in (field.options or []) if opt != locked_value]
+        value = target.selectbox(
+            field.name, options=options, index=options.index(locked_value),
+            help="UNICORN sampling rate is fixed to 250 Hz.", key=key, disabled=True,
+        )
+    elif field.name == "fs":
+        options = DEVICE_FS_OPTIONS.get(device, field.options or [""]) or [""]
+        if st.session_state.get(key) not in options:
+            st.session_state.pop(key, None)  # previous device's rate may be unavailable here
+        resolved = resolve_choice(options, current)
+        fs_help = field.tooltip or None
+        if device == "ActiCHamp":
+            fs_help = (
+                "ActiCHamp-supported rates. An unsupported rate is clamped by the hardware "
+                "and makes the recording run longer than RecordingTime."
+            )
+        value = target.selectbox(
+            field.name, options=options, index=options.index(resolved), help=fs_help, key=key
+        )
+    elif field.kind == "dropdown":
+        options = field.options or [""]
+        resolved = resolve_choice(options, current)
+        value = target.selectbox(
+            field.name, options=options, index=options.index(resolved),
+            help=field.tooltip or None, key=key,
+        )
+    elif field.kind == "numeric":
+        value = render_numeric_input(target, field, current, key)
+    else:
+        value = target.text_input(field.name, value=current or "", help=field.tooltip or None, key=key)
+
+    general[field.name] = value
+
+
+def _render_general_fields(container, names: Sequence[str], general: Dict[str, Any], device: str) -> None:
+    fields = [f for f in GENERAL_SCHEMA if f.name in set(names)]
+    if not fields:
+        return
+    ncols = 3 if len(fields) > 4 else 2
+    cols = container.columns(ncols)
+    for idx, field in enumerate(fields):
+        _render_general_field(cols[idx % ncols], field, general, device)
+
+
+# ----------------------------------------------------------------------------------
+# Staged session configuration
+# ----------------------------------------------------------------------------------
+# Which GeneralParams fields belong to which step.
+ACQUISITION_FIELDS = ("fs", "RecordingTime")
+SESSION_DETAIL_FIELDS = ("Filename", "TestSubjectNo", "Environment", "AddInfos", "RepeatMeas")
+
+CONFIG_STEPS = (
+    "Device",
+    "Connection",
+    "Method",
+    "Acquisition",
+    "Channels",
+    "Session details",
+)
+
+
+def _is_simulating() -> bool:
+    return bool(st.session_state.get("simulate_run_toggle", False))
+
+
+def _device_connection_ready(device: str, device_values: Dict[str, Any]) -> bool:
+    """True when the device has everything it needs to be addressed.
+
+    Simulated runs never touch the hardware, so a missing port must not wall off the
+    rest of the form.
+    """
+    required = REQUIRED_DEVICE_FIELDS.get(device, ())
+    if not required or _is_simulating():
+        return True
+    return all(str(device_values.get(name) or "").strip() for name in required)
+
+
+def _step_status(general: Dict[str, Any], device_values: Dict[str, Any], method_values: Dict[str, Any]) -> Dict[str, bool]:
+    """Which steps are satisfied. A step is revealed once every earlier step is done."""
+    device = str(general.get("Device") or "")
+    method = str(general.get("Method") or "")
+    fs = coerce_number(general.get("fs"))
+    duration = coerce_number(general.get("RecordingTime"))
+    channels = coerce_number(method_values.get("NumberEEGChannels"))
+    return {
+        "Device": bool(device),
+        "Connection": bool(device) and _device_connection_ready(device, device_values),
+        "Method": bool(method),
+        "Acquisition": bool(fs) and bool(duration and duration > 0),
+        "Channels": bool(channels and channels > 0),
+        "Session details": True,  # optional metadata; never blocks
+    }
+
+
+def _render_stepper(status: Dict[str, bool], current: Optional[str]) -> None:
+    """Tick only the steps actually passed.
+
+    A later step can satisfy its own condition (Session details has nothing to require)
+    while an earlier one is still open — ticking it then would claim progress the operator
+    has not made, so everything past the first open step renders as pending.
+    """
+    cols = st.columns(len(CONFIG_STEPS))
+    reached = True
+    for idx, (col, name) in enumerate(zip(cols, CONFIG_STEPS), start=1):
+        done = reached and status.get(name, False)
+        if not done:
+            reached = False
+        if done:
+            col.markdown(f"✓ **{name}**")
+        elif name == current:
+            col.markdown(f"**{idx}. {name}**")
+        else:
+            col.markdown(f":gray[{idx}. {name}]")
+
+
+def _first_incomplete(status: Dict[str, bool]) -> Optional[str]:
+    for name in CONFIG_STEPS:
+        if not status.get(name):
+            return name
+    return None
+
+
+def render_session_configuration() -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    """The Session configuration page, revealed one step at a time.
+
+    Each step appears only once every earlier step is satisfied, so the page never shows
+    fields the operator cannot meaningfully answer yet. Values for steps that are not yet
+    rendered keep their stored defaults, so nothing is lost by not showing them.
+    """
+    from cortipy.ui_streamlit.device_settings import render_device_config
+
+    general = st.session_state["general_form"]
+    method_field = next(f for f in GENERAL_SCHEMA if f.name == "Method")
+    device_field = next(f for f in GENERAL_SCHEMA if f.name == "Device")
     method_options = method_field.options or sorted(METHOD_SCHEMAS.keys())
     device_options = sorted(set((device_field.options or []) + SUPPORTED_EXTRA_DEVICES))
 
+    device_values: Dict[str, Any] = {}
+    method_values: Dict[str, Any] = {}
+    participant_values: Dict[str, Any] = dict(st.session_state.get("participant", {}))
+
+    def status() -> Dict[str, bool]:
+        return _step_status(general, device_values, method_values)
+
+    # --- Step 1: device -----------------------------------------------------------
     with st.expander("Session configuration", expanded=True):
+        stepper_slot = st.container()
         form_col, viz_col = st.columns((3, 2))
 
-        def _snapshot() -> None:
-            with viz_col:
-                _spacer, snap_col = viz_col.columns([1, 5])
-                with snap_col:
-                    render_config_snapshot(general.get("Method", ""), general.get("Device", ""), general)
-
-        # Step 1 - the device decides which fields even make sense, so it is asked first.
-        top_cols = form_col.columns(3)
+        top = form_col.columns(3)
         device = _selectbox_with_placeholder(
-            top_cols[0], "Device", device_options, general.get("Device"), "general_Device",
+            top[0], "Device", device_options, general.get("Device"), "general_Device",
             device_field.tooltip or None,
         )
         general["Device"] = device
+        _remember_device_selection(device)
+
+        # --- Step 3: method (rendered next to the device, but gated behind it) -----
+        method = ""
+        if device:
+            method = _selectbox_with_placeholder(
+                top[1], "Method", method_options, general.get("Method"), "general_Method",
+                method_field.tooltip or None,
+            )
+            general["Method"] = method
+            full = METHOD_FULL_NAMES.get(method)
+            desc = METHOD_DESCRIPTIONS.get(method)
+            if full or desc:
+                top[1].caption(" - ".join(p for p in (full or "", desc or "") if p))
+
+        with viz_col:
+            _spacer, snap_col = viz_col.columns([1, 5])
+            with snap_col:
+                render_config_snapshot(general.get("Method", ""), general.get("Device", ""), general)
+
         if not device:
-            form_col.info("**Step 1 of 3 — pick a device.** The settings it supports appear once it is selected.")
-            _snapshot()
-            _remember_device_selection(device)
-            return dict(general)
+            form_col.info("**Step 1 — pick a device.** Everything else follows from it.")
+            with stepper_slot:
+                _render_stepper(status(), "Device")
+            return dict(general), method_values, device_values, participant_values
 
-        # Step 2 - the method decides which acquisition parameters are relevant.
-        method = _selectbox_with_placeholder(
-            top_cols[1], "Method", method_options, general.get("Method"), "general_Method",
-            method_field.tooltip or None,
-        )
-        general["Method"] = method
-        method_full = METHOD_FULL_NAMES.get(method)
-        description = METHOD_DESCRIPTIONS.get(method)
-        if method_full or description:
-            top_cols[1].caption(" - ".join(p for p in (method_full or "", description or "") if p))
-        if not method:
-            form_col.info(f"**Step 2 of 3 — pick a method.** {device} is selected; choose what you are measuring.")
-            _snapshot()
-            _remember_device_selection(device)
-            return dict(general)
+    # --- Step 2: connection settings ---------------------------------------------
+    if REQUIRED_DEVICE_FIELDS.get(device) or device in DEVICE_CONFIG_SCHEMA:
+        device_values = render_device_config(device)
+    else:
+        device_values = dict(st.session_state.setdefault("device_forms", {}).get(device, {}))
 
-        # Step 3 - everything else.
-        if environment_field is not None:
-            env_options = environment_field.options or [""]
-            env_value = resolve_choice(env_options, general.get("Environment"))
-            general["Environment"] = top_cols[2].selectbox(
-                "Environment",
-                options=env_options,
-                index=env_options.index(env_value),
-                help=environment_field.tooltip or None,
-                key="general_Environment",
-            )
-        form_col.caption(f"**Step 3 of 3 — session details** for {method} on {device}.")
+    if not status()["Connection"]:
+        missing = ", ".join(REQUIRED_DEVICE_FIELDS.get(device, ()))
+        st.info(f"**Step 2 — connect {device}.** Set {missing} (or turn on *Simulate run*) to continue.")
+        with stepper_slot:
+            _render_stepper(status(), "Connection")
+        return dict(general), method_values, device_values, participant_values
 
-    other_fields = [field for field in GENERAL_SCHEMA if field.name not in {"Method", "Device", "Environment"}]
-    device_is_unicorn = device.lower() == "unicorn"
-    ncols = 3 if len(other_fields) > 4 else 2  # denser grid = fewer rows to scroll
-    cols = form_col.columns(ncols)
-    for idx, field in enumerate(other_fields):
-        target = cols[idx % ncols]
-        key = f"general_{field.name}"
-        current = general.get(field.name)
-        if field.name == "fs" and device_is_unicorn:
-            locked_value = "250"
-            if st.session_state.get(key) != locked_value:
-                st.session_state[key] = locked_value
-            options = [locked_value] + [opt for opt in (field.options or []) if opt != locked_value]
-            value = target.selectbox(
-                field.name,
-                options=options,
-                index=options.index(locked_value),
-                help="UNICORN sampling rate is fixed to 250 Hz.",
-                key=key,
-                disabled=True,
-            )
-        elif field.name == "fs":
-            options = DEVICE_FS_OPTIONS.get(device, field.options or [""]) or [""]
-            if st.session_state.get(key) not in options:
-                st.session_state.pop(key, None)  # previous device's rate may be unavailable here
-            resolved = resolve_choice(options, current)
-            fs_help = field.tooltip or None
-            if device == "ActiCHamp":
-                fs_help = "ActiCHamp-supported rates. An unsupported rate is clamped by the hardware and makes the recording run longer than RecordingTime."
-            value = target.selectbox(
-                field.name,
-                options=options,
-                index=options.index(resolved),
-                help=fs_help,
-                key=key,
-            )
-        elif field.kind == "dropdown":
-            options = field.options or [""]
-            resolved = resolve_choice(options, current)
-            value = target.selectbox(
-                field.name,
-                options=options,
-                index=options.index(resolved),
-                help=field.tooltip or None,
-                key=key,
-            )
-        elif field.kind == "numeric":
-            value = render_numeric_input(target, field, current, key)
-        else:
-            value = target.text_input(field.name, value=current or "", help=field.tooltip or None, key=key)
-        general[field.name] = value
-    with viz_col:
-        spacer_col, snap_col = viz_col.columns([1, 5])
-        with snap_col:
-            render_config_snapshot(general.get("Method", ""), general.get("Device", ""), general)
-    _remember_device_selection(device)
+    if not method:
+        st.info(f"**Step 3 — pick a method.** {device} is ready; choose what you are measuring.")
+        with stepper_slot:
+            _render_stepper(status(), "Method")
+        return dict(general), method_values, device_values, participant_values
 
-    return dict(general)
+    # --- Step 4: acquisition ------------------------------------------------------
+    with st.expander("Acquisition", expanded=True):
+        st.caption("Sampling rate and how long the recording runs.")
+        _render_general_fields(st.container(), ACQUISITION_FIELDS, general, device)
 
+    if not status()["Acquisition"]:
+        st.info("**Step 4 — set the sampling rate and a recording time above zero.**")
+        with stepper_slot:
+            _render_stepper(status(), "Acquisition")
+        return dict(general), method_values, device_values, participant_values
+
+    # --- Step 5: channels + method parameters -------------------------------------
+    method_values = render_method_form(method)
+
+    if not status()["Channels"]:
+        st.info("**Step 5 — set NumberEEGChannels** so the montage and the reference can be resolved.")
+        with stepper_slot:
+            _render_stepper(status(), "Channels")
+        return dict(general), method_values, device_values, participant_values
+
+    # --- Step 6: session details + participant ------------------------------------
+    with st.expander("Session details", expanded=True):
+        st.caption("Optional metadata stored alongside the recording.")
+        _render_general_fields(st.container(), SESSION_DETAIL_FIELDS, general, device)
+    participant_values = render_participant_form()
+
+    with stepper_slot:
+        _render_stepper(status(), None)
+    return dict(general), method_values, device_values, participant_values
 
 
 def render_method_form(method: str) -> Dict[str, Any]:
@@ -2588,7 +2708,8 @@ def render_sidebar_controls() -> SidebarControls:
         simulate = st.toggle(
             "Simulate run",
             value=False,
-            help="Save generated zero data without connecting to hardware.",
+            key="simulate_run_toggle",  # the staged config form reads this to relax the port gate
+            help="Generate synthetic EEG and save it without connecting to hardware.",
         )
 
     with sidebar.container(border=True):
