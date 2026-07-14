@@ -19,6 +19,7 @@ from cortipy.ui_streamlit.plot_windows import (
     render_plotly_window_launcher,
     safe_window_key,
 )
+from cortipy.shared.channels import channel_labels
 from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
 
 try:  # pragma: no cover - optional UI dependency
@@ -167,10 +168,11 @@ def _chart_from_raw_data(label: str, params: Dict[str, Any], data: np.ndarray, a
         series.append(ChartSeries(name=label, x=x_ds, y=y_ds))
     else:
         max_channels = min(4, n_channels)
+        names = channel_labels(params, n_channels)
         for ch in range(max_channels):
             y_vals = arr[:limit, ch]
             x_ds, y_ds = downsample_series(x_vals, y_vals)
-            series.append(ChartSeries(name=f"{label} – Ch {ch + 1}", x=x_ds, y=y_ds))
+            series.append(ChartSeries(name=f"{label} – {names[ch]}", x=x_ds, y=y_ds))
 
     return ChartData(
         key="raw",
@@ -211,9 +213,10 @@ def _chart_from_psd(label: str, params: Dict[str, Any], data: np.ndarray, aggreg
         series.append(ChartSeries(name=label, x=freq, y=y_vals))
     else:
         max_channels = min(4, psd.shape[1])
+        names = channel_labels(params, psd.shape[1])
         for ch in range(max_channels):
             y_vals = 10.0 * np.log10(np.maximum(psd[:, ch], np.finfo(float).tiny))
-            series.append(ChartSeries(name=f"{label} – Ch {ch + 1}", x=freq, y=y_vals))
+            series.append(ChartSeries(name=f"{label} – {names[ch]}", x=freq, y=y_vals))
 
     return ChartData(
         key="psd",
@@ -225,7 +228,7 @@ def _chart_from_psd(label: str, params: Dict[str, Any], data: np.ndarray, aggreg
     )
 
 
-def _chart_from_alpha_power(label: str, alpha_eval: Dict[str, Any], aggregate: bool = False) -> Optional[ChartData]:
+def _chart_from_alpha_power(label: str, alpha_eval: Dict[str, Any], aggregate: bool = False, params: Optional[Dict[str, Any]] = None) -> Optional[ChartData]:
     if not alpha_eval:
         return None
     try:
@@ -241,8 +244,9 @@ def _chart_from_alpha_power(label: str, alpha_eval: Dict[str, Any], aggregate: b
         series.append(ChartSeries(name=label, x=time_axis, y=power.mean(axis=0)))
     else:
         max_channels = min(4, power.shape[0])
+        names = channel_labels(params, power.shape[0])
         for idx in range(max_channels):
-            series.append(ChartSeries(name=f"{label} – Ch {idx + 1}", x=time_axis, y=power[idx]))
+            series.append(ChartSeries(name=f"{label} – {names[idx]}", x=time_axis, y=power[idx]))
 
     return ChartData(
         key="alpha_power",
@@ -253,7 +257,7 @@ def _chart_from_alpha_power(label: str, alpha_eval: Dict[str, Any], aggregate: b
     )
 
 
-def _chart_from_eval_psd(label: str, psd_eval: Dict[str, Any], aggregate: bool = False) -> Optional[ChartData]:
+def _chart_from_eval_psd(label: str, psd_eval: Dict[str, Any], aggregate: bool = False, params: Optional[Dict[str, Any]] = None) -> Optional[ChartData]:
     if not psd_eval:
         return None
     try:
@@ -283,8 +287,9 @@ def _chart_from_eval_psd(label: str, psd_eval: Dict[str, Any], aggregate: bool =
         series.append(ChartSeries(name=label, x=freq, y=psd_array.mean(axis=0)))
     else:
         max_channels = min(4, psd_array.shape[0])
+        names = channel_labels(params, psd_array.shape[0])
         for idx in range(max_channels):
-            series.append(ChartSeries(name=f"{label} – Ch {idx + 1}", x=freq, y=psd_array[idx]))
+            series.append(ChartSeries(name=f"{label} – {names[idx]}", x=freq, y=psd_array[idx]))
 
     return ChartData(
         key="eval_psd",
@@ -295,7 +300,7 @@ def _chart_from_eval_psd(label: str, psd_eval: Dict[str, Any], aggregate: bool =
     )
 
 
-def _chart_from_eval_fft(label: str, fft_eval: Dict[str, Any], aggregate: bool = False) -> Optional[ChartData]:
+def _chart_from_eval_fft(label: str, fft_eval: Dict[str, Any], aggregate: bool = False, params: Optional[Dict[str, Any]] = None) -> Optional[ChartData]:
     if not fft_eval:
         return None
     try:
@@ -320,8 +325,9 @@ def _chart_from_eval_fft(label: str, fft_eval: Dict[str, Any], aggregate: bool =
         series.append(ChartSeries(name=label, x=freq, y=magnitude.mean(axis=1)))
     else:
         max_channels = min(4, magnitude.shape[1])
+        names = channel_labels(params, magnitude.shape[1])
         for idx in range(max_channels):
-            series.append(ChartSeries(name=f"{label} – Ch {idx + 1}", x=freq, y=magnitude[:, idx]))
+            series.append(ChartSeries(name=f"{label} – {names[idx]}", x=freq, y=magnitude[:, idx]))
 
     return ChartData(
         key="eval_fft",
@@ -332,7 +338,7 @@ def _chart_from_eval_fft(label: str, fft_eval: Dict[str, Any], aggregate: bool =
     )
 
 
-def _chart_from_average_signals(label: str, avg_eval: Dict[str, Any], aggregate: bool = False) -> Optional[ChartData]:
+def _chart_from_average_signals(label: str, avg_eval: Dict[str, Any], aggregate: bool = False, params: Optional[Dict[str, Any]] = None) -> Optional[ChartData]:
     if not avg_eval:
         return None
     try:
@@ -348,8 +354,9 @@ def _chart_from_average_signals(label: str, avg_eval: Dict[str, Any], aggregate:
         series.append(ChartSeries(name=label, x=time_axis, y=voltage.mean(axis=1)))
     else:
         max_channels = min(4, voltage.shape[1])
+        names = channel_labels(params, voltage.shape[1])
         for idx in range(max_channels):
-            series.append(ChartSeries(name=f"{label} – Ch {idx + 1}", x=time_axis, y=voltage[:, idx]))
+            series.append(ChartSeries(name=f"{label} – {names[idx]}", x=time_axis, y=voltage[:, idx]))
 
     return ChartData(
         key="avg_signals",

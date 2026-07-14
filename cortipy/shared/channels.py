@@ -127,17 +127,26 @@ def resolve_plot_channel(
     count: int,
     *,
     preference: Sequence[str] = OCCIPITAL_PREFERENCE,
+    exclude: Sequence[int] = (),
 ) -> Tuple[int, str, bool]:
     """Pick the column to plot, returning ``(index, label_actually_used, is_exact)``.
 
     When the requested electrode is not in the montage — Oz on a UNICORN cap, say — fall
     back to the nearest site in ``preference`` and report the substitution, so the caller
     can title the plot with the channel it really drew instead of the one it wished for.
+
+    ``exclude`` holds column indices that must never be auto-selected. Pass the reference
+    channel: it is identically zero after referencing, so auto-falling-back onto it (the
+    old code always landed on column 0) produced a flat, meaningless spectrum. An
+    explicitly requested channel is still honoured, excluded or not — that is the caller's
+    decision to make.
     """
     count = max(int(count), 0)
     labels = channel_labels(source, count)
     if count == 0:
         return 0, str(requested or "Ch 1"), False
+
+    banned = {int(i) for i in exclude}
 
     idx = resolve_channel_index(source, requested, count=count)
     if idx is not None and 0 <= idx < count:
@@ -145,7 +154,11 @@ def resolve_plot_channel(
 
     for candidate in preference:
         alt = resolve_channel_index(source, candidate, count=count)
-        if alt is not None and 0 <= alt < count:
+        if alt is not None and 0 <= alt < count and alt not in banned:
+            return alt, labels[alt], False
+
+    for alt in range(count):
+        if alt not in banned:
             return alt, labels[alt], False
 
     return 0, labels[0], False

@@ -31,7 +31,11 @@ from cortipy.shared import (
     ssvep_snr,
 )
 from cortipy.shared.channels import resolve_plot_channel
-from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
+from cortipy.shared.reference import (
+    apply_eeg_reference,
+    eeg_channel_count,
+    reference_channel_index,
+)
 
 LOGGER = logging.getLogger("cortipy.evaluation.ssvep")
 
@@ -123,8 +127,13 @@ class SsvepEvaluator(EvaluatorBase):
             evaluation["F_Test"] = f_test
 
         requested_label = param_block.get("PlotChannelLabel", "Oz")
+        # The reference channel is zero after referencing; never fall back onto it.
+        ref_idx = reference_channel_index(param_block, psd_result.dBpsd.shape[0])
         plot_idx, plot_channel_label, exact = resolve_plot_channel(
-            params, requested_label, psd_result.dBpsd.shape[0]
+            params,
+            requested_label,
+            psd_result.dBpsd.shape[0],
+            exclude=(ref_idx,),
         )
         if not exact:
             # Oz is absent from e.g. the UNICORN montage. Substituting silently and still
@@ -155,8 +164,9 @@ class SsvepEvaluator(EvaluatorBase):
                 psd_result.freq,
                 _pick_psd_channel(psd_result.dBpsd, plot_idx),
                 smooth=1.0,
-                xlim=(0, 500),
-                ylim=(-100, -20),
+                # Frame the stimulus and its first few harmonics rather than a fixed 0-500 Hz
+                # window, which at fs=250 left three quarters of the axis empty.
+                xlim=(0.0, _psd_display_top_hz(psd_result.freq, stim_freqs)),
                 title=f"SSVEP PSD @ {plot_channel_label}",
             )
             _show_mpl(fig_psd, "ssvep_psd")
@@ -309,17 +319,36 @@ def _plot_ssvep_topomap(
         return
 
 
+def _psd_display_top_hz(freqs: np.ndarray, stim_freqs: np.ndarray) -> float:
+    """Upper edge of the PSD x-axis: enough to show the stimulus and ~5 harmonics.
+
+    Never exceeds the spectrum itself (Nyquist), so the axis cannot run off past the data.
+    """
+    freqs = np.asarray(freqs, dtype=float)
+    nyquist = float(np.nanmax(freqs)) if freqs.size else 60.0
+    stim = np.asarray(stim_freqs, dtype=float)
+    stim = stim[np.isfinite(stim) & (stim > 0)]
+    wanted = 5.0 * float(np.max(stim)) if stim.size else 60.0
+    return float(min(nyquist, max(60.0, wanted))) or nyquist
+
+
 def plot_ssvep_power_db(
     ax: plt.Axes,
     freqs: np.ndarray,
     power_db: np.ndarray,
     window_hz: float = 1.0,
-    xlim: tuple[float, float] = (0, 500),
-    ylim: tuple[float, float] = (-100, -20),
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
     title: str | None = None,
     smooth: float | None = None,
 ) -> plt.Axes:
-    """Plot SSVEP power (dB/Hz) with optional light smoothing to mirror EEGLAB-style PSD."""
+    """Plot SSVEP power (dB/Hz) with optional light smoothing to mirror EEGLAB-style PSD.
+
+    ``xlim``/``ylim`` default to the data. They used to be hardcoded to (0, 500) Hz and
+    (-100, -20) dB: at fs=250 the spectrum stops at Nyquist (125 Hz), so three quarters of
+    the axis was empty and the trace was squeezed into the left edge — and any signal
+    outside the fixed dB window was clipped out of view entirely.
+    """
     freqs = np.asarray(freqs)
     power_db = np.asarray(power_db)
     # choose smoothing window: prefer `smooth` if provided, else window_hz
@@ -338,11 +367,26 @@ def plot_ssvep_power_db(
         power_db = power_db[:-1]
     ax.plot(freqs, power_db, color="blue", linewidth=1.25)
     ax.set_xlabel("Frequency (Hz)")
-    ax.set_ylabel("Power (µV^2/Hz)")
+    ax.set_ylabel("Power (dB/Hz)")  # the values are already in dB, not µV²/Hz
     if title:
         ax.set_title(title)
+
+    if xlim is None:
+        top = float(np.nanmax(freqs)) if freqs.size else 1.0
+        xlim = (0.0, top if top > 0 else 1.0)
     ax.set_xlim(*xlim)
-    ax.set_ylim(*ylim)
+
+    if ylim is None:
+        # Fit to whatever is inside the visible band, with a little headroom.
+        visible = power_db[..., (freqs >= xlim[0]) & (freqs <= xlim[1])] if freqs.size else power_db
+        finite = visible[np.isfinite(visible)] if np.size(visible) else np.array([])
+        if finite.size:
+            lo, hi = float(np.min(finite)), float(np.max(finite))
+            pad = max(3.0, 0.05 * (hi - lo))
+            ylim = (lo - pad, hi + pad)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+
     ax.grid(True, alpha=0.3)
     return ax
 

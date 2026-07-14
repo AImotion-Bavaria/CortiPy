@@ -155,16 +155,16 @@ def collect_chart_data(label: str, params: Dict[str, Any], data: Optional[np.nda
 
     evaluation = autoevaluate_if_needed(params, data)
     if evaluation:
-        alpha_chart = _chart_from_alpha_power(label, evaluation.get("alphaPower", {}), aggregate=aggregate)
+        alpha_chart = _chart_from_alpha_power(label, evaluation.get("alphaPower", {}), aggregate=aggregate, params=params)
         if alpha_chart:
             charts.setdefault("alpha_power", alpha_chart)
-        eval_psd_chart = _chart_from_eval_psd(label, evaluation.get("PSD", {}), aggregate=aggregate)
+        eval_psd_chart = _chart_from_eval_psd(label, evaluation.get("PSD", {}), aggregate=aggregate, params=params)
         if eval_psd_chart:
             charts.setdefault("eval_psd", eval_psd_chart)
-        fft_chart = _chart_from_eval_fft(label, evaluation.get("fft", {}), aggregate=aggregate)
+        fft_chart = _chart_from_eval_fft(label, evaluation.get("fft", {}), aggregate=aggregate, params=params)
         if fft_chart:
             charts.setdefault("eval_fft", fft_chart)
-        avg_chart = _chart_from_average_signals(label, evaluation.get("average_signals", {}), aggregate=aggregate)
+        avg_chart = _chart_from_average_signals(label, evaluation.get("average_signals", {}), aggregate=aggregate, params=params)
         if avg_chart:
             charts.setdefault(avg_chart.key, avg_chart)
 

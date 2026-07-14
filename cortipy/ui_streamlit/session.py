@@ -88,6 +88,7 @@ def _tail_log(path: Path, n: int = 60) -> List[str]:
 from cortipy import MeasurementPipeline  # noqa: E402
 from cortipy.core.pipeline import PipelineHooks  # noqa: E402
 from cortipy.devices import DeviceFactory, DeviceInterface  # noqa: E402
+from cortipy.shared.units import DEFAULT_SIGNAL_UNIT  # noqa: E402
 from cortipy.ui import SaveManager, normalize_params  # noqa: E402
 
 DEFAULT_SAVE_DIR = Path.cwd() / "cortipy_runs"
@@ -1779,6 +1780,9 @@ def assemble_params(
         # The trigger rides in the final column, after EEG and AUX.
         params["Parameters"]["TriggerChannel"] = len(channels) + aux_count + 1
 
+    # State the unit the samples are in rather than leaving every reader to assume.
+    params["Parameters"]["SignalUnit"] = DEFAULT_SIGNAL_UNIT
+
     metadata = build_metadata(participant)
     if metadata:
         params["Metadata"] = metadata
@@ -2014,7 +2018,36 @@ def export_recording(data: Any, params: Dict[str, Any], out_dir: Path, container
     return out.parent
 
 
+def _simulated_stimulus_frequencies(params: Dict[str, Any]) -> List[float]:
+    """The frequencies the paradigm's evaluator will look for."""
+    parameters = params.get("Parameters", {}) if isinstance(params, dict) else {}
+    method = str(params.get("Method") or "").strip().lower()
+    out: List[float] = []
+
+    def _add(value: Any) -> None:
+        number = coerce_number(value)
+        if number and float(number) > 0:
+            out.append(float(number))
+
+    if method == "ssvep":
+        stim = parameters.get("StimFreq")
+        for entry in stim if isinstance(stim, (list, tuple)) else [stim]:
+            _add(entry)
+    elif method == "assr":
+        _add(parameters.get("ASSRModulationFrequency"))
+    elif method == "alpha":
+        out.append(10.0)  # the alpha rhythm is the point of the run
+    return out
+
+
 def simulated_recording_data(params: Dict[str, Any]) -> np.ndarray:
+    """Synthetic EEG for "Simulate run".
+
+    This used to return np.zeros(), so every simulated run produced a flat line and every
+    chart drawn from it was empty — which read as "the plots are broken". Generate actual
+    EEG-like signal instead, carrying the paradigm's stimulus frequency so the evaluator
+    has something to find.
+    """
     parameters = params.get("Parameters", {}) if isinstance(params, dict) else {}
     fs = float(coerce_number(parameters.get("fs")) or 250.0)
     recording_seconds = _selected_recording_seconds(params) or 1.0
@@ -2024,8 +2057,31 @@ def simulated_recording_data(params: Dict[str, Any]) -> np.ndarray:
         or 8
     )
     n_channels = max(1, int(n_channels_value or 8))
+
+    from cortipy.shared.dataset import CortiDataset
+
+    dataset = CortiDataset.generate_eeg_samples(
+        sampling_rate=fs,
+        duration_s=float(recording_seconds),
+        channel_count=n_channels,
+        channel_names=[c.get("Position") or c.get("Channel") for c in params.get("Channels", [])][:n_channels] or None,
+        seed=0,  # deterministic: the same configuration simulates the same run
+    )
+    data = np.asarray(dataset.result.data, dtype=float)  # microvolts
+
     n_samples = max(1, int(round(fs * recording_seconds)))
-    return np.zeros((n_samples, n_channels), dtype=float)
+    if data.shape[0] > n_samples:
+        data = data[:n_samples]
+
+    # Drive the paradigm's own frequency on top of the background. The generator assigns
+    # its base frequencies random amplitudes, so the stimulus has to be added explicitly
+    # or the evaluator may find nothing at the frequency the operator configured.
+    stim_freqs = _simulated_stimulus_frequencies(params)
+    if stim_freqs and data.size:
+        t = np.arange(data.shape[0], dtype=float) / fs
+        for freq in stim_freqs:
+            data += 18.0 * np.sin(2.0 * np.pi * freq * t)[:, None]
+    return data
 
 
 @st.cache_data

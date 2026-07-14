@@ -619,8 +619,16 @@ def _meta_from_result(result: BIDSLoadResult, source_rel: str) -> dict[str, Any]
         params = result.metadata["params"]
     participant = params.get("Metadata", {}).get("Participant", {}) if isinstance(params, dict) else {}
     subject = participant.get("Code") if isinstance(participant, dict) else None
-    # Force channel list to match the actual raw channels to avoid mismatches on import
-    channels = [{"Channel": name, "Position": name, "Active": True} for name in result.raw.ch_names]
+
+    # Keep the real montage when it lines up with the raw channels: it carries Position,
+    # Impedance, Rubrik and Model. Flattening it to bare names threw all of that away, so
+    # an SBIDS export lost every electrode detail the operator had entered.
+    montage = params.get("Channels") if isinstance(params, dict) else None
+    if isinstance(montage, list) and len(montage) == len(result.raw.ch_names):
+        channels = [dict(entry) for entry in montage]
+    else:
+        channels = [{"Channel": name, "Position": name, "Active": True} for name in result.raw.ch_names]
+
     # Ensure Parameters contains sampling rate for tabular exports
     parameters_block = params.get("Parameters", {}) if isinstance(params, dict) else {}
     if "fs" not in parameters_block and getattr(result, "sampling_rate", None):
@@ -628,7 +636,8 @@ def _meta_from_result(result: BIDSLoadResult, source_rel: str) -> dict[str, Any]
             parameters_block["fs"] = float(result.sampling_rate)
         except Exception:
             parameters_block.setdefault("fs", float(result.raw.info.get("sfreq", 0.0)))
-    return {
+
+    meta = {
         "Method": params.get("Method", "Import") if isinstance(params, dict) else "Import",
         "Device": params.get("Device", "Unknown") if isinstance(params, dict) else "Unknown",
         "Parameters": parameters_block,
@@ -636,6 +645,12 @@ def _meta_from_result(result: BIDSLoadResult, source_rel: str) -> dict[str, Any]
         "Metadata": {"Participant": {"Code": subject}} if subject else {},
         "DataFile": source_rel,
     }
+    # GND/Ref hold no data column, so they are not in `Channels` — but they are real
+    # electrodes with impedances and belong in the graph as AUXChannel nodes.
+    reference_electrodes = params.get("ReferenceElectrodes") if isinstance(params, dict) else None
+    if reference_electrodes:
+        meta["ReferenceElectrodes"] = [dict(entry) for entry in reference_electrodes]
+    return meta
 
 
 def _ext_for_format(fmt: str) -> str:

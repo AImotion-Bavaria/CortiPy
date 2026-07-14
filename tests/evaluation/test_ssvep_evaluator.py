@@ -81,3 +81,19 @@ def test_power_plot_reports_the_channel_it_actually_used_when_oz_is_absent():
 def test_stim_freq_is_honoured_rather_than_defaulting_to_10hz():
     params = _evaluate(_ssvep_params(["Oz"], stim_hz=12.0))
     assert params["Parameters"]["StimFreq"] == 12.0
+
+
+def test_power_plot_never_lands_on_the_reference_channel():
+    # The reference channel is identically zero after referencing. The old fallback always
+    # picked column 0 -- which IS the reference by default -- so the PSD was a flat line.
+    params = _ssvep_params(["Fp1", "Fp2", "C3"])          # no Oz -> must fall back
+    params["Parameters"]["ReferenceChannel"] = 1          # Fp1 == column 0
+    out = _evaluate(params)
+
+    assert out["Parameters"]["ChannelIpsi"] != 1, "plotted the reference channel"
+    assert out["Parameters"]["PlotChannelLabel"] != "Fp1"
+
+    # And the plotted channel actually carries signal.
+    psd = out["Evaluation"]["PSD"]["dBpsdx"]
+    plotted = psd[out["Parameters"]["ChannelIpsi"] - 1]
+    assert np.ptp(plotted) > 1.0, "plotted channel is flat -> still the reference"
