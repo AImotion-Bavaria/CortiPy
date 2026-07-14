@@ -11,7 +11,8 @@ import pandas as pd
 import numpy as np
 import importlib
 
-from .bids import BIDSLoader, BIDSLoadResult, ExperimentBinLoader
+from .bids import BIDSLoader, BIDSLoadResult, ExperimentBinLoader, raw_to_microvolts
+from .units import to_volts
 from .sbids import read_sbids
 
 
@@ -155,7 +156,7 @@ class CortiDataset:
         metadata: dict[str, Any] = {"params": params, "source": "synthetic_sine_trigger"}
         result = BIDSLoadResult(
             raw=raw,
-            data=raw.get_data().T,
+            data=raw_to_microvolts(raw),
             sampling_rate=float(sfreq),
             events=None,
             channels=channels_df,
@@ -201,7 +202,8 @@ class CortiDataset:
         )
 
         info = mne.create_info(ch_names=names, sfreq=float(sampling_rate), ch_types=types)
-        raw = mne.io.RawArray(data.T, info)
+        # `data` is microvolts; MNE needs volts. result.data below stays in uV.
+        raw = mne.io.RawArray(to_volts(data.T, types), info)
         channels_df = pd.DataFrame({"name": names, "type": [ct.upper() for ct in types]})
 
         params = {
@@ -482,7 +484,7 @@ class CortiDataset:
         raw.set_channel_types({channel_name: "stim"})
 
         # Keep result arrays in sync
-        self.result.data = raw.get_data().T
+        self.result.data = raw_to_microvolts(raw)
         ch_types = raw.get_channel_types()
         ch_names = raw.ch_names
         self.result.channels = pd.DataFrame({"name": ch_names, "type": [ct.upper() for ct in ch_types]})
@@ -713,8 +715,10 @@ def _synthetic_sine_trigger_raw(
     every = max(1, int(round(trigger_interval_s * sfreq)))
     trigger[::every] = 1.0
     data = np.vstack([sine, trigger])
-    info = mne.create_info(ch_names=[channel, stim_label], sfreq=sfreq, ch_types=["eeg", "stim"])
-    return mne.io.RawArray(data, info)
+    ch_types = ["eeg", "stim"]
+    info = mne.create_info(ch_names=[channel, stim_label], sfreq=sfreq, ch_types=ch_types)
+    # sine is in microvolts (amplitude_uV); the trigger is unitless and must not be scaled.
+    return mne.io.RawArray(to_volts(data, ch_types), info)
 
 
 def _synthesize_eeg_data(

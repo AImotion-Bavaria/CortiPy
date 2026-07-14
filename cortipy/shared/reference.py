@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Mapping
 
 import numpy as np
+
+LOGGER = logging.getLogger("cortipy.shared.reference")
 
 
 def _safe_int(value: Any, default: int) -> int:
@@ -39,7 +42,16 @@ def reference_channel_index(params_block: Mapping[str, Any], eeg_count: int) -> 
     if eeg_count <= 0:
         return 0
     index = _safe_int(params_block.get("ReferenceChannel"), 1) - 1
-    return index if 0 <= index < eeg_count else 0
+    if 0 <= index < eeg_count:
+        return index
+    # Referencing against a channel that was never acquired would silently subtract
+    # channel 1 instead — say so, because the resulting signal is not what was asked for.
+    LOGGER.warning(
+        "ReferenceChannel %r is outside the %d acquired EEG channels; using channel 1",
+        params_block.get("ReferenceChannel"),
+        eeg_count,
+    )
+    return 0
 
 
 def apply_eeg_reference(

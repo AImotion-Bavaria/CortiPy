@@ -161,13 +161,11 @@ class P300Evaluator(EvaluatorBase):
 
     # ------------------------------------------------------------------
     def _apply_reference(self, device: str, param_block: dict, data: np.ndarray) -> np.ndarray:
-        device = (device or "").lower()
-        if device == "actichamp":
-            return apply_eeg_reference(data, param_block)
-        if device == "unicorn":
-            referenced = apply_eeg_reference(data, param_block)
+        # Reference every device; simulated/replayed runs used to skip this entirely.
+        referenced = apply_eeg_reference(data, param_block)
+        if (device or "").lower() == "unicorn":
             return referenced[:, : min(8, eeg_channel_count(param_block, referenced.shape[1]))]
-        return data
+        return referenced
 
     def _channels_to_plot(self, device: str, param_block: dict, total_channels: int, trig_idx: int) -> np.ndarray:
         """Return channel indices excluding the trigger channel."""

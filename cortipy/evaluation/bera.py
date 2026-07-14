@@ -290,27 +290,6 @@ def _plot_abr_trace(
         return
 
 
-def _channel_idx_from_label(channels, label) -> Optional[int]:
-    if label is None:
-        return None
-    try:
-        idx = int(label) - 1
-        if idx >= 0:
-            return idx
-    except Exception:
-        pass
-    labels = []
-    for entry in channels or []:
-        if isinstance(entry, dict):
-            lbl = entry.get("Channel") or entry.get("label") or entry.get("name") or entry.get("Position")
-        else:
-            lbl = entry
-        labels.append(str(lbl).lower())
-    try:
-        return labels.index(str(label).lower())
-    except ValueError:
-        return None
-
 
 def _plot_abr_topomap(context, params: dict, t_ms: float = 7.0) -> None:
     """ABR topography at a given latency; uses evaluation average when available."""

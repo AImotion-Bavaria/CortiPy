@@ -30,6 +30,7 @@ from cortipy.shared import (
     ssvep_f_test,
     ssvep_snr,
 )
+from cortipy.shared.channels import resolve_plot_channel
 from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
 
 LOGGER = logging.getLogger("cortipy.evaluation.ssvep")
@@ -121,13 +122,22 @@ class SsvepEvaluator(EvaluatorBase):
         if f_test:
             evaluation["F_Test"] = f_test
 
-        plot_channel_label = param_block.get("PlotChannelLabel", "Oz")
-        # Resolve channel index from label; default to Oz when available.
-        plot_idx = _channel_idx_from_label(params, plot_channel_label)
-        if plot_idx is None:
-            plot_idx = _channel_idx_from_label(params, "Oz")
-        if plot_idx is None or plot_idx < 0 or plot_idx >= psd_result.dBpsd.shape[0]:
-            plot_idx = 0
+        requested_label = param_block.get("PlotChannelLabel", "Oz")
+        plot_idx, plot_channel_label, exact = resolve_plot_channel(
+            params, requested_label, psd_result.dBpsd.shape[0]
+        )
+        if not exact:
+            # Oz is absent from e.g. the UNICORN montage. Substituting silently and still
+            # titling the plot "Oz" is what made this chart unreadable.
+            LOGGER.warning(
+                "SSVEP plot channel %r not in montage; using %r instead",
+                requested_label,
+                plot_channel_label,
+            )
+            evaluation["PlotChannelFallback"] = {
+                "requested": str(requested_label),
+                "used": plot_channel_label,
+            }
         param_block["PlotChannelLabel"] = plot_channel_label
         param_block["ChannelIpsi"] = plot_idx + 1
         param_block["ChannelContra"] = plot_idx + 1
@@ -168,28 +178,21 @@ class SsvepEvaluator(EvaluatorBase):
 
     # ------------------------------------------------------------------
     def _apply_reference(self, params: dict, data: np.ndarray) -> np.ndarray:
-        device = str(params.get("Device", "")).lower()
+        """Reference and trim to the EEG block.
+
+        Applies to every device, not just the two hardware ones: simulated and replayed
+        runs went unreferenced before, so their results did not match a live recording of
+        the same signal. ``apply_eeg_reference`` is a no-op when no ReferenceChannel is set,
+        so devices that stream pre-referenced data are unaffected.
+        """
         param_block = params.get("Parameters", {})
-        try:
-            num_channels = int(param_block.get("NumberEEGChannels", data.shape[1]))
-        except (TypeError, ValueError):
-            num_channels = data.shape[1]
-        if num_channels <= 0:
-            num_channels = data.shape[1]
-        if device == "actichamp":
-            referenced = apply_eeg_reference(data, param_block)
-            num_channels = eeg_channel_count(param_block, referenced.shape[1])
-            if referenced.shape[1] > num_channels:
-                referenced = referenced[:, :num_channels]
-            return referenced
-        if device == "unicorn":
-            referenced = apply_eeg_reference(data, param_block)
-            num_channels = min(8, eeg_channel_count(param_block, referenced.shape[1]))
-            return referenced[:, :num_channels]
-        # Generic fallback: keep the first `num_channels` channels without re-referencing.
-        if data.shape[1] > num_channels:
-            return data[:, :num_channels]
-        return data
+        referenced = apply_eeg_reference(data, param_block)
+        num_channels = eeg_channel_count(param_block, referenced.shape[1])
+        if str(params.get("Device", "")).lower() == "unicorn":
+            num_channels = min(8, num_channels)  # EEG occupies the first 8 of 16 columns
+        if 0 < num_channels < referenced.shape[1]:
+            referenced = referenced[:, :num_channels]
+        return referenced
 
 
 def _get_axes(key: str):
@@ -342,26 +345,6 @@ def plot_ssvep_power_db(
     ax.set_ylim(*ylim)
     ax.grid(True, alpha=0.3)
     return ax
-
-
-def _channel_idx_from_label(params: dict, label) -> int | None:
-    """Resolve a 0-based channel index from a label or numeric value."""
-    if label is None:
-        return None
-    # numeric labels can be passed directly
-    try:
-        lbl_int = int(label)
-    except (TypeError, ValueError):
-        lbl_int = None
-    else:
-        if lbl_int > 0:
-            return lbl_int - 1
-    labels = params.get("Channels") or params.get("ChannelLabels") or params.get("ChannelLabelsEEG") or []
-    labels = [str(lab).lower() for lab in labels]
-    try:
-        return labels.index(str(label).lower())
-    except ValueError:
-        return None
 
 
 def _pick_psd_channel(psd_db: np.ndarray, idx: int) -> np.ndarray:

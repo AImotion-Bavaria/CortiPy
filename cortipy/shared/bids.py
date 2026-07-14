@@ -14,6 +14,23 @@ import numpy as np
 import pandas as pd
 from mne.io import BaseRaw
 
+from .units import DEFAULT_SIGNAL_UNIT, looks_like_microvolts, to_microvolts, to_volts
+
+
+def raw_to_microvolts(raw: BaseRaw) -> np.ndarray:
+    """Pull a Raw back out as microvolts, shaped (samples, channels).
+
+    MNE stores volts, and CortiPy works in µV, so the data is scaled back on the way out.
+    Files CortiPy exported *before* the unit fix hold µV magnitudes in a volt-typed
+    container; scaling those again would be wrong by 1e6 in the other direction, so
+    implausible magnitudes are passed through untouched.
+    """
+    data = raw.get_data()  # (channels, samples), volts by MNE's contract
+    ch_types = raw.get_channel_types()
+    if looks_like_microvolts(data, ch_types):
+        return data.T
+    return to_microvolts(data, ch_types).T
+
 
 @dataclass
 class BIDSLoadResult:
@@ -34,8 +51,15 @@ def _coerce_to_raw_array(
     sampling_rate: Optional[float],
     ch_names: Optional[Sequence[str]],
     channel_types: str | Sequence[str] | None,
+    *,
+    input_unit: str = DEFAULT_SIGNAL_UNIT,
 ) -> BaseRaw:
-    """Convert numpy data (samples x channels) into an MNE RawArray."""
+    """Convert numpy data (samples x channels) into an MNE RawArray.
+
+    ``data`` is microvolts by default (CortiPy's internal convention); MNE requires volts,
+    so voltage channels are scaled on the way in. Pass ``input_unit="V"`` for data that is
+    already SI.
+    """
     if isinstance(data, BaseRaw):
         return data
 
@@ -63,7 +87,10 @@ def _coerce_to_raw_array(
         raise ValueError("`channel_types` length must match the number of channels.")
 
     info = mne.create_info(ch_names=names, sfreq=float(sampling_rate), ch_types=ch_types)
-    return mne.io.RawArray(array.T, info)
+    signal = array.T.astype(float, copy=False)  # (channels, samples), as MNE wants
+    if str(input_unit).strip().lower() != "v":
+        signal = to_volts(signal, ch_types)
+    return mne.io.RawArray(signal, info)
 
 
 class BIDSLoader:
@@ -306,7 +333,7 @@ class BIDSLoader:
         events = self._load_table(recording, "_events.tsv")
         channels = self._load_table(recording, "_channels.tsv")
         raw = self._load_raw(recording, preload=preload, metadata=metadata, channels=channels)
-        data = raw.get_data().T
+        data = raw_to_microvolts(raw)
         ancillary_files = self._collect_ancillary(recording)
 
         return BIDSLoadResult(
@@ -446,8 +473,10 @@ class BIDSLoader:
         else:
             ch_types = ["eeg"] * len(ch_names)
 
+        # Parquet/HDF5/Zarr payloads are written in microvolts (see _write_tabular); MNE
+        # needs volts.
         info = mne.create_info(ch_names=ch_names, sfreq=sampling_rate, ch_types=ch_types)
-        return mne.io.RawArray(array.T, info)
+        return mne.io.RawArray(to_volts(array.T, ch_types), info)
 
     def _load_tabular_array(self, path: Path, metadata: Dict[str, Any]) -> tuple[np.ndarray, list[str], float]:
         suffix = path.suffix.lower()
@@ -582,7 +611,9 @@ class BIDSLoader:
         if path.exists() and not overwrite:
             raise FileExistsError(f"Destination already exists: {path}. Pass overwrite=True to replace it.")
 
-        data = raw.get_data()  # shape (channels, samples)
+        # EDF stores physical values with an explicit dimension. Write microvolts and say so,
+        # rather than dumping MNE's volts under pyedflib's default dimension.
+        data = to_microvolts(raw.get_data(), raw.get_channel_types())  # (channels, samples)
         signal_headers = []
 
         def _edf_friendly_bound(value: float, *, is_min: bool) -> float:
@@ -616,6 +647,7 @@ class BIDSLoader:
                     sample_frequency=float(raw.info["sfreq"]),
                     physical_min=vmin,
                     physical_max=vmax,
+                    dimension="uV",
                 )
             )
 
@@ -643,7 +675,10 @@ class BIDSLoader:
         if path.exists() and not overwrite:
             raise FileExistsError(f"Destination already exists: {path}. Pass overwrite=True to replace it.")
 
-        data = raw.get_data().T  # samples x channels
+        # Payload stays in microvolts, matching the .bin format and the "microvolt"
+        # signalUnit the SBIDS graph declares. _load_tabular_raw scales it back to volts
+        # for MNE on the way in.
+        data = to_microvolts(raw.get_data(), raw.get_channel_types()).T  # samples x channels
         ch_names = raw.ch_names
         if fmt == "parquet":
             frame = pd.DataFrame(data, columns=ch_names)
@@ -869,7 +904,10 @@ class ExperimentBinLoader:
         if data_path.exists() and not overwrite:
             raise FileExistsError(f"{data_path} already exists; pass overwrite=True to replace it.")
 
-        raw.get_data().T.astype(resolved_dtype, copy=False).tofile(data_path)
+        # .bin stays microvolts: it is the native CortiPy/MATLAB payload, and the
+        # experiment round-trips hash these bytes.
+        bin_data = to_microvolts(raw.get_data(), raw.get_channel_types()).T
+        bin_data.astype(resolved_dtype, copy=False).tofile(data_path)
 
         params_payload = self._prepare_params_for_export(params, raw, data_path, samples, channels)
         params_file = target / "params.json"
@@ -1033,6 +1071,8 @@ class ExperimentBinLoader:
         parameters["NumberEEGChannels"] = channels
         parameters.setdefault("NumberAUXChannels", 0)
         parameters.setdefault("Filename", data_path.stem)
+        # State the unit of the payload rather than leaving readers to guess.
+        parameters["SignalUnit"] = DEFAULT_SIGNAL_UNIT
 
         payload["OutputFile"] = data_path.name
 

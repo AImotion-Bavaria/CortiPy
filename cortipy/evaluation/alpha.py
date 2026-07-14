@@ -24,6 +24,7 @@ else:
 import matplotlib.pyplot as plt
 
 from cortipy.evaluation.base import EvaluatorBase, save_new_figures
+from cortipy.shared.channels import channel_labels
 from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
 from cortipy.shared.signal import hann_window, time_vector
 
@@ -246,17 +247,13 @@ def _apply_reference(data: np.ndarray, params: MutableMapping[str, Any]) -> Tupl
     device = str(params.get("Device", "")).lower()
     trig_idx = int(param_block.get("TriggerChannel", data.shape[1])) - 1
 
-    data_ref = np.array(data, dtype=float, copy=True)
-    n_channels = data_ref.shape[1]
-
-    if device == "actichamp":
-        data_ref = apply_eeg_reference(data_ref, param_block)
-        n_channels = eeg_channel_count(param_block, n_channels)
-    elif device == "unicorn":
-        data_ref = apply_eeg_reference(data_ref, param_block)
-        n_channels = min(8, eeg_channel_count(param_block, n_channels))
-    else:
-        n_channels = data_ref.shape[1]
+    # Reference every device, not just the hardware two: simulated and replayed runs used
+    # to skip this, so they disagreed with a live recording of the same signal.
+    # apply_eeg_reference is a no-op when no ReferenceChannel is set.
+    data_ref = apply_eeg_reference(np.array(data, dtype=float, copy=True), param_block)
+    n_channels = eeg_channel_count(param_block, data_ref.shape[1])
+    if device == "unicorn":
+        n_channels = min(8, n_channels)  # EEG occupies the first 8 of 16 columns
 
     return data_ref, n_channels, trig_idx if trig_idx < data_ref.shape[1] else None
 
@@ -434,17 +431,8 @@ def split_alpha_segments(
 
 
 def resolve_channel_label(channels: Optional[Sequence[Any]], idx: int) -> str:
-    if channels and idx < len(channels):
-        entry = channels[idx]
-        if isinstance(entry, dict):
-            for key in ("Position", "label", "name"):
-                if key in entry:
-                    return str(entry[key])
-        elif isinstance(entry, (list, tuple)) and entry:
-            return str(entry[0])
-        elif isinstance(entry, str):
-            return entry
-    return f"Ch{idx + 1}"
+    labels = channel_labels(channels, idx + 1)
+    return labels[idx] if 0 <= idx < len(labels) else f"Ch {idx + 1}"
 
 
 def alpha_snr_ram(

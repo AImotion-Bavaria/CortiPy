@@ -13,7 +13,7 @@ import html
 import math
 import textwrap
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -607,7 +607,18 @@ def _plotly_topography(rows: List[Dict[str, Any]]) -> Optional["go.Figure"]:
     return fig
 
 
-def load_params_into_state(params: Dict[str, Any], data_override: Optional[np.ndarray] = None) -> None:
+def load_params_into_state(
+    params: Dict[str, Any],
+    data_override: Optional[np.ndarray] = None,
+    *,
+    enable_replay: bool = False,
+) -> None:
+    """Load params into the editor.
+
+    ``enable_replay`` switches the session into offline replay. It defaults to False:
+    loading a recording should let you reuse its settings and record again, which is not
+    possible while replay is on because replay disables the device connection.
+    """
     general = st.session_state["general_form"]
     method = params.get("Method") or general.get("Method") or "Alpha"
     device = params.get("Device") or general.get("Device") or "LSL"
@@ -696,13 +707,10 @@ def load_params_into_state(params: Dict[str, Any], data_override: Optional[np.nd
     if data_array is None and params.get("data") is not None:
         data_array = np.asarray(params["data"])
     st.session_state["imported_data"] = data_array
-    has_data = False
-    if data_array is not None:
-        try:
-            has_data = np.asarray(data_array).size > 0
-        except Exception:
-            has_data = True
-    st.session_state["use_imported_data"] = has_data
+    # Keep the samples around for the charts, but only switch into offline replay when the
+    # caller asked for it. Auto-enabling it disabled "Connect device", so loading a
+    # recording to reuse its settings made it impossible to record again.
+    st.session_state["use_imported_data"] = bool(enable_replay) and data_array is not None
     st.session_state["imported_params_raw"] = params
 
 
@@ -1632,52 +1640,84 @@ def render_participant_form() -> Dict[str, Any]:
     return dict(participant)
 
 
-def build_channels(device: str, requested_eeg_channels: Optional[int] = None) -> List[Dict[str, Any]]:
+def _device_emits_trigger(device: str, params_block: Dict[str, Any]) -> bool:
+    """Whether the adapter appends a trigger column after the EEG/AUX block.
+
+    Only ActiCHamp does. UNICORN's extra columns are accelerometer/gyro/battery/counter,
+    not a trigger, and the simulated/stream devices emit EEG only.
+    """
+    if str(device).lower() != "actichamp":
+        return False
+    return bool(params_block.get("IncludeTriggers", True))
+
+
+def _channel_entry(row: Dict[str, Any], *, active: bool) -> Dict[str, Any]:
+    channel_name = row.get("Channel") or row.get("Label")
+    rubric = _valid_electrode_rubrik(row.get("Rubrik") or row.get("Rubric"))
+    entry = {
+        "Channel": channel_name,
+        "Position": row.get("Position") or str(channel_name).replace(" ", ""),
+        "Rubrik": rubric,
+        "Model": _model_for_rubrik(rubric, row.get("Model")),
+        "Impedance": coerce_number(row.get("Impedance")),
+        "Active": bool(active),
+    }
+    pos_x = coerce_number(row.get("PosX"))
+    pos_y = coerce_number(row.get("PosY"))
+    if pos_x is not None and pos_y is not None:
+        entry["PosX"] = float(pos_x)
+        entry["PosY"] = float(pos_y)
+    return entry
+
+
+def build_channels(
+    device: str,
+    requested_eeg_channels: Optional[int] = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Split the electrode table into (EEG channels, reference/ground electrodes).
+
+    The returned EEG list is positional: entry ``i`` describes data column ``i``.  GND/Ref
+    are physical electrodes but carry no data column, so they are returned separately
+    instead of being prepended to the montage — prepending them is what made every
+    consumer label column 0 "GND" and report one channel more than was selected.
+
+    The amplifier always hands back its first N channels, so the active set is the first N
+    rows.  You choose which electrode sits on each amplifier channel via ``Position``, not
+    by activating an arbitrary subset.
+    """
     rows = st.session_state["channel_tables"].get(device) or ensure_channel_rows(device)
-    extras = set(DEVICE_EXTRA_LABELS.get(device, []))
+    extra_labels = set(DEVICE_EXTRA_LABELS.get(device, []))
+
+    eeg_rows = [r for r in rows if (r.get("Channel") or r.get("Label")) not in extra_labels]
+    extra_rows = [r for r in rows if (r.get("Channel") or r.get("Label")) in extra_labels]
+
     if requested_eeg_channels and requested_eeg_channels > 0:
-        active_eeg_rows = [
-            row for row in rows
-            if (row.get("Channel") or row.get("Label")) not in extras and bool(row.get("Active"))
-        ]
-        if not active_eeg_rows:
-            remaining = int(requested_eeg_channels)
-            synced_rows: List[Dict[str, Any]] = []
-            for row in rows:
-                updated = dict(row)
-                channel_name = updated.get("Channel") or updated.get("Label")
-                if channel_name in extras:
-                    updated["Active"] = True
-                elif remaining > 0:
-                    updated["Active"] = True
-                    remaining -= 1
-                else:
-                    updated["Active"] = False
-                synced_rows.append(updated)
-            rows = synced_rows
-            st.session_state["channel_tables"][device] = rows
-    active_rows: List[Dict[str, Any]] = []
+        count = min(int(requested_eeg_channels), len(eeg_rows))
+    else:
+        active = [r for r in eeg_rows if bool(r.get("Active"))]
+        count = len(active) if active else len(eeg_rows)
+
+    # Reconcile the table so the Active flags cannot drift from the acquired width.
+    active_eeg_ids = {id(row) for row in eeg_rows[:count]}
+    synced: List[Dict[str, Any]] = []
     for row in rows:
-        channel_name = row.get("Channel") or row.get("Label")
-        if not channel_name:
-            continue
-        is_active = bool(row.get("Active")) or channel_name in extras
-        rubric = _valid_electrode_rubrik(row.get("Rubrik") or row.get("Rubric"))
-        entry = {
-            "Channel": channel_name,
-            "Position": row.get("Position") or channel_name.replace(" ", ""),
-            "Rubrik": rubric,
-            "Model": _model_for_rubrik(rubric, row.get("Model")),
-            "Impedance": coerce_number(row.get("Impedance")),
-            "Active": bool(is_active),
-        }
-        pos_x = coerce_number(row.get("PosX"))
-        pos_y = coerce_number(row.get("PosY"))
-        if pos_x is not None and pos_y is not None:
-            entry["PosX"] = float(pos_x)
-            entry["PosY"] = float(pos_y)
-        active_rows.append(entry)
-    return active_rows
+        updated = dict(row)
+        name = updated.get("Channel") or updated.get("Label")
+        updated["Active"] = True if name in extra_labels else id(row) in active_eeg_ids
+        synced.append(updated)
+    st.session_state["channel_tables"][device] = synced
+
+    channels = [
+        _channel_entry(row, active=True)
+        for row in eeg_rows[:count]
+        if (row.get("Channel") or row.get("Label"))
+    ]
+    extras = [
+        _channel_entry(row, active=True)
+        for row in extra_rows
+        if (row.get("Channel") or row.get("Label"))
+    ]
+    return channels, extras
 
 
 def build_metadata(participant: Dict[str, Any]) -> Dict[str, Any]:
@@ -1723,9 +1763,21 @@ def assemble_params(
 
     requested_channels_value = coerce_number(params["Parameters"].get("NumberEEGChannels"))
     requested_channels = int(requested_channels_value) if requested_channels_value and requested_channels_value > 0 else None
-    channels = build_channels(params["Device"], requested_channels)
+    channels, reference_electrodes = build_channels(params["Device"], requested_channels)
     if channels:
         params["Channels"] = channels
+        # Channels is now exactly the EEG block, so it *is* the channel count. Keeping the
+        # two in sync is what stops "3 selected" from recording 4.
+        params["Parameters"]["NumberEEGChannels"] = len(channels)
+    if reference_electrodes:
+        # GND/Ref have impedances worth keeping but occupy no data column.
+        params["ReferenceElectrodes"] = reference_electrodes
+
+    aux_value = coerce_number(params["Parameters"].get("NumberAUXChannels"))
+    aux_count = int(aux_value) if aux_value and aux_value > 0 else 0
+    if channels and _device_emits_trigger(params["Device"], params["Parameters"]):
+        # The trigger rides in the final column, after EEG and AUX.
+        params["Parameters"]["TriggerChannel"] = len(channels) + aux_count + 1
 
     metadata = build_metadata(participant)
     if metadata:
@@ -1951,9 +2003,12 @@ def export_recording(data: Any, params: Dict[str, Any], out_dir: Path, container
     raw = _coerce_to_raw_array(arr, fs, ch_names, None)
     result = BIDSLoadResult(
         raw=raw, data=arr, sampling_rate=fs, events=None, channels=None,
-        metadata={"params": params}, source_path=Path(f"sub-{subject}_{task}_scalpdata"), ancillary_files=[],
+        metadata={"params": params}, source_path=Path(f"{subject}_{task}_scalpdata"), ancillary_files=[],
     )
-    out = out_dir / "jsonld_export" / f"sbids_meta_sub-{subject}.jsonld"
+    # No BIDS "sub-" entity prefix in the stem: to_sbids derives the dataset @id and name
+    # from it, so the prefix leaked into urn:dataset:... and, once re-imported as Filename,
+    # came back doubled as urn:recording:01_sbids_meta_sub-01.
+    out = out_dir / "jsonld_export" / f"sbids_meta_{subject}.jsonld"
     out.parent.mkdir(parents=True, exist_ok=True)
     CortiDataset(result).to_sbids(out, export_format=fmt)
     return out.parent
@@ -2315,7 +2370,10 @@ def handle_upload(target) -> None:
                 st.success(f"Attached data from '{data_file.name}'.")
                 st.session_state["_last_data_upload_digest"] = upload_digest
             if params_from_jsonld is not None:
-                load_params_into_state(params_from_jsonld, data_array)
+                # An explicitly uploaded data file means replay was the intent.
+                load_params_into_state(
+                    params_from_jsonld, data_array, enable_replay=data_array is not None
+                )
                 st.session_state["_last_data_upload_digest"] = upload_digest
                 st.session_state["_flash"] = f"Imported JSON-LD metadata from '{jsonld_upload.name}'."
                 st.rerun()
@@ -2539,7 +2597,9 @@ def render_sidebar_controls() -> SidebarControls:
         handle_upload(st)
 
         imported_data = st.session_state.get("imported_data")
-        default_use_imported = st.session_state.get("use_imported_data", False) or bool(imported_data)
+        # `bool(ndarray)` raises for anything with >1 element, which crashed the whole page
+        # on the rerun after the box was unchecked.
+        default_use_imported = st.session_state.get("use_imported_data", False)
 
         use_imported_data = st.checkbox(
             "Use imported data for offline replay",

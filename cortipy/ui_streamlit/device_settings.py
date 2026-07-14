@@ -2,26 +2,47 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+import logging
+from typing import Any, Dict, List, Optional, Tuple
 
 import streamlit as st
 
 try:
     from serial.tools import list_ports
-except Exception:  # pragma: no cover
+
+    _SERIAL_IMPORT_ERROR: Optional[str] = None
+except Exception as exc:  # pragma: no cover - depends on the environment
     list_ports = None
+    # Swallowing this silently left the dropdown with nothing but "Manual entry" and no
+    # explanation, which reads exactly like "the UI only offers one device".
+    _SERIAL_IMPORT_ERROR = str(exc)
 
 from cortipy.ui_streamlit.constants import DEVICE_CONFIG_SCHEMA, device_default_values
 from cortipy.ui_streamlit.fields import coerce_number
 
+LOGGER = logging.getLogger(__name__)
+
 MANUAL_UNICORN_PORT_OPTION = "__manual_unicorn_port__"
 
+# A paired UNICORN shows up as a virtual serial port whose name carries one of these.
+UNICORN_PORT_HINTS = ("unicorn", "un-", "g.tec", "gtec")
 
-def serial_port_options() -> List[tuple[str, str]]:
+
+def _looks_like_unicorn(*fields: str) -> bool:
+    haystack = " ".join(f for f in fields if f).lower()
+    return any(hint in haystack for hint in UNICORN_PORT_HINTS)
+
+
+def serial_port_options() -> List[Tuple[str, str]]:
+    """Every serial port the OS reports, likely UNICORNs first.
+
+    Each paired headset is its own virtual COM/cu port, so listing all of them is what
+    surfaces multiple simultaneous connections.
+    """
     if list_ports is None:
         return []
     seen = set()
-    options: List[tuple[str, str]] = []
+    options: List[Tuple[str, str, bool]] = []
     for info in list_ports.comports():
         device = getattr(info, "device", None) or getattr(info, "name", None)
         if not device or device in seen:
@@ -42,21 +63,50 @@ def serial_port_options() -> List[tuple[str, str]]:
         if serial_no:
             details_parts.append(f"SN {serial_no}")
         details = ", ".join(details_parts)
+        is_unicorn = _looks_like_unicorn(device, description, manufacturer, serial_no)
         label = f"{device} - {details}" if details else device
-        options.append((device, label))
+        if is_unicorn:
+            label = f"UNICORN · {label}"
+        options.append((device, label, is_unicorn))
         seen.add(device)
-    return sorted(options, key=lambda item: item[0])
+
+    # Likely UNICORNs first, then everything else, each group alphabetical.
+    options.sort(key=lambda item: (not item[2], item[0]))
+    return [(device, label) for device, label, _ in options]
 
 
 def render_unicorn_port_input(target, field: Dict[str, Any], current: Any, key: str) -> str:
+    # Streamlit reruns keep the old option list; rescanning has to be explicit or a headset
+    # paired after the app started never appears.
+    if target.button("Rescan ports", key=f"{key}_rescan", help="Re-enumerate connected serial/Bluetooth devices."):
+        st.session_state.pop(f"{key}_ports", None)
+
     port_entries = serial_port_options()
     labels = {port: label for port, label in port_entries}
     options: List[str] = [port for port, _ in port_entries]
 
+    if list_ports is None:
+        target.error(
+            "pyserial is not importable, so no ports can be listed "
+            f"({_SERIAL_IMPORT_ERROR}). Install it with `pip install pyserial`, "
+            "or enter the port manually below."
+        )
+    elif not port_entries:
+        target.warning(
+            "No serial ports found. Pair the UNICORN first — each headset appears as its "
+            "own port, and all of them are listed here."
+        )
+    else:
+        unicorn_like = [p for p, lab in port_entries if lab.startswith("UNICORN")]
+        target.caption(
+            f"{len(port_entries)} port(s) found"
+            + (f", {len(unicorn_like)} look like UNICORN devices." if unicorn_like else ".")
+        )
+
     current_str = str(current) if current not in (None, "") else ""
     if current_str and current_str not in options:
         options.append(current_str)
-        labels[current_str] = f"{current_str} (saved)"
+        labels[current_str] = f"{current_str} (saved, not currently present)"
 
     options.append(MANUAL_UNICORN_PORT_OPTION)
     default_choice = current_str if current_str in options else options[0]

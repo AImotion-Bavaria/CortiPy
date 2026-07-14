@@ -26,6 +26,7 @@ import matplotlib.pyplot as plt
 
 from cortipy.evaluation.base import EvaluatorBase, save_new_figures
 from cortipy.shared import plot_cortipy_topomap
+from cortipy.shared.channels import channel_labels, resolve_plot_channel
 from cortipy.shared.filtering import filter_vep
 from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
 from cortipy.shared.segmentation import seg_sig_fast
@@ -33,6 +34,9 @@ from cortipy.shared.signal import time_vector
 from cortipy.shared.triggers import trigger_adc
 
 LOGGER = logging.getLogger("cortipy.evaluation.vep")
+
+# VEP is an occipital response; Oz is the conventional site, the rest stand in for it.
+VEP_CHANNEL_PREFERENCE = ("Oz", "POz", "O1", "O2", "Pz")
 
 
 def _show_mpl(fig: plt.Figure, key: str) -> None:
@@ -199,14 +203,12 @@ class VepEvaluator(EvaluatorBase):
 
 
 def _apply_reference(data: np.ndarray, device: Optional[str], params: MutableMapping[str, Any]) -> Tuple[np.ndarray, int]:
-    array = np.array(data, dtype=float, copy=True)
-    trigger_idx = int(params.get("TriggerChannel", array.shape[1])) - 1
+    trigger_idx = int(params.get("TriggerChannel", np.shape(data)[1])) - 1
     dev = (device or "").lower()
 
-    if dev == "actichamp":
-        array = apply_eeg_reference(array, params)
-    elif dev == "unicorn":
-        array = apply_eeg_reference(array, params)
+    # Reference every device; simulated/replayed runs used to skip this entirely.
+    array = apply_eeg_reference(np.array(data, dtype=float, copy=True), params)
+    if dev == "unicorn":
         array = array[:, : min(8, eeg_channel_count(params, array.shape[1]))]
 
     return array, trigger_idx
@@ -507,39 +509,17 @@ def _channel_title(params: dict, channel_idx: int, channels: Optional[Sequence[A
 
 
 def _channel_labels(channels: Optional[Sequence[Any]], count: int) -> list[str]:
-    result = []
-    if channels:
-        for entry in channels:
-            label = None
-            if isinstance(entry, dict):
-                label = entry.get("Position") or entry.get("label") or entry.get("name")
-            elif isinstance(entry, (list, tuple)) and entry:
-                label = entry[0]
-            elif isinstance(entry, str):
-                label = entry
-            result.append(str(label) if label is not None else f"Ch{len(result)+1}")
-            if len(result) >= count:
-                break
-    while len(result) < count:
-        result.append(f"Ch{len(result)+1}")
-    return result
+    return channel_labels(channels, count)
 
 
 def _channel_index_from_label(label: Any, channels: Optional[Sequence[Any]], count: int) -> int:
     """Resolve 0-based channel index from a label or numeric string."""
-    if label is None:
-        return 0
-    try:
-        idx = int(label) - 1
-        if 0 <= idx < count:
-            return idx
-    except Exception:
-        pass
-    labels = [str(lab).lower() for lab in _channel_labels(channels, count)]
-    try:
-        return labels.index(str(label).lower())
-    except ValueError:
-        return 0
+    idx, used, exact = resolve_plot_channel(
+        channels, label, count, preference=VEP_CHANNEL_PREFERENCE
+    )
+    if not exact and label is not None:
+        LOGGER.warning("VEP plot channel %r not in montage; using %r instead", label, used)
+    return idx
 
 
 def _ensure_interactive_backend() -> None:

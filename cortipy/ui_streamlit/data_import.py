@@ -11,6 +11,8 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
+from cortipy.shared.bids import raw_to_microvolts
+from cortipy.shared.sbids import RECORDING_PROPERTIES
 from cortipy.ui_streamlit.fields import coerce_number, resolve_choice
 
 
@@ -67,7 +69,7 @@ def load_edf_array(source: Union[Path, Any]) -> Optional[np.ndarray]:
                 temp_path = Path(tmp.name)
             path = temp_path
         raw = mne.io.read_raw_edf(str(path), preload=True, verbose="ERROR")
-        return raw.get_data().T
+        return raw_to_microvolts(raw)
     except Exception as exc:
         st.error(f"Failed to load EDF data: {exc}")
         return None
@@ -174,6 +176,43 @@ def _model_for_rubrik(electrode_library: Mapping[str, List[str]], rubrik: Any, c
     return current_text
 
 
+def _strip_bids_prefixes(stem: str) -> str:
+    """Drop BIDS entity prefixes (``sub-``, ``ses-``…) and the sbids_meta_ stem.
+
+    The exporter names its file ``sbids_meta_sub-01.jsonld``; feeding that stem straight
+    back into ``Filename`` made the next export emit ``urn:recording:01_sbids_meta_sub-01``
+    — the subject appearing twice, once bare and once ``sub-``-prefixed.
+    """
+    text = str(stem or "")
+    for marker in ("sbids_meta_", "sbids_"):
+        if text.startswith(marker):
+            text = text[len(marker) :]
+    parts = [p for p in text.split("_") if p]
+    cleaned = [p for p in parts if not re.match(r"^(sub|ses|task|run|acq)-", p, flags=re.IGNORECASE)]
+    return "_".join(cleaned) if cleaned else text
+
+
+def _is_aux_channel_node(node: Mapping[str, Any], position: str) -> bool:
+    """AUXChannel-typed nodes, or the GND/REF positions the exporter types that way."""
+    types = jsonld_types(node)
+    if "auxchannel" in types:
+        return True
+    return str(position or "").strip().upper() in {"GND", "REF"}
+
+
+def _device_from_graph(recording: Mapping[str, Any], id_map: Mapping[str, Any]) -> str:
+    """Resolve schema:instrument to the device name the exporter recorded."""
+    ref = jsonld_value(recording.get("schema:instrument") or recording.get("instrument"))
+    if not ref:
+        return ""
+    node = id_map.get(str(ref)) or {}
+    name = jsonld_value(node.get("schema:name") or node.get("name"))
+    if name:
+        return str(name)
+    # Fall back to the URN tail: urn:device:UNICORN -> UNICORN
+    return str(ref).rsplit(":", 1)[-1]
+
+
 def params_from_jsonld_doc(
     doc: Dict[str, Any],
     file_name: str = "import.jsonld",
@@ -229,6 +268,7 @@ def params_from_jsonld_doc(
     if isinstance(variables, dict):
         variables = [variables]
     channels: List[Dict[str, Any]] = []
+    aux_electrodes: List[Dict[str, Any]] = []
     for idx, item in enumerate(variables):
         if isinstance(item, dict):
             position = jsonld_value(item.get("schema:name") or item.get("name")) or f"Ch {idx + 1}"
@@ -248,7 +288,12 @@ def params_from_jsonld_doc(
             impedance = coerce_number(item.get("impedance"))
             if impedance is not None:
                 entry["Impedance"] = impedance
-            channels.append(entry)
+            # GND/Ref are AUXChannel nodes: physical electrodes with no data column. Counting
+            # them as EEG is what inflated NumberEEGChannels on import.
+            if _is_aux_channel_node(item, position):
+                aux_electrodes.append(entry)
+            else:
+                channels.append(entry)
             continue
         name = jsonld_value(item) or f"Ch {idx + 1}"
         channels.append({"Channel": str(name), "Position": str(name), "Active": True})
@@ -261,8 +306,11 @@ def params_from_jsonld_doc(
         subject_node = id_map.get(str(subject_ref), {})
         subject_code = str(
             jsonld_value(subject_node.get("schema:identifier") or subject_node.get("identifier"))
-            or str(subject_ref).split("/")[-1]
+            # A URN has no "/" to split on, so the old fallback yielded the literal
+            # "urn:subject:01" and a later BIDS export wrote sub-urn:subject:01.
+            or str(subject_ref).rsplit(":", 1)[-1]
         )
+        subject_code = _strip_bids_prefixes(subject_code)
 
     raw_file = jsonld_value(file_node.get("schema:contentUrl") or file_node.get("contentUrl") or file_node.get("schema:name") or file_node.get("name"))
     method_options = list(method_names)
@@ -272,26 +320,29 @@ def params_from_jsonld_doc(
     parameters = {
         "fs": fs or 250,
         "RecordingTime": duration or 0,
+        # len(channels) now excludes the AUX/GND/Ref nodes.
         "NumberEEGChannels": int(n_eeg or len(channels) or 0),
+        # AUX *data columns* — not the GND/Ref electrodes, which occupy no column.
         "NumberAUXChannels": int(n_aux or 0),
-        "Filename": Path(str(raw_file or file_name)).stem,
+        "Filename": _strip_bids_prefixes(Path(str(raw_file or file_name)).stem),
     }
-    for key in (
-        "ReferenceChannel",
-        "TriggerChannel",
-        "LowestFrequency",
-        "HighestFrequency",
-        "Stimulus",
-        "Environment",
-    ):
-        value = prop(key)
+    # Carry back every parameter the exporter wrote, StimFreq included. Reading only a
+    # hand-picked subset is what let the stimulation frequency vanish on round-trip.
+    for _param_key, prop_name, _unit in RECORDING_PROPERTIES:
+        if prop_name in {"SamplingRate", "NumberEEGChannels", "NumberAUXChannels"}:
+            continue  # handled above
+        value = prop(prop_name)
         if value not in (None, "", []):
-            parameters[key] = value
+            parameters[_param_key] = value
+
     return {
         "Method": method,
-        "Device": "Offline",
+        # Report the device that actually made the recording. Hardcoding "Offline" here also
+        # disabled the Connect button, so an imported session could never be re-recorded.
+        "Device": _device_from_graph(recording, id_map) or "Offline",
         "Parameters": parameters,
         "Channels": channels,
+        "ReferenceElectrodes": aux_electrodes,
         "Metadata": {"Participant": {"Code": subject_code}} if subject_code else {},
         "DataFile": raw_file,
     }

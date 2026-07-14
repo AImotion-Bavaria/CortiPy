@@ -9,9 +9,17 @@ import numpy as np
 import matplotlib.pyplot as plt
 import mne
 
+import logging
+
 from cortipy.evaluation.base import EvaluatorBase, save_new_figures
 from cortipy.shared import assr_calc_snr, assr_compute_psd as _assr_compute_psd, assr_f_test, calc_fft, plot_cortipy_topomap, plot_assr_spectrum
+from cortipy.shared.channels import resolve_plot_channel
 from cortipy.shared.reference import apply_eeg_reference
+
+LOGGER = logging.getLogger("cortipy.evaluation.assr")
+
+# ASSR is a temporal-lobe response; T8 is the conventional site, the rest stand in for it.
+ASSR_CHANNEL_PREFERENCE = ("T8", "T7", "C4", "C3", "Cz")
 
 assr_compute_psd = _assr_compute_psd
 
@@ -56,38 +64,28 @@ class AssrEvaluator(EvaluatorBase):
         topomap_freq = float(param_block.get("TopomapFrequencyHz", stim_freq))
         param_block["TopomapFrequencyHz"] = topomap_freq
 
-        data_array = np.asarray(data, dtype=float)
-        device = str(params.get("Device") or "").lower()
-        if device in {"actichamp", "unicorn"}:
-            data_array = apply_eeg_reference(data_array, param_block)
+        # Reference every device; simulated/replayed runs used to skip this entirely.
+        data_array = apply_eeg_reference(np.asarray(data, dtype=float), param_block)
 
-        # Allow overriding plotting channel by label (e.g., T8) for comparison plots.
-        plot_channel_label = param_block.get("PlotChannelLabel")
-        if isinstance(plot_channel_label, str):
-            idx_from_label = _channel_idx_from_label(params.get("Channels"), plot_channel_label)
-            if idx_from_label is not None and 0 <= idx_from_label < data_array.shape[1]:
-                param_block["ChannelIpsi"] = idx_from_label + 1
-                param_block["ChannelContra"] = idx_from_label + 1  # keep ipsi/contra aligned for plotting
-        # If ChannelIpsi still unset, default to T8 when available.
-        if "ChannelIpsi" not in param_block:
-            idx_from_label = _channel_idx_from_label(params.get("Channels"), "T8")
-            if idx_from_label is not None and 0 <= idx_from_label < data_array.shape[1]:
-                param_block["ChannelIpsi"] = idx_from_label + 1
-                param_block.setdefault("PlotChannelLabel", "T8")
-            else:
-                # Fallback to first channel if T8 not found
-                param_block["ChannelIpsi"] = 1
-        # Ensure the label matches the chosen ChannelIpsi
-        if "PlotChannelLabel" not in param_block and isinstance(params.get("Channels"), (list, tuple)):
-            try:
-                label_idx = int(param_block.get("ChannelIpsi", 1)) - 1
-                ch_entry = params["Channels"][label_idx]
-                if isinstance(ch_entry, dict):
-                    param_block["PlotChannelLabel"] = ch_entry.get("Channel") or ch_entry.get("Position") or f"Ch{label_idx+1}"
-                else:
-                    param_block["PlotChannelLabel"] = str(ch_entry)
-            except Exception:
-                pass
+        # Pick the plotting channel: an explicit label wins, then an explicit ChannelIpsi,
+        # then the nearest temporal site to T8. Whichever it lands on, PlotChannelLabel is
+        # rewritten to name the channel actually plotted rather than the one requested.
+        requested_label = param_block.get("PlotChannelLabel") or param_block.get("ChannelIpsi") or "T8"
+        plot_idx, plot_label, exact = resolve_plot_channel(
+            params,
+            requested_label,
+            data_array.shape[1],
+            preference=ASSR_CHANNEL_PREFERENCE,
+        )
+        if not exact:
+            LOGGER.warning(
+                "ASSR plot channel %r not in montage; using %r instead",
+                requested_label,
+                plot_label,
+            )
+        param_block["PlotChannelLabel"] = plot_label
+        param_block["ChannelIpsi"] = plot_idx + 1
+        param_block["ChannelContra"] = plot_idx + 1  # keep ipsi/contra aligned for plotting
 
         show_plots = self.show_plots if self.show_plots is not None else not params.get("ReportAnalyzer")
         save_plots = bool(self.save_plots)
@@ -98,7 +96,6 @@ class AssrEvaluator(EvaluatorBase):
         ipsi_idx = int(param_block.get("ChannelIpsi", 1)) - 1
         if ipsi_idx < 0 or ipsi_idx >= data_array.shape[1]:
             raise IndexError("ChannelIpsi is out of bounds.")
-        plot_label = plot_channel_label or f"Ch{ipsi_idx+1}"
 
         ipsi_metrics = self._evaluate_channel(
             data_array[:, ipsi_idx],
@@ -395,24 +392,3 @@ def _plot_assr_topomap_from_data(
         return
 
 
-def _channel_idx_from_label(channels, label) -> int | None:
-    """Resolve a 0-based channel index from label or numeric string."""
-    if label is None:
-        return None
-    try:
-        idx = int(label) - 1
-        if idx >= 0:
-            return idx
-    except Exception:
-        pass
-    labels = []
-    for entry in channels or []:
-        if isinstance(entry, dict):
-            lbl = entry.get("Channel") or entry.get("label") or entry.get("name") or entry.get("Position")
-        else:
-            lbl = entry
-        labels.append(str(lbl).lower())
-    try:
-        return labels.index(str(label).lower())
-    except ValueError:
-        return None

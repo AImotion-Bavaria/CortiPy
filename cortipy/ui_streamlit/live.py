@@ -17,6 +17,8 @@ except Exception:  # pragma: no cover
     go = None
 
 from cortipy.devices import DeviceFactory, DeviceInterface
+from cortipy.shared.channels import channel_labels
+from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
 from cortipy.ui_streamlit.fields import coerce_number
 from cortipy.ui_streamlit.plot_windows import (
     open_window_once as _open_plot_window_once,
@@ -26,6 +28,39 @@ from cortipy.ui_streamlit.plot_windows import (
 )
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _eeg_view(buffer: np.ndarray, params: Optional[Dict[str, Any]]) -> tuple[np.ndarray, List[str]]:
+    """Referenced, EEG-only view of a raw device buffer, with a label per column.
+
+    The raw buffer trails non-EEG columns — UNICORN sends accelerometer, gyroscope,
+    battery and packet counter; ActiCHamp appends AUX and a trigger.  Drawing those on a
+    microvolt axis is what made the live preview unreadable, and the live view was the one
+    place that never applied the reference.
+    """
+    array = np.asarray(buffer, dtype=float)
+    if array.ndim != 2 or array.size == 0:
+        return array, []
+    if not isinstance(params, dict):
+        return array, channel_labels(None, array.shape[1])
+
+    param_block = params.get("Parameters", {}) or {}
+    referenced = apply_eeg_reference(array, param_block)
+    count = eeg_channel_count(param_block, referenced.shape[1])
+    count = max(1, min(int(count), referenced.shape[1]))
+    return referenced[:, :count], channel_labels(params, count)
+
+
+def _ch_label(labels: List[str], idx: int) -> str:
+    return labels[idx] if 0 <= idx < len(labels) else f"Ch {idx + 1}"
+
+
+def _label_part(labels: List[str], indices: List[int], total: int) -> str:
+    if len(indices) == total:
+        return "All channels"
+    return ", ".join(_ch_label(labels, idx) for idx in indices)
+
+
 def _resolve_aux_channels(params: Dict[str, Any]) -> int:
     if params.get("Device") == "ActiCHamp":
         return int(params.get("Parameters", {}).get("NumberAUXChannels", 0) or 0)
@@ -64,7 +99,11 @@ def _plot_live_buffer(
     interactive: bool = False,
     window_seconds: Optional[float] = None,
     sample_offset: int = 0,
+    params: Optional[Dict[str, Any]] = None,
 ) -> None:
+    if buffer.size == 0:
+        return
+    buffer, ch_labels = _eeg_view(buffer, params)
     if buffer.size == 0:
         return
 
@@ -95,10 +134,10 @@ def _plot_live_buffer(
                     y=buffer[:, ch],
                     mode="lines",
                     line=dict(color=f"rgb({rgb[0]},{rgb[1]},{rgb[2]})", width=1.5),
-                    name=f"Ch {ch + 1}",
+                    name=_ch_label(ch_labels, ch),
                 )
             )
-        label_part = "All channels" if len(indices) == total_channels else ", ".join(f"{ch + 1}" for ch in indices)
+        label_part = _label_part(ch_labels, indices, total_channels)
         layout = go.Layout(
             height=320,
             margin=dict(l=50, r=10, t=40, b=50),
@@ -127,11 +166,11 @@ def _plot_live_buffer(
         colors = plt.cm.tab10.colors
         for plot_idx, ch in enumerate(indices):
             color = colors[plot_idx % len(colors)]
-            ax.plot(time_axis, buffer[:, ch], label=f"Ch {ch + 1}", color=color)
+            ax.plot(time_axis, buffer[:, ch], label=_ch_label(ch_labels, ch), color=color)
         ax.set_xlim(time_axis_min, time_axis_max)
         ax.set_xlabel("Time (s) - newest on the right" if fs > 0 else "Samples")
         ax.set_ylabel("Amplitude (uV)")
-        label_part = "All channels" if len(indices) == total_channels else ", ".join(f"{ch + 1}" for ch in indices)
+        label_part = _label_part(ch_labels, indices, total_channels)
         ax.set_title(f"Live preview - {label_part}")
         ax.legend(loc="upper right", fontsize=8)
         ax.grid(True, alpha=0.3)
@@ -149,8 +188,12 @@ def _plot_fft_spectrum(
     placeholder: Optional["st.delta_generator.DeltaGenerator"],
     channel_indices: Optional[List[int]] = None,
     interactive: bool = False,
+    params: Optional[Dict[str, Any]] = None,
 ) -> None:
     if placeholder is None or buffer.size == 0 or fs <= 0:
+        return
+    buffer, ch_labels = _eeg_view(buffer, params)
+    if buffer.size == 0:
         return
     total_channels = buffer.shape[1]
     indices = _normalize_channel_indices(channel_indices, total_channels)
@@ -186,7 +229,7 @@ def _plot_fft_spectrum(
                     y=power_db[freq_mask],
                     mode="lines",
                     line=dict(color=f"rgb({rgb[0]},{rgb[1]},{rgb[2]})", width=1.4),
-                    name=f"Ch {ch + 1}",
+                    name=_ch_label(ch_labels, ch),
                 )
             )
         for name, low, high, band_color in bands:
@@ -248,7 +291,7 @@ def _plot_fft_spectrum(
                 max_freq = min(60.0, freq.max())
             freq_mask = freq <= max_freq
             color = colors[plot_idx % len(colors)]
-            ax.plot(freq[freq_mask], power_db[freq_mask], linewidth=1.0, color=color, label=f"Ch {ch + 1}")
+            ax.plot(freq[freq_mask], power_db[freq_mask], linewidth=1.0, color=color, label=_ch_label(ch_labels, ch))
 
             if not filled:
                 for name, low, high, band_color in bands:
@@ -284,7 +327,11 @@ def _plot_individual_channels(
     interactive: bool = True,
     window_seconds: Optional[float] = None,
     sample_offset: int = 0,
+    params: Optional[Dict[str, Any]] = None,
 ) -> None:
+    if buffer.size == 0:
+        return
+    buffer, ch_labels = _eeg_view(buffer, params)
     if buffer.size == 0:
         return
     placeholders = placeholders or []
@@ -311,10 +358,10 @@ def _plot_individual_channels(
             ax.set_xlim(time_axis_min, time_axis_max)
             ax.set_xlabel("Time (s) - newest on the right" if fs > 0 else "Samples")
             ax.set_ylabel("Amplitude (uV)")
-            ax.set_title(f"Channel {ch + 1}")
+            ax.set_title(_ch_label(ch_labels, ch))
             ax.grid(True, alpha=0.25)
             fig.tight_layout()
-            title = f"Channel {ch + 1}"
+            title = _ch_label(ch_labels, ch)
             key = f"live_channel_{ch + 1}"
             path = _write_matplotlib_window(fig, title, key)
             _open_plot_window_once(path, key)
@@ -326,7 +373,7 @@ def _plot_individual_channels(
                 y=buffer[:, ch],
                 mode="lines",
                 line=dict(width=1.2, color=f"rgb({rgb[0]},{rgb[1]},{rgb[2]})"),
-                name=f"Ch {ch + 1}",
+                name=_ch_label(ch_labels, ch),
             )
             layout = go.Layout(
                 height=280,
@@ -338,7 +385,7 @@ def _plot_individual_channels(
                 yaxis=dict(title="Amplitude (uV)"),
                 template="plotly_dark" if st.get_option("theme.base") == "dark" else "plotly_white",
             )
-            title = f"Channel {ch + 1}"
+            title = _ch_label(ch_labels, ch)
             key = f"live_channel_{ch + 1}"
             path = _write_plotly_window(go.Figure(data=[trace], layout=layout), title, key)
             _open_plot_window_once(path, key)
@@ -435,11 +482,13 @@ class LiveViewService:
         self.buffer: np.ndarray = np.empty((0, 0))
         self.samples_seen = 0
         self.fs = 0.0
+        self.params: Dict[str, Any] = {}
 
     def wrap_device(self, device: DeviceInterface, params: Dict[str, Any]) -> LiveViewDevice:
         fs_value = coerce_number(params.get("Parameters", {}).get("fs"))
         fs = float(fs_value) if fs_value else 0.0
         self.fs = fs
+        self.params = params  # needed to reference and label the live buffer
         self.reset(clear_progress=False)
         return LiveViewDevice(device, self, fs)
 
@@ -458,7 +507,7 @@ class LiveViewService:
         if self.progress_placeholder is not None and self.total_seconds > 0:
             self.progress_placeholder.progress(1.0, text=f"Recording {self.total_seconds:.1f}s / {self.total_seconds:.1f}s")
         if self.placeholder is not None and self.buffer.size:
-            indices = _normalize_channel_indices(self.channel_indices, self.buffer.shape[1])
+            indices = _normalize_channel_indices(self.channel_indices, self._eeg_width())
             offset = max(0, self.samples_seen - self.buffer.shape[0])
             _plot_live_buffer(
                 self.buffer,
@@ -468,6 +517,7 @@ class LiveViewService:
                 interactive=True,
                 window_seconds=self.window_seconds,
                 sample_offset=offset,
+                params=self.params,
             )
             if self.fft_placeholder is not None:
                 _plot_fft_spectrum(
@@ -476,6 +526,7 @@ class LiveViewService:
                     self.fft_placeholder,
                     channel_indices=indices,
                     interactive=True,
+                    params=self.params,
                 )
             if self.final_channel_windows:
                 _plot_individual_channels(
@@ -486,6 +537,7 @@ class LiveViewService:
                     interactive=True,
                     window_seconds=self.window_seconds,
                     sample_offset=offset,
+                    params=self.params,
                 )
 
     def _update_progress(self, fs: float) -> None:
@@ -515,7 +567,7 @@ class LiveViewService:
         max_window = int(fs * self.window_seconds) if fs > 0 else self.buffer.shape[0]
         if max_window > 0 and self.buffer.shape[0] > max_window:
             self.buffer = self.buffer[-max_window:]
-        indices = _normalize_channel_indices(self.channel_indices, self.buffer.shape[1])
+        indices = _normalize_channel_indices(self.channel_indices, self._eeg_width())
         offset = max(0, self.samples_seen - self.buffer.shape[0])
         _plot_live_buffer(
             self.buffer,
@@ -524,9 +576,19 @@ class LiveViewService:
             channel_indices=indices,
             window_seconds=self.window_seconds,
             sample_offset=offset,
+            params=self.params,
         )
         if self.fft_placeholder is not None:
-            _plot_fft_spectrum(self.buffer, fs, self.fft_placeholder, channel_indices=indices)
+            _plot_fft_spectrum(
+                self.buffer, fs, self.fft_placeholder, channel_indices=indices, params=self.params
+            )
+
+    def _eeg_width(self) -> int:
+        """Number of EEG columns the plots will actually see (non-EEG columns are dropped)."""
+        if self.buffer.size == 0:
+            return 0
+        param_block = self.params.get("Parameters", {}) or {}
+        return max(1, min(eeg_channel_count(param_block, self.buffer.shape[1]), self.buffer.shape[1]))
 
 
 def run_live_preview(
@@ -593,8 +655,11 @@ def run_live_preview(
             interactive=False,
             window_seconds=window,
             sample_offset=sample_offset,
+            params=params,
         )
-        _plot_fft_spectrum(buffer, fs, fft_placeholder, channel_indices=indices, interactive=False)
+        _plot_fft_spectrum(
+            buffer, fs, fft_placeholder, channel_indices=indices, interactive=False, params=params
+        )
         # To keep UI smooth, only show the aggregated view + FFT during streaming.
         start = time.time()
         while (time.time() - start) < duration:
@@ -620,8 +685,11 @@ def run_live_preview(
                     interactive=False,
                     window_seconds=window,
                     sample_offset=sample_offset,
+                    params=params,
                 )
-                _plot_fft_spectrum(buffer, fs, fft_placeholder, channel_indices=indices, interactive=False)
+                _plot_fft_spectrum(
+                    buffer, fs, fft_placeholder, channel_indices=indices, interactive=False, params=params
+                )
             else:
                 time.sleep(update_interval)
         # After capture, replace auto-refreshing windows with editable final plot windows.
@@ -635,8 +703,11 @@ def run_live_preview(
                 interactive=True,
                 window_seconds=window,
                 sample_offset=sample_offset,
+                params=params,
             )
-            _plot_fft_spectrum(buffer, fs, fft_placeholder, channel_indices=indices, interactive=True)
+            _plot_fft_spectrum(
+                buffer, fs, fft_placeholder, channel_indices=indices, interactive=True, params=params
+            )
             if channels_enabled:
                 _plot_individual_channels(
                     buffer,
@@ -646,6 +717,7 @@ def run_live_preview(
                     interactive=True,
                     window_seconds=window,
                     sample_offset=sample_offset,
+                    params=params,
                 )
         return buffer
     finally:

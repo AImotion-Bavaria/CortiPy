@@ -85,6 +85,28 @@ def _resolve_channels(params: dict, count: int) -> Sequence[ChannelInfo]:
     return [ChannelInfo(label=f"CH {idx+1}") for idx in range(count)]
 
 
+def _channel_plot_title(prefix: str, params: dict, channel_no: int, count: int) -> str:
+    """Title a single-channel trace. ``channel_no`` is the 1-based EEG channel number.
+
+    ``params["Channels"]`` is positional over the EEG columns, so this works for every
+    device.  It used to be branched per device to skip the GND/Ref rows that were
+    prepended to the montage; those no longer sit in the list.
+    """
+    param_block = params.get("Parameters", {}) or {}
+    labels = [info.label for info in _resolve_channels(params, max(count, channel_no))]
+    idx = channel_no - 1
+    label = labels[idx] if 0 <= idx < len(labels) else f"Ch {channel_no}"
+    title = f"{prefix} {channel_no} / {label}"
+
+    try:
+        ref_idx = int(param_block.get("ReferenceChannel")) - 1
+    except (TypeError, ValueError):
+        ref_idx = -1
+    if 0 <= ref_idx < len(labels):
+        title = f"{title}; REF {labels[ref_idx]}"
+    return title
+
+
 def topomap_info_from_labels(labels: Sequence[str], params: dict | None = None):
     """Public helper: best-effort Info + kept indices for scalp plots with position aliases."""
     return _topomap_info_from_labels(labels, params=params)
@@ -368,20 +390,8 @@ def plot_live_avg_vep(avg_signal: np.ndarray, params: dict, max_time: float) -> 
     idx_max = np.argmin(np.abs(t_ms - max_time * 1000.0))
     ax.plot(t_ms[: idx_max or None], avg_signal[: idx_max or None], color="b")
 
-    device = params.get("Device", "")
-    channels = _resolve_channels(params, int(param_block.get("NumberEEGChannels", len(avg_signal))))
-    if device == "ActiCHamp":
-        ref_idx = int(param_block.get("ReferenceChannel", 1))
-        ref_label = channels[ref_idx].label if 0 <= ref_idx < len(channels) else str(ref_idx)
-        label_idx = live_channel
-        label = channels[label_idx].label if 0 <= label_idx < len(channels) else f"Channel {live_channel}"
-        title = f"Channel {live_channel} / {label}; REF {ref_label}"
-    elif device == "UNICORN":
-        label_idx = live_channel + 1
-        label = channels[label_idx].label if 0 <= label_idx < len(channels) else f"Channel {live_channel}"
-        title = f"Channel {live_channel} / {label}"
-    else:
-        title = f"VEP Channel {live_channel}"
+    count = int(param_block.get("NumberEEGChannels", len(avg_signal)))
+    title = _channel_plot_title("Channel", params, live_channel, count)
 
     ax.set_title(title)
     ax.set_xlabel("Time (ms)")
@@ -549,21 +559,9 @@ def plot_live_erp(avg_signal: np.ndarray, params: dict, max_time: float) -> None
     idx_max = np.argmin(np.abs(t_ms - max_time * 1000.0))
     ax.plot(t_ms[: idx_max or None], avg_signal[: idx_max or None], color="tab:blue")
 
-    device = params.get("Device", "")
     live_ch = int(param_block.get("LivePlotCH", 1))
     channels = _resolve_channels(params, int(param_block.get("NumberEEGChannels", len(avg_signal))))
-    if device == "ActiCHamp":
-        ref_idx = int(param_block.get("ReferenceChannel", 1))
-        ref_label = channels[ref_idx].label if 0 <= ref_idx < len(channels) else str(ref_idx)
-        label_idx = live_ch
-        label = channels[label_idx].label if 0 <= label_idx < len(channels) else f"Channel {live_ch}"
-        title = f"Channel {live_ch} / {label}; REF {ref_label}"
-    elif device == "UNICORN":
-        label_idx = live_ch + 1
-        label = channels[label_idx].label if 0 <= label_idx < len(channels) else f"Channel {live_ch}"
-        title = f"Channel {live_ch} / {label}"
-    else:
-        title = f"P300 Channel {live_ch}"
+    title = _channel_plot_title("Channel", params, live_ch, len(channels))
 
     ax.set_title(title)
     ax.set_xlabel("Time (ms)")
@@ -579,7 +577,6 @@ def plot_p300_results(avg_signal: np.ndarray, params: dict, max_time: float) -> 
     t_ms = time_vector(avg_signal, fs, unit="ms")
     idx_max = np.argmin(np.abs(t_ms - max_time * 1000.0)) if t_ms.size else 0
     channels = _resolve_channels(params, avg_signal.shape[1])
-    device = params.get("Device", "")
 
     # Overview plot with all channels plus a grand average for quick quality inspection.
     fig_all, ax_all = plt.subplots(figsize=(10, 5))
@@ -605,18 +602,7 @@ def plot_p300_results(avg_signal: np.ndarray, params: dict, max_time: float) -> 
         fig, ax = plt.subplots(figsize=(8, 4))
         figure_key = f"p300-results-{param_block.get('Filename', 'cortipy')}-ch{ch+1}"
         ax.plot(t_ms[: idx_max or None], avg_signal[: idx_max or None, ch], color="tab:blue")
-        if device == "ActiCHamp":
-            ref_idx = int(param_block.get("ReferenceChannel", 1))
-            ref_label = channels[ref_idx].label if 0 <= ref_idx < len(channels) else str(ref_idx)
-            label = channels[ch].label if ch < len(channels) else f"Channel {ch+1}"
-            title = f"Channel {ch+1} / {label}; REF {ref_label}"
-        elif device == "UNICORN":
-            label_idx = ch + 1
-            label = channels[label_idx].label if 0 <= label_idx < len(channels) else f"Channel {ch+1}"
-            title = f"Channel {ch+1} / {label}"
-        else:
-            title = f"P300 Channel {ch+1}"
-        ax.set_title(title)
+        ax.set_title(_channel_plot_title("Channel", params, ch + 1, len(channels)))
         ax.set_xlabel("Time (ms)")
         ax.set_ylabel("Amplitude (uV)")
         ax.grid(True, alpha=0.3)

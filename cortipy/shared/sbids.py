@@ -2,18 +2,61 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from copy import deepcopy
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Iterable, Sequence, Tuple
+from typing import Any, Iterable, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 from mne.io import BaseRaw
 
-from .bids import BIDSLoadResult, BIDSLoader, ExperimentBinLoader, _coerce_to_raw_array
+from .bids import (
+    BIDSLoadResult,
+    BIDSLoader,
+    ExperimentBinLoader,
+    _coerce_to_raw_array,
+    raw_to_microvolts,
+)
+
+# Acquisition parameters carried through the JSON-LD graph, as
+# (Params key, schema:PropertyValue name, schema:unitCode or None).
+#
+# Anything absent here is LOST on round-trip. StimFreq used to be missing, so a reloaded
+# SSVEP dataset silently fell back to the evaluator's 10 Hz default and every derived
+# metric was computed against the wrong stimulation frequency.
+RECORDING_PROPERTIES: Tuple[Tuple[str, str, Optional[str]], ...] = (
+    ("fs", "SamplingRate", "HZ"),
+    ("NumberEEGChannels", "NumberEEGChannels", None),
+    ("NumberAUXChannels", "NumberAUXChannels", None),
+    ("ReferenceChannel", "ReferenceChannel", None),
+    ("TriggerChannel", "TriggerChannel", None),
+    ("LowestFrequency", "LowestFrequency", "HZ"),
+    ("HighestFrequency", "HighestFrequency", "HZ"),
+    ("StimFreq", "StimFreq", "HZ"),
+    ("ASSRModulationFrequency", "ASSRModulationFrequency", "HZ"),
+    ("ASSRCarrierFrequency", "ASSRCarrierFrequency", "HZ"),
+    ("TriggerTime", "TriggerTime", "SEC"),
+    ("Trigger", "Trigger", None),
+    ("Epochs", "Epochs", None),
+    ("EpochLength", "EpochLength", None),
+    ("PlotChannelLabel", "PlotChannelLabel", None),
+    ("SignalUnit", "SignalUnit", None),
+    ("Stimulus", "Stimulus", None),
+    ("Environment", "Environment", None),
+)
+
+
+def sha256_file(path: str | os.PathLike, *, chunk_size: int = 1 << 20) -> str:
+    """SHA-256 of a file's bytes, streamed so large recordings do not load into memory."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class SbidsExporter:
@@ -32,6 +75,7 @@ class SbidsExporter:
         "impedance": {"@id": "sbids:impedance", "@type": "xsd:float"},
         "signalUnit": {"@id": "sbids:signalUnit", "@type": "xsd:string"},
         "impedanceUnit": {"@id": "sbids:impedanceUnit", "@type": "xsd:string"},
+        "sha256": {"@id": "sbids:sha256", "@type": "xsd:string"},
     }
 
     def __init__(self, dataset_id: str, dataset_name: str):
@@ -67,10 +111,13 @@ class SbidsExporter:
         params = meta_json.get("Parameters", {})
         channels = meta_json.get("Channels", [])
         participant = meta_json.get("Metadata", {}).get("Participant", {})
-        subj_id = (
+        # Keep the identifier bare. It used to fall back to f"{device}_sub_{n}", which put a
+        # "sub" token inside schema:identifier and re-emerged as sub-Simulated_sub_1 on a
+        # later BIDS export.
+        subj_id = str(
             subject_id
             or participant.get("Code")
-            or f"{device}_sub_{params.get('TestSubjectNo', '1')}"
+            or params.get("TestSubjectNo", "1")
         )
         self._add_subject(
             subj_id=subj_id,
@@ -78,16 +125,7 @@ class SbidsExporter:
             dominant_hand=participant.get("DominantHand"),
         )
         self._add_device(name=device)
-        fs = params.get("fs")
         rec_time = params.get("RecordingTime")
-        env = params.get("Environment")
-        n_eeg = params.get("NumberEEGChannels")
-        n_aux = params.get("NumberAUXChannels")
-        ref_ch = params.get("ReferenceChannel")
-        trig_ch = params.get("TriggerChannel")
-        lowest_f = params.get("LowestFrequency")
-        highest_f = params.get("HighestFrequency")
-        stimulus = params.get("Stimulus") or params.get("Start")
         filename_stem = params.get("Filename") or os.path.splitext(os.path.basename(raw_file))[0]
         recording_urn = f"urn:recording:{subj_id}_{filename_stem}"
         file_urn = f"urn:file:{subj_id}_{filename_stem}"
@@ -110,81 +148,25 @@ class SbidsExporter:
             recording_node["schema:duration"] = f"PT{int(rec_time)}S"
         if method:
             recording_node["schema:measurementTechnique"] = method
-        if env:
-            recording_node["schema:additionalProperty"].append(
-                {
-                    "@type": "schema:PropertyValue",
-                    "schema:name": "Environment",
-                    "schema:value": env,
-                }
-            )
-        if fs is not None:
-            recording_node["schema:additionalProperty"].append(
-                {
-                    "@type": "schema:PropertyValue",
-                    "schema:name": "SamplingRate",
-                    "schema:value": fs,
-                    "schema:unitCode": "HZ",
-                }
-            )
-        if n_eeg is not None:
-            recording_node["schema:additionalProperty"].append(
-                {
-                    "@type": "schema:PropertyValue",
-                    "schema:name": "NumberEEGChannels",
-                    "schema:value": n_eeg,
-                }
-            )
-        if n_aux is not None:
-            recording_node["schema:additionalProperty"].append(
-                {
-                    "@type": "schema:PropertyValue",
-                    "schema:name": "NumberAUXChannels",
-                    "schema:value": n_aux,
-                }
-            )
-        if ref_ch is not None:
-            recording_node["schema:additionalProperty"].append(
-                {
-                    "@type": "schema:PropertyValue",
-                    "schema:name": "ReferenceChannel",
-                    "schema:value": ref_ch,
-                }
-            )
-        if trig_ch is not None:
-            recording_node["schema:additionalProperty"].append(
-                {
-                    "@type": "schema:PropertyValue",
-                    "schema:name": "TriggerChannel",
-                    "schema:value": trig_ch,
-                }
-            )
-        if lowest_f is not None:
-            recording_node["schema:additionalProperty"].append(
-                {
-                    "@type": "schema:PropertyValue",
-                    "schema:name": "LowestFrequency",
-                    "schema:value": lowest_f,
-                }
-            )
-        if highest_f is not None:
-            recording_node["schema:additionalProperty"].append(
-                {
-                    "@type": "schema:PropertyValue",
-                    "schema:name": "HighestFrequency",
-                    "schema:value": highest_f,
-                }
-            )
-        if stimulus:
-            recording_node["schema:additionalProperty"].append(
-                {
-                    "@type": "schema:PropertyValue",
-                    "schema:name": "Stimulus",
-                    "schema:value": stimulus,
-                }
-            )
+
+        for param_key, prop_name, unit_code in RECORDING_PROPERTIES:
+            value = params.get(param_key)
+            if param_key == "Stimulus" and not value:
+                value = params.get("Start")
+            if value in (None, "", []):
+                continue
+            prop_node = {
+                "@type": "schema:PropertyValue",
+                "schema:name": prop_name,
+                "schema:value": value,
+            }
+            if unit_code:
+                prop_node["schema:unitCode"] = unit_code
+            recording_node["schema:additionalProperty"].append(prop_node)
         variable_measured = []
-        for idx, ch in enumerate(channels):
+        # GND/Ref live outside Channels (they hold no data column) but still carry impedance
+        # worth recording. They are emitted as AUXChannel nodes and read back the same way.
+        for idx, ch in enumerate(list(channels) + list(meta_json.get("ReferenceElectrodes") or [])):
             label = ch.get("Channel")
             pos = ch.get("Position")
             imp = ch.get("Impedance")
@@ -246,6 +228,9 @@ class SbidsExporter:
         }
         if file_size_bytes is not None:
             file_node["schema:fileSize"] = int(file_size_bytes)
+        if os.path.exists(raw_file):
+            # Size alone cannot detect corruption or a silently truncated/rewritten export.
+            file_node["sha256"] = sha256_file(raw_file)
         self._graph.append(file_node)
 
     def to_dict(self) -> dict:
@@ -712,7 +697,7 @@ class SBIDSLoader:
         loader_metadata = {"sidecars": sidecars} if sidecars else {}
         loader = BIDSLoader(data_path.parent)
         raw = loader._load_raw(data_path, preload=preload, metadata=loader_metadata, channels=channels)
-        return raw, raw.get_data().T
+        return raw, raw_to_microvolts(raw)
 
     @staticmethod
     def _load_numpy_data(path: Path) -> np.ndarray:
@@ -874,26 +859,26 @@ def _export_recording_data(rec: BIDSLoadResult, raw_dir: Path, export_format: st
         if not dest_path.exists():
             dest_path.write_bytes(src_path.read_bytes())
         size = dest_path.stat().st_size
-        return dest_path, str(Path("raw_data") / dest_path.name), size
+        return dest_path, f"raw_data/{dest_path.name}", size
 
     if export_format == "npz":
         dest_path = raw_dir / f"{stem}.npz"
         np.savez_compressed(dest_path, data=rec.data)
         size = dest_path.stat().st_size
-        return dest_path, str(Path("raw_data") / dest_path.name), size
+        return dest_path, f"raw_data/{dest_path.name}", size
 
     if export_format in {"edf", "hdf5", "zarr"}:
         dest_path = raw_dir / f"{stem}.{_ext_for_format(export_format)}"
         helper = BIDSLoader(raw_dir)
         helper._write_raw(rec.raw, dest_path, format=export_format, overwrite=True)
         size = dest_path.stat().st_size
-        return dest_path, str(Path("raw_data") / dest_path.name), size
+        return dest_path, f"raw_data/{dest_path.name}", size
 
     dest_path = raw_dir / f"{stem}.parquet"
     frame = pd.DataFrame(rec.data, columns=list(rec.raw.ch_names))
     frame.to_parquet(dest_path)
     size = dest_path.stat().st_size
-    return dest_path, str(Path("raw_data") / dest_path.name), size
+    return dest_path, f"raw_data/{dest_path.name}", size
 
 
 def convert_bids_to_sbids(
@@ -969,3 +954,76 @@ def convert_bids_to_sbids(
     output_path = output or bids_root / default_output_path(dataset_name, dataset_id)
     exporter.save(str(output_path))
     return output_path
+
+
+# ----------------------------------------------------------------------------------
+# Integrity
+# ----------------------------------------------------------------------------------
+def verify_sbids_checksums(jsonld_path: str | os.PathLike) -> list[dict[str, Any]]:
+    """Re-hash every raw file referenced by an SBIDS document and compare to its digest.
+
+    Returns one record per file node with a ``status`` of:
+      ``ok``       - recorded digest matches the bytes on disk
+      ``mismatch`` - file changed since export (corruption, truncation, silent rewrite)
+      ``missing``  - contentUrl does not resolve to a file
+      ``no_digest``- exported before checksums existed; nothing to compare against
+    """
+    path = Path(jsonld_path)
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    graph = doc.get("@graph") or []
+    if isinstance(graph, dict):
+        graph = [graph]
+
+    results: list[dict[str, Any]] = []
+    for node in graph:
+        if not isinstance(node, dict):
+            continue
+        types = node.get("@type") or []
+        types = [types] if isinstance(types, str) else list(types)
+        if not any("DigitalDocument" in str(t) for t in types):
+            continue
+
+        content_url = node.get("schema:contentUrl") or node.get("contentUrl") or ""
+        # contentUrl is dataset-relative; tolerate the Windows backslashes older exports wrote.
+        rel = str(content_url).replace("\\", "/")
+        data_path = (path.parent / rel).resolve()
+        if not data_path.exists():
+            # raw_data/ is not always a direct sibling of the document. Search *within* the
+            # document's own directory only — never above it, or a same-named file from an
+            # unrelated dataset would be hashed and reported as this one.
+            name = Path(rel).name or str(node.get("schema:name") or "")
+            match = next((c for c in path.parent.rglob(name) if c.is_file()), None) if name else None
+            if match is not None:
+                data_path = match.resolve()
+        expected = node.get("sha256")
+
+        record: dict[str, Any] = {
+            "file": str(data_path),
+            "id": node.get("@id"),
+            "expected": expected,
+            "actual": None,
+        }
+        if not data_path.exists():
+            record["status"] = "missing"
+        elif not expected:
+            record["status"] = "no_digest"
+        else:
+            actual = sha256_file(data_path)
+            record["actual"] = actual
+            record["status"] = "ok" if actual == str(expected) else "mismatch"
+        results.append(record)
+    return results
+
+
+if __name__ == "__main__":  # pragma: no cover - convenience CLI
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Verify SHA-256 digests in an SBIDS JSON-LD document.")
+    parser.add_argument("jsonld", help="Path to sbids_meta_*.jsonld")
+    args = parser.parse_args()
+
+    records = verify_sbids_checksums(args.jsonld)
+    for rec in records:
+        print(f"{rec['status']:>10}  {Path(rec['file']).name}")
+    bad = [r for r in records if r["status"] in {"mismatch", "missing"}]
+    raise SystemExit(1 if bad else 0)
