@@ -1447,13 +1447,49 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
         return []
 
     channel_state = st.session_state["channel_tables"]
-    rows = ensure_channel_rows(device, channel_state.get(device))
+    all_rows = ensure_channel_rows(device, channel_state.get(device))
     editor_revision = int(st.session_state.setdefault("_channel_editor_revision", {}).get(device, 0))
+
+    # The amplifier hands back its FIRST N channels — Ch 30 cannot be read without reading
+    # Ch 1..29 — so the recorded set is always a prefix. NumberEEGChannels decides N, and
+    # the table shows exactly those channels. It used to list all 32 ActiCHamp rows with a
+    # "Use channel" box that build_channels silently reset to the first N on the next rerun.
+    extras_set = set(DEVICE_EXTRA_LABELS.get(device, []))
+    eeg_rows = [r for r in all_rows if (r.get("Channel") or r.get("Label")) not in extras_set]
+    extra_rows = [r for r in all_rows if (r.get("Channel") or r.get("Label")) in extras_set]
+
+    method = str(st.session_state.get("general_form", {}).get("Method") or "")
+    method_state = st.session_state.setdefault("method_forms", {}).setdefault(method, {}) if method else {}
+    requested = coerce_number(method_state.get("NumberEEGChannels"))
+    count = int(requested) if requested and requested > 0 else len(eeg_rows)
+    count = max(1, min(count, len(eeg_rows)))
+
+    rows = extra_rows + eeg_rows[:count]
+
     with st.expander(f"Electrodes ({device})", expanded=True):
-        st.caption(
-            "Toggle the channels you intend to record, set the 10-20 name (Position), adjust coordinates, and choose "
-            "hardware. Ground/Reference rows stay enabled automatically."
+        head_l, head_r = st.columns([3, 1], vertical_alignment="bottom")
+        head_l.caption(
+            f"Recording the first **{count}** of {len(eeg_rows)} {device} channels. Name each one "
+            "(Position), record its impedance, and pick the electrode hardware. "
+            "Ground/Reference are always included."
         )
+        if method and any(f.name == "NumberEEGChannels" for f in METHOD_SCHEMAS.get(method, [])):
+            new_count = head_r.number_input(
+                "Channels to record",
+                min_value=1,
+                max_value=len(eeg_rows),
+                value=count,
+                step=1,
+                key=f"electrodes_count_{device}_{count}",
+                help="Same setting as NumberEEGChannels in Session configuration.",
+            )
+            if int(new_count) != count:
+                method_state["NumberEEGChannels"] = int(new_count)
+                # Clear the method form's widget state, or Streamlit keeps showing the old
+                # number over there and the two views disagree.
+                st.session_state.pop(f"{method}_NumberEEGChannels", None)
+                _bump_channel_editor_revision(device)
+                st.rerun()
         if device in IMPEDANCE_CAPABLE_DEVICES:
             fs_value = st.session_state.get("general_form", {}).get("fs")
             status = st.session_state.get("_actichamp_impedance_status")
@@ -1584,11 +1620,9 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
         table_col = st.container()
         map_col = st.container()
         with table_col:
-            # Only four columns used to fit, so Impedance and the "Use channel" toggle were
-            # pushed out of view entirely — the impedance column looked like it had stopped
-            # being filled when it was simply never on screen. Coordinates are rarely typed
-            # by hand (that is what the scalp map is for), so they hide behind a toggle and
-            # the columns that matter always fit.
+            # Impedance used to be pushed off screen entirely, which is why it looked like it
+            # had stopped being filled. Coordinates are rarely typed by hand (that is what the
+            # scalp map is for), so they hide behind a toggle and the rest always fit.
             edit_coords = st.checkbox(
                 "Edit coordinates",
                 value=False,
@@ -1599,9 +1633,9 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 # Coordinates go straight after Position, otherwise they land past the right
                 # edge of the grid and are virtualized away — the toggle would appear to do
                 # nothing.
-                column_order = ["Channel", "Position", "PosX", "PosY", "Active", "Impedance", "Rubrik", "Model"]
+                column_order = ["Channel", "Position", "PosX", "PosY", "Impedance", "Rubrik", "Model"]
             else:
-                column_order = ["Channel", "Position", "Active", "Impedance", "Rubrik", "Model"]
+                column_order = ["Channel", "Position", "Impedance", "Rubrik", "Model"]
 
             # The editor drops columns it is not showing, so remember the coordinates and
             # put them back afterwards — otherwise hiding them would silently reset them.
@@ -1630,7 +1664,7 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                     "Position": st.column_config.TextColumn(
                         "Electrode / Position",
                         help="10-20 label or custom montage description",
-                        width=140,
+                        width=170,
                     ),
                     "Rubrik": st.column_config.SelectboxColumn(
                         "Electrode type (Rubrik)",
@@ -1667,15 +1701,15 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                         step=0.05,
                         format="%.2f",
                     ),
-                    "Active": st.column_config.CheckboxColumn("Use channel", width=105),
                 },
             )
             extras = set(DEVICE_EXTRA_LABELS.get(device, []))
             previous_models = {row.get("Channel"): row.get("Model") for row in rows}
             corrected_model = False
             for row_idx, row in enumerate(edited):
-                if row["Channel"] in extras:
-                    row["Active"] = True
+                # Every row on screen is a channel being recorded, so it is active by
+                # definition; the count is what decides, not a per-row toggle.
+                row["Active"] = True
 
                 # A model picked from a different category moves the category to it, rather
                 # than the category silently overwriting the choice just made.
@@ -1704,7 +1738,19 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 if row.get("Model") != next_model:
                     corrected_model = True
                 row["Model"] = next_model
-            channel_state[device] = edited
+
+            # Merge the edited rows back into the full montage. Channels beyond the recorded
+            # count are not on screen but keep their positions, impedances and models, so
+            # raising the count again restores what was already set for them.
+            shown = {str(row["Channel"]) for row in edited}
+            merged = {str(r.get("Channel")): dict(r) for r in all_rows}
+            for row in edited:
+                merged[str(row["Channel"])] = row
+            for name, entry in merged.items():
+                if name not in extras and name not in shown:
+                    entry["Active"] = False  # beyond the recorded count
+            channel_state[device] = list(merged.values())
+
             if corrected_model:
                 _bump_channel_editor_revision(device)
                 st.rerun()

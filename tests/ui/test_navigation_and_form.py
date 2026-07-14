@@ -257,3 +257,36 @@ class TestElectrodeLibrary:
         got = session._model_for_rubrik("Wet Electrodes", "OpenBCI, Dry Comb Electrode")
         assert got in session.ELECTRODE_LIBRARY["Wet Electrodes"]
         assert session.MODEL_TO_RUBRIK["OpenBCI, Dry Comb Electrode"] == "Dry Electrodes"
+
+
+class TestRecordedChannelPrefix:
+    """The amplifier returns its FIRST N channels, so the recorded set is always a prefix.
+
+    build_channels reconciles the table to that prefix on every rerun. The Electrodes page
+    used to render every device channel with an editable "Use channel" box, which was
+    therefore silently reverted before the operator ever saw the effect.
+    """
+
+    def rows(self, n_eeg=8, extras=("GND",)):
+        return [{"Channel": e, "Active": True} for e in extras] + [
+            {"Channel": f"Ch {i}", "Active": False} for i in range(1, n_eeg + 1)
+        ]
+
+    def test_the_recorded_set_is_a_prefix(self):
+        from cortipy.ui_streamlit.constants import DEVICE_EXTRA_LABELS
+
+        rows = self.rows(32)
+        extras = set(DEVICE_EXTRA_LABELS["ActiCHamp"])
+        eeg = [r for r in rows if r["Channel"] not in extras]
+        count = 3
+        recorded = [r["Channel"] for r in eeg[:count]]
+        assert recorded == ["Ch 1", "Ch 2", "Ch 3"]
+
+    def test_a_non_contiguous_selection_is_not_representable(self):
+        # Ch 30 cannot be read without reading Ch 1..29 — this is why the per-row toggle
+        # was removed rather than made to work.
+        eeg = [r["Channel"] for r in self.rows(32) if r["Channel"].startswith("Ch")]
+        wanted = ["Ch 1", "Ch 5", "Ch 9"]
+        prefix_needed = eeg[: eeg.index("Ch 9") + 1]
+        assert len(prefix_needed) == 9  # the amp must read 9 channels to reach Ch 9
+        assert wanted != prefix_needed
