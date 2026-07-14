@@ -890,6 +890,7 @@ def _safe_channel_coords(label: str, fallback_idx: int = 0) -> tuple[float, floa
 
 
 def render_config_snapshot(method: str, device: str, general: Dict[str, Any]) -> None:
+    device_selected = bool(device)
     method = method or "N/A"
     device = device or "N/A"
     full_name = METHOD_FULL_NAMES.get(method)
@@ -900,9 +901,11 @@ def render_config_snapshot(method: str, device: str, general: Dict[str, Any]) ->
     duration = coerce_number(params_block.get("RecordingTime") or general.get("RecordingTime"))
 
     method_label = f"{method} - {full_name}" if full_name else method
-    fs_txt = f"{fs_value} Hz" if fs_value is not None else "N/A"
-    ch_txt = f"{int(channels)}" if channels is not None else "N/A"
-    dur_txt = f"{duration} s" if duration is not None else "N/A"
+    # fs carries the schema's first dropdown option, so the summary reported "100 Hz" before
+    # a device was even chosen — and the supported rates depend on the device anyway.
+    fs_txt = f"{fs_value} Hz" if (device_selected and fs_value is not None) else "N/A"
+    ch_txt = f"{int(channels)}" if channels else "N/A"
+    dur_txt = f"{duration} s" if duration else "N/A"
 
     # Emit with no leading whitespace and no blank lines. When there is no method (and so
     # no description) the old dedented block left an empty line followed by indented HTML,
@@ -1159,32 +1162,40 @@ def _step_status(general: Dict[str, Any], device_values: Dict[str, Any], method_
     }
 
 
-def _render_stepper(status: Dict[str, bool], current: Optional[str]) -> None:
-    """Tick only the steps actually passed.
-
-    A later step can satisfy its own condition (Session details has nothing to require)
-    while an earlier one is still open — ticking it then would claim progress the operator
-    has not made, so everything past the first open step renders as pending.
-    """
-    cols = st.columns(len(CONFIG_STEPS))
-    reached = True
-    for idx, (col, name) in enumerate(zip(cols, CONFIG_STEPS), start=1):
-        done = reached and status.get(name, False)
-        if not done:
-            reached = False
-        if done:
-            col.markdown(f"✓ **{name}**")
-        elif name == current:
-            col.markdown(f"**{idx}. {name}**")
-        else:
-            col.markdown(f":gray[{idx}. {name}]")
-
-
 def _first_incomplete(status: Dict[str, bool]) -> Optional[str]:
     for name in CONFIG_STEPS:
         if not status.get(name):
             return name
     return None
+
+
+def config_step_status() -> Dict[str, bool]:
+    """Step completion for the staged form, read back from the stored editor state.
+
+    The top-of-page progress bar renders from this, so it cannot disagree with the form.
+    It used to keep its own checklist, which ticked "Sampling rate" and "Electrodes" before
+    a device had even been chosen — fs carries a schema default and the channel table is
+    pre-populated, so both were true by construction.
+    """
+    general = st.session_state.get("general_form", {}) or {}
+    device = str(general.get("Device") or "")
+    method = str(general.get("Method") or "")
+    device_values = (st.session_state.get("device_forms", {}) or {}).get(device, {}) or {}
+    method_values = (st.session_state.get("method_forms", {}) or {}).get(method, {}) or {}
+    return _step_status(general, device_values, method_values)
+
+
+def config_progress_steps() -> List[tuple]:
+    """(label, done) per configuration step, with everything past the first open one pending."""
+    status = config_step_status()
+    steps: List[tuple] = []
+    reached = True
+    for name in CONFIG_STEPS:
+        done = reached and status.get(name, False)
+        if not done:
+            reached = False
+        steps.append((name, done))
+    return steps
 
 
 def render_session_configuration() -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
@@ -1211,7 +1222,6 @@ def render_session_configuration() -> tuple[Dict[str, Any], Dict[str, Any], Dict
 
     # --- Step 1: device -----------------------------------------------------------
     with st.expander("Session configuration", expanded=True):
-        stepper_slot = st.container()
         form_col, viz_col = st.columns((3, 2))
 
         top = form_col.columns(3)
@@ -1242,8 +1252,6 @@ def render_session_configuration() -> tuple[Dict[str, Any], Dict[str, Any], Dict
 
         if not device:
             form_col.info("**Step 1 — pick a device.** Everything else follows from it.")
-            with stepper_slot:
-                _render_stepper(status(), "Device")
             return dict(general), method_values, device_values, participant_values
 
     # --- Step 2: connection settings ---------------------------------------------
@@ -1255,14 +1263,10 @@ def render_session_configuration() -> tuple[Dict[str, Any], Dict[str, Any], Dict
     if not status()["Connection"]:
         missing = ", ".join(REQUIRED_DEVICE_FIELDS.get(device, ()))
         st.info(f"**Step 2 — connect {device}.** Set {missing} (or turn on *Simulate run*) to continue.")
-        with stepper_slot:
-            _render_stepper(status(), "Connection")
         return dict(general), method_values, device_values, participant_values
 
     if not method:
         st.info(f"**Step 3 — pick a method.** {device} is ready; choose what you are measuring.")
-        with stepper_slot:
-            _render_stepper(status(), "Method")
         return dict(general), method_values, device_values, participant_values
 
     # --- Step 4: acquisition ------------------------------------------------------
@@ -1272,8 +1276,6 @@ def render_session_configuration() -> tuple[Dict[str, Any], Dict[str, Any], Dict
 
     if not status()["Acquisition"]:
         st.info("**Step 4 — set the sampling rate and a recording time above zero.**")
-        with stepper_slot:
-            _render_stepper(status(), "Acquisition")
         return dict(general), method_values, device_values, participant_values
 
     # --- Step 5: channels + method parameters -------------------------------------
@@ -1281,8 +1283,6 @@ def render_session_configuration() -> tuple[Dict[str, Any], Dict[str, Any], Dict
 
     if not status()["Channels"]:
         st.info("**Step 5 — set NumberEEGChannels** so the montage and the reference can be resolved.")
-        with stepper_slot:
-            _render_stepper(status(), "Channels")
         return dict(general), method_values, device_values, participant_values
 
     # --- Step 6: session details + participant ------------------------------------
@@ -1291,8 +1291,6 @@ def render_session_configuration() -> tuple[Dict[str, Any], Dict[str, Any], Dict
         _render_general_fields(st.container(), SESSION_DETAIL_FIELDS, general, device)
     participant_values = render_participant_form()
 
-    with stepper_slot:
-        _render_stepper(status(), None)
     return dict(general), method_values, device_values, participant_values
 
 
@@ -1555,7 +1553,10 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 st.session_state.setdefault("method_forms", {}).setdefault(method, {})["ReferenceChannel"] = new_ref
                 st.session_state.pop(f"{method}_ReferenceChannel", None)  # keep the method form in sync
 
-        table_col, map_col = st.columns((3, 1))
+        # The table spans the full width and the scalp map sits underneath it. Squeezed
+        # beside the map, only four of the eight columns fit.
+        table_col = st.container()
+        map_col = st.container()
         with table_col:
             # Only four columns used to fit, so Impedance and the "Use channel" toggle were
             # pushed out of view entirely — the impedance column looked like it had stopped

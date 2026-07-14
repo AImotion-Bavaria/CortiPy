@@ -185,3 +185,42 @@ class TestRequiredStimulusFrequencies:
             "Channels": [{"Channel": "Ch 1", "Active": True}],
         }
         assert any("StimFreq" in issue for issue in session.validate_params(params))
+
+
+class TestConfigProgressSteps:
+    """The top progress bar renders from the form's own step status, so it cannot lie.
+
+    It used to keep its own checklist and ticked "Sampling rate" and "Electrodes" on a
+    blank form: fs carries a schema default and the channel table is pre-populated, so both
+    were true by construction and the bar claimed 2/4 before anything had been chosen.
+    """
+
+    def steps(self, monkeypatch, status):
+        monkeypatch.setattr(session, "config_step_status", lambda: status)
+        return session.config_progress_steps()
+
+    def blank(self):
+        return {name: False for name in session.CONFIG_STEPS}
+
+    def test_a_blank_form_reports_nothing_done(self, monkeypatch):
+        steps = self.steps(monkeypatch, self.blank())
+        assert [name for name, _ in steps] == list(session.CONFIG_STEPS)
+        assert not any(done for _, done in steps)
+
+    def test_later_steps_do_not_tick_before_earlier_ones(self, monkeypatch):
+        # "Session details" requires nothing of its own; it must still not tick early.
+        status = self.blank()
+        status["Session details"] = True
+        steps = dict(self.steps(monkeypatch, status))
+        assert steps["Session details"] is False
+
+    def test_steps_tick_in_order(self, monkeypatch):
+        status = self.blank()
+        status.update({"Device": True, "Connection": True, "Method": True})
+        steps = dict(self.steps(monkeypatch, status))
+        assert [steps[n] for n in session.CONFIG_STEPS] == [True, True, True, False, False, False]
+
+    def test_everything_done_ticks_everything(self, monkeypatch):
+        status = {name: True for name in session.CONFIG_STEPS}
+        steps = self.steps(monkeypatch, status)
+        assert all(done for _, done in steps)

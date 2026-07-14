@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import html
-from typing import Any, Callable, Dict, List
+from typing import Any, Callable, Dict, List, Sequence, Tuple
 
 import streamlit as st
 
@@ -37,20 +37,30 @@ def has_active_eeg_channels(params: Dict[str, Any]) -> bool:
     return False
 
 
-def render_workflow_progress(slot, params: Dict[str, Any], validation_issues: List[str]) -> None:
-    """Compact top-of-page checklist guiding the user through a measurement workflow."""
-    parameters = params.get("Parameters", {}) if isinstance(params, dict) else {}
-    participant = (params.get("Metadata", {}) or {}).get("Participant", {}) or {}
-    steps = [
-        ("Method & device", bool(params.get("Method") and params.get("Device"))),
-        ("Sampling rate", bool(parameters.get("fs"))),
-        ("Electrodes", has_active_eeg_channels(params)),
-        ("Participant", bool(participant.get("Code"))),
-    ]
+def render_workflow_progress(
+    slot,
+    steps: Sequence[Tuple[str, bool]],
+    validation_issues: List[str],
+) -> None:
+    """Top-of-page progress for the staged session configuration.
+
+    ``steps`` comes from the form itself (``session.config_progress_steps``), so the bar and
+    the form can never disagree. It used to compute its own checklist and ticked "Sampling
+    rate" and "Electrodes" before a device was chosen, because fs carries a schema default
+    and the channel table is pre-populated — both were true by construction, so the bar
+    claimed progress the operator had not made.
+    """
+    steps = list(steps)
+    if not steps:
+        return
     done = sum(1 for _, ok in steps if ok)
     ready = not validation_issues
     with slot:
-        caption = "Ready to run - press Start measurement" if ready else "Complete the required fields to run"
+        caption = (
+            "Ready to run - press Start measurement"
+            if ready and done == len(steps)
+            else "Complete the required fields to run"
+        )
         st.progress(done / len(steps), text=f"Setup {done}/{len(steps)} - {caption}")
         cols = st.columns(len(steps))
         for col, (label, ok) in zip(cols, steps):

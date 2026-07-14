@@ -128,7 +128,8 @@ def main() -> None:
             if issue != "UNICORN configuration requires a serial port / address."
         ]
     if page in {"Session configuration", "Preview"}:
-        render_workflow_progress(progress_slot, assembled_params, validation_issues)
+        # Steps come straight from the staged form, so the bar cannot disagree with it.
+        render_workflow_progress(progress_slot, ui.config_progress_steps(), validation_issues)
 
     if page == "Workflow":
         render_workflow_page(assembled_params, validation_issues, ui.set_active_view)
