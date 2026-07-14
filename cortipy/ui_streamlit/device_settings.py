@@ -24,6 +24,17 @@ LOGGER = logging.getLogger(__name__)
 
 MANUAL_UNICORN_PORT_OPTION = "__manual_unicorn_port__"
 
+# Relative column widths per device field. The port carries long device paths; a timeout is
+# four characters. Anything unlisted gets a sensible middle.
+DEVICE_FIELD_WIDTHS: Dict[str, float] = {
+    "UNICORNPort": 2.6,
+    "UNICORNDeviceName": 1.8,
+    "UnicornTimeout": 1.1,
+}
+
+# Placeholder occupying the narrow column that holds the port's Rescan button.
+_RESCAN_SLOT = object()
+
 # A paired UNICORN shows up as a virtual serial port whose name carries one of these.
 UNICORN_PORT_HINTS = ("unicorn", "un-", "g.tec", "gtec")
 
@@ -75,21 +86,30 @@ def serial_port_options() -> List[Tuple[str, str]]:
     return [(device, label) for device, label, _ in options]
 
 
-def render_unicorn_port_input(target, field: Dict[str, Any], current: Any, key: str) -> str:
+def render_unicorn_port_input(target, field: Dict[str, Any], current: Any, key: str, rescan_target=None) -> str:
+    """Port picker plus its rescan button, on one line.
+
+    The "N port(s) found" note folds into the field's help tooltip instead of taking its own
+    line, and the rescan button sits beside the selectbox rather than above it — the panel
+    used to be three stacked rows tall for what is really a single row of fields.
+    """
     # Streamlit reruns keep the old option list; rescanning has to be explicit or a headset
     # paired after the app started never appears.
-    if target.button("Rescan ports", key=f"{key}_rescan", help="Re-enumerate connected serial/Bluetooth devices."):
+    rescan_on = rescan_target if rescan_target is not None else target
+    if rescan_on.button("Rescan", key=f"{key}_rescan", width="stretch",
+                        help="Re-enumerate connected serial/Bluetooth devices."):
         st.session_state.pop(f"{key}_ports", None)
 
     port_entries = serial_port_options()
     labels = {port: label for port, label in port_entries}
     options: List[str] = [port for port, _ in port_entries]
 
+    help_text = field.get("help") or ""
     if list_ports is None:
         target.error(
             "pyserial is not importable, so no ports can be listed "
             f"({_SERIAL_IMPORT_ERROR}). Install it with `pip install pyserial`, "
-            "or enter the port manually below."
+            "or choose Manual entry."
         )
     elif not port_entries:
         target.warning(
@@ -98,10 +118,10 @@ def render_unicorn_port_input(target, field: Dict[str, Any], current: Any, key: 
         )
     else:
         unicorn_like = [p for p, lab in port_entries if lab.startswith("UNICORN")]
-        target.caption(
-            f"{len(port_entries)} port(s) found"
-            + (f", {len(unicorn_like)} look like UNICORN devices." if unicorn_like else ".")
+        found = f"{len(port_entries)} port(s) found" + (
+            f", {len(unicorn_like)} look like UNICORN devices." if unicorn_like else "."
         )
+        help_text = f"{help_text}\n\n{found}" if help_text else found
 
     current_str = str(current) if current not in (None, "") else ""
     if current_str and current_str not in options:
@@ -116,7 +136,7 @@ def render_unicorn_port_input(target, field: Dict[str, Any], current: Any, key: 
         options=options,
         index=options.index(default_choice) if options else 0,
         format_func=lambda value: "Manual entry" if value == MANUAL_UNICORN_PORT_OPTION else labels.get(value, value),
-        help=field.get("help"),
+        help=help_text or None,
         key=key,
     )
 
@@ -144,13 +164,27 @@ def render_device_config(device: str) -> Dict[str, Any]:
             )
             return dict(form_state)
 
-        cols = st.columns(2)
-        for idx, field in enumerate(schema):
-            target = cols[idx % 2]
+        # Everything on one bottom-aligned row, each field only as wide as it needs. A
+        # 2-column grid put three fields over two rows and left half the panel empty, and
+        # the rescan button stacked above the port instead of sitting next to it.
+        layout: List[Any] = []
+        for field in schema:
+            layout.append((DEVICE_FIELD_WIDTHS.get(field["name"], 1.4), field))
+            if device == "UNICORN" and field["name"] == "UNICORNPort":
+                layout.append((0.7, _RESCAN_SLOT))
+
+        cols = st.columns([width for width, _ in layout], vertical_alignment="bottom")
+        slots = {id(item): col for col, (_, item) in zip(cols, layout)}
+        rescan_col = slots.get(id(_RESCAN_SLOT))
+
+        for _width, field in layout:
+            if field is _RESCAN_SLOT:
+                continue
+            target = slots[id(field)]
             key = f"device_{device}_{field['name']}"
             current = form_state.get(field["name"], field.get("default"))
             if device == "UNICORN" and field["name"] == "UNICORNPort":
-                value = render_unicorn_port_input(target, field, current, key)
+                value = render_unicorn_port_input(target, field, current, key, rescan_target=rescan_col)
             elif field["kind"] == "number":
                 fallback = field.get("default", 0.0)
                 numeric = coerce_number(current)
