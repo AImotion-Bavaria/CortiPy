@@ -81,13 +81,15 @@ def main() -> None:
 
     page = st.segmented_control(
         "Section",
-        ui.APP_VIEW_OPTIONS,
+        ui.VISIBLE_VIEW_OPTIONS,  # hidden views stay implemented but unreachable
         key="active_view_selector",
         label_visibility="collapsed",
         width="stretch",
     )
     if page is None:
-        page = st.session_state.get("active_view") or "Workflow"
+        page = st.session_state.get("active_view") or ui.DEFAULT_VIEW
+    if page not in ui.VISIBLE_VIEW_OPTIONS:
+        page = ui.DEFAULT_VIEW
     st.session_state["active_view"] = page
 
     run_region = st.container()
@@ -105,12 +107,18 @@ def main() -> None:
 
     if page == "Session configuration":
         general_values = ui.render_general_form()
-        method_col, device_col = st.columns(2)
-        with method_col:
-            method_values = ui.render_method_form(general_values["Method"])
-        with device_col:
-            device_values = render_device_config(general_values["Device"])
-        participant_values = ui.render_participant_form()
+        # Progressive disclosure: the device panel appears once a device is chosen, the
+        # method parameters once a method is chosen. Nothing is rendered for a blank
+        # selection, so the page shows only what can actually be filled in right now.
+        if general_values.get("Device"):
+            method_col, device_col = st.columns(2)
+            with device_col:
+                device_values = render_device_config(general_values["Device"])
+            if general_values.get("Method"):
+                with method_col:
+                    method_values = ui.render_method_form(general_values["Method"])
+        if general_values.get("Method") and general_values.get("Device"):
+            participant_values = ui.render_participant_form()
 
     if page == "Electrodes":
         ui.render_channel_editor(general_values["Device"])

@@ -18,6 +18,10 @@ VIEW_OPTIONS = [
     "Charts",
     "Saved sessions",
 ]
+
+# Views that still exist and still render, but are not offered in the navigation.
+# Nothing is deleted: drop a name from this tuple to bring the tab back.
+HIDDEN_VIEWS = ("Workflow", "Preview")
 DEVICE_CONFIG_SCHEMA: Dict[str, List[Dict[str, Any]]] = {
     "UNICORN": [
         {
@@ -72,6 +76,28 @@ DEVICE_EXTRA_LABELS = {
     "ActiCHamp": ["GND"],
     "UNICORN": ["GND", "Ref"],
 }
+
+# Devices whose adapter implements read_impedances(). Everything else needs the values
+# typed in by hand, and the electrode table says so rather than just showing zeros.
+IMPEDANCE_CAPABLE_DEVICES = ("ActiCHamp",)
+
+# Method-form fields that only exist on some hardware. Asking for them on a device that
+# has no such channel is noise, so they are hidden there (their defaults still apply).
+#   NumberAUXChannels - only ActiCHamp exposes AUX inputs.
+#   TriggerChannel    - only ActiCHamp appends a trigger column; UNICORN's extra columns
+#                       are accelerometer/gyro/battery/counter, and the stream/simulated
+#                       devices emit EEG only.
+DEVICE_ONLY_FIELDS: Dict[str, tuple] = {
+    "NumberAUXChannels": ("ActiCHamp",),
+    "TriggerChannel": ("ActiCHamp",),
+}
+
+
+def field_applies_to_device(field_name: str, device: str) -> bool:
+    allowed = DEVICE_ONLY_FIELDS.get(field_name)
+    if not allowed:
+        return True
+    return str(device or "") in allowed
 
 # Sampling rates actually offered per device. Others fall back to the general schema list.
 # Requesting a rate the hardware can't do gets clamped by the producer, which makes a recording

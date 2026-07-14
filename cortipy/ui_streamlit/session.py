@@ -11,7 +11,6 @@ import time
 from dataclasses import dataclass
 import html
 import math
-import textwrap
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -204,6 +203,9 @@ from cortipy.ui_streamlit.constants import (  # noqa: E402
     DEVICE_EXTRA_LABELS,
     DEVICE_FS_OPTIONS,
     DEVICE_POSITION_DEFAULTS,
+    HIDDEN_VIEWS,
+    IMPEDANCE_CAPABLE_DEVICES,
+    field_applies_to_device as _field_applies_to_device,
     SUPPORTED_EXTRA_DEVICES,
     VIEW_OPTIONS,
     device_default_values,
@@ -216,11 +218,23 @@ APP_VIEW_OPTIONS = list(VIEW_OPTIONS)
 if "Workflow" not in APP_VIEW_OPTIONS:
     APP_VIEW_OPTIONS.insert(0, "Workflow")
 
-NAVIGATION_STATE_VERSION = "workflow_home_v1"
+# What the navigation actually offers. Hidden views keep their code and their render
+# branches; they are simply unreachable, so nothing can route the user into them.
+VISIBLE_VIEW_OPTIONS = [view for view in APP_VIEW_OPTIONS if view not in HIDDEN_VIEWS]
+DEFAULT_VIEW = VISIBLE_VIEW_OPTIONS[0] if VISIBLE_VIEW_OPTIONS else APP_VIEW_OPTIONS[0]
+
+# Bumped so sessions that had landed on a now-hidden page get moved off it.
+NAVIGATION_STATE_VERSION = "hide_workflow_preview_v1"
+
+# Shown as the first option of Device/Method so they start genuinely unanswered and the
+# session form can reveal itself one step at a time.
+SELECT_PLACEHOLDER = "— Select —"
 
 
 def set_active_view(page: str) -> None:
-    if page not in APP_VIEW_OPTIONS:
+    # Hidden views are not navigable, so in-app links to them (e.g. the Workflow
+    # dashboard's shortcut buttons) become no-ops rather than dead ends.
+    if page not in VISIBLE_VIEW_OPTIONS:
         return
     st.session_state["active_view"] = page
     st.session_state["active_view_selector"] = page
@@ -228,18 +242,18 @@ def set_active_view(page: str) -> None:
 
 def ensure_navigation_state() -> None:
     if st.session_state.get("_navigation_state_version") != NAVIGATION_STATE_VERSION:
-        set_active_view("Workflow")
+        set_active_view(DEFAULT_VIEW)
         st.session_state["_navigation_state_version"] = NAVIGATION_STATE_VERSION
         return
 
     selector_page = st.session_state.get("active_view_selector")
     active_page = st.session_state.get("active_view")
-    if selector_page in APP_VIEW_OPTIONS:
+    if selector_page in VISIBLE_VIEW_OPTIONS:
         st.session_state["active_view"] = selector_page
-    elif active_page in APP_VIEW_OPTIONS:
+    elif active_page in VISIBLE_VIEW_OPTIONS:
         st.session_state["active_view_selector"] = active_page
     else:
-        set_active_view("Workflow")
+        set_active_view(DEFAULT_VIEW)
 
 # 10-20 scalp coordinates + lookup live in cortipy.ui_streamlit.coords (first modularization step).
 from cortipy.ui_streamlit.coords import (  # noqa: E402
@@ -657,9 +671,13 @@ def load_params_into_state(
             if value not in (None, "", []):
                 device_state[field["name"]] = value
 
-    if params.get("Channels"):
+    # GND/Ref are stored outside "Channels" (they hold no data column) but they are rows in
+    # the electrode table and carry impedances. Restore them too, or a loaded session comes
+    # back with the ground/reference impedance blanked out.
+    imported_channels = list(params.get("Channels") or []) + list(params.get("ReferenceElectrodes") or [])
+    if imported_channels:
         imported_rows = []
-        for ch in params["Channels"]:
+        for ch in imported_channels:
             channel_name = ch.get("Channel") or ch.get("Label") or ch.get("name")
             if not channel_name:
                 continue
@@ -718,9 +736,11 @@ def load_params_into_state(
 def ensure_state() -> None:
     if "general_form" not in st.session_state:
         st.session_state["general_form"] = default_values(GENERAL_SCHEMA)
-        # Prefer Alpha as initial method if available.
-        if "Method" in st.session_state["general_form"]:
-            st.session_state["general_form"]["Method"] = st.session_state["general_form"]["Method"] or "Alpha"
+        # Start Device and Method genuinely unanswered. default_values() picks each
+        # dropdown's first option, which made the form look already filled in and left no
+        # room to reveal the rest of it step by step.
+        st.session_state["general_form"]["Device"] = ""
+        st.session_state["general_form"]["Method"] = ""
     if "method_forms" not in st.session_state:
         st.session_state["method_forms"] = {name: default_values(fields) for name, fields in METHOD_SCHEMAS.items()}
     if "device_forms" not in st.session_state:
@@ -882,17 +902,21 @@ def render_config_snapshot(method: str, device: str, general: Dict[str, Any]) ->
     ch_txt = f"{int(channels)}" if channels is not None else "N/A"
     dur_txt = f"{duration} s" if duration is not None else "N/A"
 
-    html_block = textwrap.dedent(
-        f"""
-        <div class="snapshot-panel">
-            <div class="title">Method: {html.escape(method_label)}</div>
-            {'<div class="desc">' + html.escape(desc) + '</div>' if desc else ''}
-            <div class="line"><strong>Device:</strong> {html.escape(device)}</div>
-            <div class="stats">fs: {fs_txt}<br>Channels: {ch_txt}<br>Recording time: {dur_txt}</div>
-        </div>
-        """
+    # Emit with no leading whitespace and no blank lines. When there is no method (and so
+    # no description) the old dedented block left an empty line followed by indented HTML,
+    # which markdown renders as a *code block* — the tags showed up as literal text.
+    parts = [
+        '<div class="snapshot-panel">',
+        f'<div class="title">Method: {html.escape(method_label)}</div>',
+    ]
+    if desc:
+        parts.append(f'<div class="desc">{html.escape(desc)}</div>')
+    parts.append(f'<div class="line"><strong>Device:</strong> {html.escape(device)}</div>')
+    parts.append(
+        f'<div class="stats">fs: {fs_txt}<br>Channels: {ch_txt}<br>Recording time: {dur_txt}</div>'
     )
-    st.markdown(html_block, unsafe_allow_html=True)
+    parts.append("</div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
 
 
 def _electrode_map_figure(device: str, rows: List[Dict[str, Any]]) -> plt.Figure:
@@ -1007,53 +1031,88 @@ def _render_participant_card(participant: Dict[str, Any]) -> None:
     st.markdown(card_html, unsafe_allow_html=True)
 
 
+def _remember_device_selection(device: str) -> None:
+    """Drop cached impedance readings when the device changes; they belong to the old one."""
+    if device == st.session_state.get("_last_device_selection"):
+        return
+    st.session_state["_last_device_selection"] = device
+    st.session_state["_actichamp_impedance_loaded"] = False
+    st.session_state["_actichamp_impedance_status"] = None
+    st.session_state["_actichamp_impedance_timestamp"] = None
+
+
+def _selectbox_with_placeholder(target, label: str, options: List[str], current: Any, key: str, help_text: Any = None) -> str:
+    """A selectbox that starts genuinely unset, returning "" until the user chooses.
+
+    Streamlit selectboxes otherwise default to their first option, so "Device" and "Method"
+    would already look answered and the form could not reveal itself step by step.
+    """
+    choices = [SELECT_PLACEHOLDER] + list(options)
+    current_text = str(current) if current not in (None, "") else SELECT_PLACEHOLDER
+    index = choices.index(current_text) if current_text in choices else 0
+    picked = target.selectbox(label, options=choices, index=index, help=help_text, key=key)
+    return "" if picked == SELECT_PLACEHOLDER else str(picked)
+
+
 def render_general_form() -> Dict[str, Any]:
     general = st.session_state["general_form"]
     method_field = next(field for field in GENERAL_SCHEMA if field.name == "Method")
     device_field = next(field for field in GENERAL_SCHEMA if field.name == "Device")
     environment_field = next((field for field in GENERAL_SCHEMA if field.name == "Environment"), None)
 
+    method_options = method_field.options or sorted(METHOD_SCHEMAS.keys())
+    device_options = sorted(set((device_field.options or []) + SUPPORTED_EXTRA_DEVICES))
+
     with st.expander("Session configuration", expanded=True):
         form_col, viz_col = st.columns((3, 2))
+
+        def _snapshot() -> None:
+            with viz_col:
+                _spacer, snap_col = viz_col.columns([1, 5])
+                with snap_col:
+                    render_config_snapshot(general.get("Method", ""), general.get("Device", ""), general)
+
+        # Step 1 - the device decides which fields even make sense, so it is asked first.
         top_cols = form_col.columns(3)
-        method_options = method_field.options or sorted(METHOD_SCHEMAS.keys())
-        method_value = resolve_choice(method_options, general.get("Method"))
-        method = top_cols[0].selectbox(
-            "Method",
-            options=method_options,
-            index=method_options.index(method_value),
-            help=method_field.tooltip or None,
-            key="general_Method",
+        device = _selectbox_with_placeholder(
+            top_cols[0], "Device", device_options, general.get("Device"), "general_Device",
+            device_field.tooltip or None,
         )
-        device_options = sorted(set((device_field.options or []) + SUPPORTED_EXTRA_DEVICES))
-        device_value = resolve_choice(device_options, general.get("Device"))
-        device = top_cols[1].selectbox(
-            "Device",
-            options=device_options,
-            index=device_options.index(device_value),
-            help=device_field.tooltip or None,
-            key="general_Device",
+        general["Device"] = device
+        if not device:
+            form_col.info("**Step 1 of 3 — pick a device.** The settings it supports appear once it is selected.")
+            _snapshot()
+            _remember_device_selection(device)
+            return dict(general)
+
+        # Step 2 - the method decides which acquisition parameters are relevant.
+        method = _selectbox_with_placeholder(
+            top_cols[1], "Method", method_options, general.get("Method"), "general_Method",
+            method_field.tooltip or None,
         )
+        general["Method"] = method
+        method_full = METHOD_FULL_NAMES.get(method)
+        description = METHOD_DESCRIPTIONS.get(method)
+        if method_full or description:
+            top_cols[1].caption(" - ".join(p for p in (method_full or "", description or "") if p))
+        if not method:
+            form_col.info(f"**Step 2 of 3 — pick a method.** {device} is selected; choose what you are measuring.")
+            _snapshot()
+            _remember_device_selection(device)
+            return dict(general)
+
+        # Step 3 - everything else.
         if environment_field is not None:
             env_options = environment_field.options or [""]
             env_value = resolve_choice(env_options, general.get("Environment"))
-            environment = top_cols[2].selectbox(
+            general["Environment"] = top_cols[2].selectbox(
                 "Environment",
                 options=env_options,
                 index=env_options.index(env_value),
                 help=environment_field.tooltip or None,
                 key="general_Environment",
             )
-            general["Environment"] = environment
-        method_full = METHOD_FULL_NAMES.get(method)
-        description = METHOD_DESCRIPTIONS.get(method)
-        if method_full or description:
-            caption_parts = [method_full or ""]
-            if description:
-                caption_parts.append(description)
-            top_cols[0].caption(" - ".join(part for part in caption_parts if part))
-        general["Method"] = method
-        general["Device"] = device
+        form_col.caption(f"**Step 3 of 3 — session details** for {method} on {device}.")
 
     other_fields = [field for field in GENERAL_SCHEMA if field.name not in {"Method", "Device", "Environment"}]
     device_is_unicorn = device.lower() == "unicorn"
@@ -1110,13 +1169,7 @@ def render_general_form() -> Dict[str, Any]:
         spacer_col, snap_col = viz_col.columns([1, 5])
         with snap_col:
             render_config_snapshot(general.get("Method", ""), general.get("Device", ""), general)
-    previous_device = st.session_state.get("_last_device_selection")
-    device_changed = device != previous_device
-    if device_changed:
-        st.session_state["_last_device_selection"] = device
-        st.session_state["_actichamp_impedance_loaded"] = False
-        st.session_state["_actichamp_impedance_status"] = None
-        st.session_state["_actichamp_impedance_timestamp"] = None
+    _remember_device_selection(device)
 
     return dict(general)
 
@@ -1129,10 +1182,20 @@ def render_method_form(method: str) -> Dict[str, Any]:
         st.info(f"No dedicated parameter schema found for {method}.")
         return {}
 
+    device = st.session_state.get("general_form", {}).get("Device", "")
+    # Fields the selected hardware cannot honour are not shown. Their stored defaults still
+    # flow into the params, so nothing is dropped — the form just stops asking for values
+    # that have no meaning on this device.
+    visible_schema = [f for f in schema if _field_applies_to_device(f.name, device)]
+    hidden_count = len(schema) - len(visible_schema)
+
     with st.expander(f"{method} parameters", expanded=True):
-        ncols = 3 if len(schema) > 4 else 2  # denser grid for long method forms (less scrolling)
+        if hidden_count:
+            hidden_names = ", ".join(f.name for f in schema if f not in visible_schema)
+            st.caption(f"{hidden_count} field(s) hidden — not applicable to {device}: {hidden_names}.")
+        ncols = 3 if len(visible_schema) > 4 else 2  # denser grid for long method forms (less scrolling)
         cols = st.columns(ncols)
-        for idx, field in enumerate(schema):
+        for idx, field in enumerate(visible_schema):
             target = cols[idx % ncols]
             key = f"{method}_{field.name}"
             current = method_state.get(field.name)
@@ -1238,7 +1301,7 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
             "Toggle the channels you intend to record, set the 10-20 name (Position), adjust coordinates, and choose "
             "hardware. Ground/Reference rows stay enabled automatically."
         )
-        if device == "ActiCHamp":
+        if device in IMPEDANCE_CAPABLE_DEVICES:
             fs_value = st.session_state.get("general_form", {}).get("fs")
             status = st.session_state.get("_actichamp_impedance_status")
             last_ts = st.session_state.get("_actichamp_impedance_timestamp")

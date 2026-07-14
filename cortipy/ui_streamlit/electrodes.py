@@ -23,15 +23,26 @@ def bump_channel_editor_revision(device: str) -> None:
     revisions[device] = int(revisions.get(device, 0)) + 1
 
 
+def _normalize(label: Any) -> str:
+    """Compare channel labels ignoring case and spacing ("Ref" == "REF", "Ch 1" == "ch1")."""
+    return "".join(ch for ch in str(label or "").lower() if ch.isalnum())
+
+
 def map_impedances_to_channels(rows: List[Dict[str, Any]], values: List[float]) -> List[Dict[str, Any]]:
+    """Write measured impedances (ohms) onto the electrode rows, in kOhm.
+
+    The amplifier reports ``|GND|REF|CH1|CH2|...`` (AmplifierSDK.h). Matching is
+    case-insensitive: the row label is "Ref" while the SDK calls it "REF", so an exact
+    comparison silently left the reference electrode's impedance unset.
+    """
     if len(values) < 3:
         return rows
 
     labels = ["GND", "REF"] + [f"Ch {idx}" for idx in range(1, len(values) - 1)]
-    mapping = {label: values[idx] for idx, label in enumerate(labels) if idx < len(values)}
+    mapping = {_normalize(label): values[idx] for idx, label in enumerate(labels) if idx < len(values)}
 
     for row in rows:
-        value = mapping.get(row.get("Channel"))
+        value = mapping.get(_normalize(row.get("Channel")))
         if value is None or value < 0:
             continue
         row["Impedance"] = round(float(value) / 1000.0, 1)
