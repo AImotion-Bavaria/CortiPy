@@ -137,6 +137,15 @@ pip install -e .[ui]          # once per environment
 streamlit run apps/streamlit_app.py
 ```
 
+On **macOS (Apple Silicon)** use the launcher instead — plain `streamlit run` can crash on
+first use because numpy 1.26 runs a subprocess when `numpy.testing` is imported inside a
+Streamlit render thread (a fork-safety issue that does not occur on Windows/Linux):
+
+```bash
+python scripts/run_ui.py            # http://localhost:8501
+python scripts/run_ui.py --port 8600
+```
+
 Open `http://localhost:8501` (default Streamlit port) and configure a run:
 - Pick a method and device, fill in participant metadata, and assign electrodes before starting.
 - Set the sidebar “Save directory” (defaults to `./cortipy_runs`); each run gets its own timestamped folder.
