@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import contextlib
 import json
+import re
 import logging
 import sys
 import time
@@ -117,11 +118,15 @@ from cortipy.ui_streamlit.data_import import (  # noqa: E402
     params_from_jsonld_doc as _params_from_jsonld_doc_base,
 )
 from cortipy.ui_streamlit.live import (  # noqa: E402
+    DEFAULT_LIVE_PLOT,
+    DEFAULT_LIVE_SCALE,
+    LIVE_PLOT_TYPES,
+    LIVE_SCALE_OPTIONS,
+    LIVE_WINDOW_SECONDS,
     LiveViewService,
+    resolve_live_scale,
     _as_2d_array,
     _normalize_channel_indices,
-    _plot_fft_spectrum,
-    _plot_individual_channels,
     _plot_live_buffer,
     _reset_plot_window_open_state,
     _resolve_aux_channels,
@@ -222,6 +227,7 @@ from cortipy.ui_streamlit.constants import (  # noqa: E402
     DEVICE_POSITION_DEFAULTS,
     HIDDEN_VIEWS,
     IMPEDANCE_CAPABLE_DEVICES,
+    has_hardware_reference,
     REQUIRED_DEVICE_FIELDS,
     REQUIRED_METHOD_FREQUENCIES,
     field_applies_to_device as _field_applies_to_device,
@@ -1337,20 +1343,32 @@ def render_method_form(method: str) -> Dict[str, Any]:
             current = method_state.get(field.name)
             if field.name == "ReferenceChannel":
                 device = st.session_state.get("general_form", {}).get("Device", "")
-                ref_options, ref_labels = _reference_channel_options(device)
-                if ref_options:
-                    current_ref = coerce_number(current)
-                    resolved_ref = int(current_ref) if current_ref in ref_options else ref_options[0]
-                    value = target.selectbox(
-                        "Reference: all EEG - selected channel",
-                        options=ref_options,
-                        index=ref_options.index(resolved_ref),
-                        format_func=lambda option: ref_labels.get(option, str(option)),
-                        help="During analysis, every EEG channel is referenced as EEG channel minus this selected channel.",
-                        key=key,
+                if has_hardware_reference(device):
+                    # The reference is fixed in hardware; there is nothing to choose.
+                    target.text_input(
+                        "Reference",
+                        value=f"Fixed hardware reference ({device})",
+                        disabled=True,
+                        key=f"{key}_fixed",
+                        help=f"{device} references to its built-in electrode; no software "
+                             "re-reference is applied.",
                     )
+                    value = None  # do not carry a ReferenceChannel for this device
                 else:
-                    value = render_numeric_input(target, field, current, key)
+                    ref_options, ref_labels = _reference_channel_options(device)
+                    if ref_options:
+                        current_ref = coerce_number(current)
+                        resolved_ref = int(current_ref) if current_ref in ref_options else ref_options[0]
+                        value = target.selectbox(
+                            "Reference: all EEG - selected channel",
+                            options=ref_options,
+                            index=ref_options.index(resolved_ref),
+                            format_func=lambda option: ref_labels.get(option, str(option)),
+                            help="During analysis, every EEG channel is referenced as EEG channel minus this selected channel.",
+                            key=key,
+                        )
+                    else:
+                        value = render_numeric_input(target, field, current, key)
             elif field.kind == "dropdown":
                 options = field.options or [""]
                 resolved = resolve_choice(options, current)
@@ -1371,17 +1389,69 @@ def render_method_form(method: str) -> Dict[str, Any]:
     return dict(method_state)
 
 
-def _reference_channel_options(device: str) -> tuple[List[int], Dict[int, str]]:
+def _render_cap_electrode_selector(device: str, rows: List[Dict[str, Any]]) -> tuple[str, str]:
+    """Cap-wide electrode type + model, with the model list filtered to the chosen type.
+
+    Returns (rubric, model). One electrode is used across the whole cap, so the type is
+    chosen once and the model dropdown shows only that type's models — the per-row grid
+    column could not do this, which is why it listed all models.
+    """
+    # Seed the type from whatever the montage already carries, else the first rubric.
+    existing = next((r.get("Rubrik") for r in rows if r.get("Rubrik")), None)
+    current_rubric = _valid_electrode_rubrik(existing)
+
+    cols = st.columns(2)
+    rubric = cols[0].selectbox(
+        "Electrode type",
+        options=ELECTRODE_RUBRICS,
+        index=ELECTRODE_RUBRICS.index(current_rubric) if current_rubric in ELECTRODE_RUBRICS else 0,
+        key=f"cap_electrode_type_{device}",
+        help="One electrode type for the whole cap. The model list below is filtered to it.",
+    )
+
+    models = list(ELECTRODE_LIBRARY.get(rubric, []))
+    existing_model = next((r.get("Model") for r in rows if r.get("Model")), None)
+    # Keep an unknown model from an imported dataset selectable rather than dropping it.
+    if existing_model and existing_model not in models and MODEL_TO_RUBRIK.get(existing_model, rubric) == rubric:
+        models.append(str(existing_model))
+    model_default = existing_model if existing_model in models else (models[0] if models else "")
+    model = cols[1].selectbox(
+        "Electrode model",
+        options=models or [""],
+        index=models.index(model_default) if model_default in models else 0,
+        key=f"cap_electrode_model_{device}_{rubric}",
+        help="Applied to every channel.",
+    )
+    return rubric, str(model or "")
+
+
+def _requested_eeg_channel_count(device: str) -> int:
+    """How many EEG channels the session is recording (NumberEEGChannels, capped to montage)."""
     rows = ensure_channel_rows(device, st.session_state["channel_tables"].get(device))
     extras = set(DEVICE_EXTRA_LABELS.get(device, []))
     eeg_rows = [row for row in rows if row.get("Channel") not in extras]
-    active_rows = [row for row in eeg_rows if bool(row.get("Active"))]
-    display_rows = active_rows or eeg_rows
+    method = str(st.session_state.get("general_form", {}).get("Method") or "")
+    method_state = st.session_state.get("method_forms", {}).get(method, {}) if method else {}
+    requested = coerce_number(method_state.get("NumberEEGChannels"))
+    count = int(requested) if requested and requested > 0 else len(eeg_rows)
+    return max(1, min(count, len(eeg_rows)))
+
+
+def _reference_channel_options(device: str) -> tuple[List[int], Dict[int, str]]:
+    """One reference option per recorded EEG channel — exactly NumberEEGChannels of them.
+
+    The reference has to be a channel that is actually recorded, so the option count must
+    equal the EEG channel count. It previously listed active rows, which could drift from
+    NumberEEGChannels.
+    """
+    rows = ensure_channel_rows(device, st.session_state["channel_tables"].get(device))
+    extras = set(DEVICE_EXTRA_LABELS.get(device, []))
+    eeg_rows = [row for row in rows if row.get("Channel") not in extras]
+    count = _requested_eeg_channel_count(device)
+
     options: List[int] = []
     labels: Dict[int, str] = {}
-    for eeg_index, row in enumerate(eeg_rows, start=1):
-        if row not in display_rows:
-            continue
+    for eeg_index, row in enumerate(eeg_rows[:count], start=1):
         label = row.get("Position") or row.get("Channel") or f"Ch {eeg_index}"
         options.append(eeg_index)
         labels[eeg_index] = f"{eeg_index}: {label}"
@@ -1593,8 +1663,11 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
         # selected channel from every EEG channel; Ground/Reference extras are not EEG columns.
         method = st.session_state.get("general_form", {}).get("Method")
         method_has_ref = any(f.name == "ReferenceChannel" for f in METHOD_SCHEMAS.get(method, []))
-        eeg_rows = [row for row in rows if row["Channel"] not in extras_set]
-        if method and method_has_ref and eeg_rows:
+        # Only the recorded channels can be a reference, so cap to NumberEEGChannels.
+        eeg_rows = [row for row in rows if row["Channel"] not in extras_set][:_requested_eeg_channel_count(device)]
+        if has_hardware_reference(device):
+            st.caption(f"Reference is fixed in hardware for {device} — nothing to choose.")
+        elif method and method_has_ref and eeg_rows:
             ref_labels = [f"{i + 1}: {row.get('Position') or row['Channel']}" for i, row in enumerate(eeg_rows)]
             current_ref = st.session_state.get("method_forms", {}).get(method, {}).get("ReferenceChannel")
             try:
@@ -1615,14 +1688,19 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 st.session_state.setdefault("method_forms", {}).setdefault(method, {})["ReferenceChannel"] = new_ref
                 st.session_state.pop(f"{method}_ReferenceChannel", None)  # keep the method form in sync
 
-        # The table spans the full width and the scalp map sits underneath it. Squeezed
-        # beside the map, only four of the eight columns fit.
+        # One electrode type + model for the whole cap. A per-row model dropdown can't be
+        # filtered to its row's type (Streamlit column options are per-column, not per-row),
+        # so it used to list all 66 models regardless of type. You pick the type once, then a
+        # model from that type, and it applies to every channel.
+        cap_rubric, cap_model = _render_cap_electrode_selector(device, rows)
+
+        # The table spans the full width and the scalp map sits underneath it.
         table_col = st.container()
         map_col = st.container()
         with table_col:
             # Impedance used to be pushed off screen entirely, which is why it looked like it
             # had stopped being filled. Coordinates are rarely typed by hand (that is what the
-            # scalp map is for), so they hide behind a toggle and the rest always fit.
+            # scalp map is for), so they hide behind a toggle.
             edit_coords = st.checkbox(
                 "Edit coordinates",
                 value=False,
@@ -1630,28 +1708,15 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 help="Show the PosX/PosY columns. Normally you place electrodes on the scalp map instead.",
             )
             if edit_coords:
-                # Coordinates go straight after Position, otherwise they land past the right
-                # edge of the grid and are virtualized away — the toggle would appear to do
-                # nothing.
-                column_order = ["Channel", "Position", "PosX", "PosY", "Impedance", "Rubrik", "Model"]
+                column_order = ["Channel", "Position", "PosX", "PosY", "Impedance"]
             else:
-                column_order = ["Channel", "Position", "Impedance", "Rubrik", "Model"]
+                column_order = ["Channel", "Position", "Impedance"]
 
             # The editor drops columns it is not showing, so remember the coordinates and
             # put them back afterwards — otherwise hiding them would silently reset them.
             saved_coords = {
                 row.get("Channel"): (row.get("PosX"), row.get("PosY")) for row in rows
             }
-
-            # Model names are long and the identifying part is at the end ("... TDE-212B
-            # Spike"), so Model gets the room and the short columns give theirs back.
-            # Anything already on a row that we do not know stays selectable, or loading a
-            # dataset recorded with another build would strip its electrode model.
-            model_options = list(ELECTRODE_MODELS)
-            for row in rows:
-                model = str(row.get("Model") or "").strip()
-                if model and model not in model_options:
-                    model_options.append(model)
 
             edited = st.data_editor(
                 rows,
@@ -1664,23 +1729,11 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                     "Position": st.column_config.TextColumn(
                         "Electrode / Position",
                         help="10-20 label or custom montage description",
-                        width=170,
-                    ),
-                    "Rubrik": st.column_config.SelectboxColumn(
-                        "Electrode type (Rubrik)",
-                        options=ELECTRODE_RUBRICS,
-                        width=190,
-                    ),
-                    "Model": st.column_config.SelectboxColumn(
-                        "Model",
-                        options=model_options,
-                        width=340,
-                        help="Pick the electrode model. Choosing one from another category "
-                        "updates the category to match.",
+                        width=200,
                     ),
                     "Impedance": st.column_config.NumberColumn(
                         "Impedance (kOhm)",
-                        width=145,
+                        width=160,
                         min_value=0.0,
                         step=0.5,
                         format="%.1f",
@@ -1704,21 +1757,14 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 },
             )
             extras = set(DEVICE_EXTRA_LABELS.get(device, []))
-            previous_models = {row.get("Channel"): row.get("Model") for row in rows}
             corrected_model = False
             for row_idx, row in enumerate(edited):
                 # Every row on screen is a channel being recorded, so it is active by
                 # definition; the count is what decides, not a per-row toggle.
                 row["Active"] = True
-
-                # A model picked from a different category moves the category to it, rather
-                # than the category silently overwriting the choice just made.
-                model_now = str(row.get("Model") or "").strip()
-                if model_now != previous_models.get(row.get("Channel")):
-                    owning_rubric = MODEL_TO_RUBRIK.get(model_now)
-                    if owning_rubric and owning_rubric != row.get("Rubrik"):
-                        row["Rubrik"] = owning_rubric
-                        corrected_model = True
+                # Electrode type and model come from the single cap-wide choice above.
+                row["Rubrik"] = cap_rubric
+                row["Model"] = cap_model
                 if not row.get("Position"):
                     row["Position"] = row["Channel"].replace(" ", "")
                 pos_x = coerce_number(row.get("PosX"))
@@ -1733,20 +1779,18 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                     pos_x, pos_y = _safe_channel_coords(row["Position"], row_idx)
                 row["PosX"] = float(pos_x)
                 row["PosY"] = float(pos_y)
-                row["Rubrik"] = _valid_electrode_rubrik(row.get("Rubrik") or row.get("Rubric"))
-                next_model = _model_for_rubrik(row["Rubrik"], row.get("Model"))
-                if row.get("Model") != next_model:
-                    corrected_model = True
-                row["Model"] = next_model
 
             # Merge the edited rows back into the full montage. Channels beyond the recorded
-            # count are not on screen but keep their positions, impedances and models, so
-            # raising the count again restores what was already set for them.
+            # count are not on screen but keep their positions and impedances, so raising the
+            # count again restores what was already set for them. The cap-wide electrode
+            # type/model applies to every channel, on screen or not.
             shown = {str(row["Channel"]) for row in edited}
             merged = {str(r.get("Channel")): dict(r) for r in all_rows}
             for row in edited:
                 merged[str(row["Channel"])] = row
             for name, entry in merged.items():
+                entry["Rubrik"] = cap_rubric
+                entry["Model"] = cap_model
                 if name not in extras and name not in shown:
                     entry["Active"] = False  # beyond the recorded count
             channel_state[device] = list(merged.values())
@@ -1836,13 +1880,28 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
     duration = float("inf") if unlimited else float(
         st.slider("Preview duration (s)", min_value=2, max_value=120, value=10, step=1)
     )
-    window = st.slider(
-        "Rolling window (s)",
-        min_value=1,
-        max_value=120,
-        value=min(5, int(duration) if math.isfinite(duration) else 5),
-        step=1,
+    # The rolling window is fixed, so traces stay comparable between runs.
+    window = LIVE_WINDOW_SECONDS
+    plot_cols = st.columns([1, 1, 1])
+    plot_cols[0].selectbox(
+        "Live plot",
+        options=list(LIVE_PLOT_TYPES),
+        index=list(LIVE_PLOT_TYPES).index(st.session_state.get("live_view_plot", DEFAULT_LIVE_PLOT)),
+        key="live_view_plot",
+        help="Which plot to show. Works for every method.",
     )
+    scale_cols = plot_cols
+    scale_cols[1].selectbox(
+        "Scaling (y-axis)",
+        options=list(LIVE_SCALE_OPTIONS),
+        index=list(LIVE_SCALE_OPTIONS).index(
+            st.session_state.get("live_view_scale", DEFAULT_LIVE_SCALE)
+        ),
+        key="live_view_scale",
+        help="Auto fits each channel to its own data. A fixed range keeps channels and runs "
+             "on identical axes, which is what makes them comparable.",
+    )
+    scale_cols[2].caption(f"Window fixed at {LIVE_WINDOW_SECONDS:g} s.")
     interval = st.slider("Update interval (s)", min_value=0.05, max_value=1.0, value=0.25, step=0.05)
 
     placeholder = st.empty()
@@ -1891,6 +1950,8 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
                 window=float(args["window"]),
                 update_interval=float(args["interval"]),
                 final_interactive=not state.get("_live_preview_unlimited", False),
+                scale=resolve_live_scale(st.session_state.get("live_view_scale")),
+                plot_type=st.session_state.get("live_view_plot", DEFAULT_LIVE_PLOT),
             )
             state["_live_preview_last_buffer"] = buffer
             if state.get("_live_preview_unlimited", False) and state.get("_live_preview_active", False):
@@ -1909,9 +1970,11 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
     ):
         buffer = state["_live_preview_last_buffer"]
         indices = _normalize_channel_indices(state["_live_preview_args"].get("selected_indices"), channel_count)
-        _plot_live_buffer(buffer, fs, placeholder, channel_indices=indices, interactive=True)
-        _plot_fft_spectrum(buffer, fs, fft_placeholder, channel_indices=indices, interactive=True)
-        _plot_individual_channels(buffer, fs, per_channel_placeholders, indices, interactive=True)
+        _plot_live_buffer(
+            buffer, fs, placeholder, channel_indices=indices, params=params, render_inline=True,
+            plot_type=st.session_state.get("live_view_plot", DEFAULT_LIVE_PLOT),
+            scale=resolve_live_scale(st.session_state.get("live_view_scale")),
+        )
         st.success(f"Stopped live preview after capturing {buffer.shape[0]} samples.")
 
 
@@ -2073,7 +2136,11 @@ def assemble_params(
         value = convert_value(field, method_values.get(field.name))
         if value not in (None, "", []):
             params["Parameters"][field.name] = value
-    if any(field.name == "ReferenceChannel" for field in METHOD_SCHEMAS.get(params["Method"], [])):
+    if has_hardware_reference(params["Device"]):
+        # The reference is fixed in hardware; carrying a software ReferenceChannel would make
+        # the evaluators re-reference already-referenced data. Drop it.
+        params["Parameters"].pop("ReferenceChannel", None)
+    elif any(field.name == "ReferenceChannel" for field in METHOD_SCHEMAS.get(params["Method"], [])):
         reference_value = coerce_number(params["Parameters"].get("ReferenceChannel"))
         if reference_value is None or reference_value < 1:
             params["Parameters"]["ReferenceChannel"] = 1
@@ -2312,6 +2379,33 @@ def verify_device_connection(params: Dict[str, Any]) -> tuple[bool, str]:
                 LOGGER.debug("Device disconnect after verify raised", exc_info=True)
 
 
+def _sanitize_stem(name: Any) -> str:
+    """Filesystem/BIDS-safe stem: keep alphanumerics, '-' and '_'; spaces become '_'."""
+    text = str(name or "").strip()
+    text = re.sub(r"\s+", "_", text)
+    text = re.sub(r"[^A-Za-z0-9_-]", "", text)
+    return text.strip("_-")
+
+
+def next_run_index(root: Path, stem_base: str) -> int:
+    """Next free run number for exports whose name starts from `stem_base`, under `root`.
+
+    Every export used to land on the same filename, so exporting a second recording into a
+    dataset folder silently destroyed the first. Runs are numbered instead, which is also
+    how BIDS distinguishes repeats of the same task.
+    """
+    root = Path(root)
+    if not root.exists() or not stem_base:
+        return 1
+    pattern = re.compile(rf"{re.escape(stem_base)}.*run-(\d+)", re.IGNORECASE)
+    highest = 0
+    for path in root.rglob("*"):
+        match = pattern.search(path.name)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return highest + 1
+
+
 def export_recording(data: Any, params: Dict[str, Any], out_dir: Path, container: str, raw_format: str) -> Path:
     """Export a recording as BIDS or JSON-LD metadata with a selectable raw layer."""
     from cortipy.shared.bids import BIDSLoader, BIDSLoadResult, _coerce_to_raw_array
@@ -2328,6 +2422,10 @@ def export_recording(data: Any, params: Dict[str, Any], out_dir: Path, container
     part = (params.get("Metadata") or {}).get("Participant") or {}
     subject = (str(part.get("Code") or "01").replace(" ", "") or "01")
     task = str(params.get("Method") or "task").lower()
+    # Honour the filename the operator typed on the session page. It used to be ignored, so
+    # exports were always named sub_task_run regardless of what was entered.
+    custom = _sanitize_stem(pblock.get("Filename"))
+    stem_base = custom or f"{subject}_{task}"
     fmt = raw_format.lower()
     out_dir = Path(out_dir)
     container_key = str(container or "").upper().replace("-", "").replace("_", "").replace(" ", "")
@@ -2339,22 +2437,30 @@ def export_recording(data: Any, params: Dict[str, Any], out_dir: Path, container
                 "Choose JSON-LD + NPZ, or use BIDS + Parquet/EDF."
             )
         root = out_dir / "bids_export"
+        # BIDS keeps its sub-/task- structure; a custom filename becomes the task label so it
+        # still shows in the path. Number the run instead of overwriting the previous one.
+        bids_task = custom or task
+        run = f"{next_run_index(root, f'sub-{subject}_task-{bids_task}'):02d}"
         BIDSLoader(root).to_bids(
-            arr, sampling_rate=fs, ch_names=ch_names, subject=subject, task=task,
-            format=fmt, overwrite=True, dataset_description={"Name": params.get("Method") or "CortiPy export"},
+            arr, sampling_rate=fs, ch_names=ch_names, subject=subject, task=bids_task, run=run,
+            format=fmt, overwrite=False, dataset_description={"Name": custom or params.get("Method") or "CortiPy export"},
         )
         return root
 
     from cortipy.shared.dataset import CortiDataset  # JSON-LD/SBIDS path
     raw = _coerce_to_raw_array(arr, fs, ch_names, None)
+    root = out_dir / "jsonld_export"
+    run = next_run_index(root, stem_base)
     result = BIDSLoadResult(
         raw=raw, data=arr, sampling_rate=fs, events=None, channels=None,
-        metadata={"params": params}, source_path=Path(f"{subject}_{task}_scalpdata"), ancillary_files=[],
+        metadata={"params": params},
+        source_path=Path(f"{stem_base}_run-{run:02d}_scalpdata"), ancillary_files=[],
     )
-    # No BIDS "sub-" entity prefix in the stem: to_sbids derives the dataset @id and name
-    # from it, so the prefix leaked into urn:dataset:... and, once re-imported as Filename,
-    # came back doubled as urn:recording:01_sbids_meta_sub-01.
-    out = out_dir / "jsonld_export" / f"sbids_meta_{subject}.jsonld"
+    # The stem must be unique per recording: to_sbids derives the dataset @id, the dataset
+    # name AND the raw file name from it, so a fixed stem meant every export overwrote the
+    # last one. No BIDS "sub-" entity prefix here — it leaked into urn:dataset:... and came
+    # back doubled on re-import.
+    out = root / f"sbids_meta_{stem_base}_run-{run:02d}.jsonld"
     out.parent.mkdir(parents=True, exist_ok=True)
     CortiDataset(result).to_sbids(out, export_format=fmt)
     return out.parent
@@ -3018,14 +3124,30 @@ def render_sidebar_controls() -> SidebarControls:
             key="live_view_enabled_toggle",
         )
 
-        live_view_window = st.slider(
-            "Window (s)",
-            min_value=1,
-            max_value=60,
-            value=5,
+        # Which plot to show, and the y scale. The window is fixed.
+        st.selectbox(
+            "Live plot",
+            options=list(LIVE_PLOT_TYPES),
+            index=list(LIVE_PLOT_TYPES).index(
+                st.session_state.get("live_view_plot", DEFAULT_LIVE_PLOT)
+            ),
             disabled=not live_view_enabled,
-            key="live_view_window_slider",
+            key="live_view_plot",
+            help="Which plot to show during the recording. Works for every method.",
         )
+        st.selectbox(
+            "Scaling (y-axis)",
+            options=list(LIVE_SCALE_OPTIONS),
+            index=list(LIVE_SCALE_OPTIONS).index(
+                st.session_state.get("live_view_scale", DEFAULT_LIVE_SCALE)
+            ),
+            disabled=not live_view_enabled,
+            key="live_view_scale",
+            help="Auto fits each channel to its own data. A fixed range keeps channels and "
+                 "runs on identical axes.",
+        )
+        st.caption(f"Rolling window fixed at {LIVE_WINDOW_SECONDS:g} s.")
+        live_view_window = LIVE_WINDOW_SECONDS
 
     with sidebar.container(border=True):
         st.subheader("Run")

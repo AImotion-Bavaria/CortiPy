@@ -194,7 +194,19 @@ def plotly_window_html(
 </html>"""
 
 
-def image_window_html(fig: Optional[plt.Figure], title: str) -> str:
+def image_window_html(
+    fig: Optional[plt.Figure],
+    title: str,
+    *,
+    auto_refresh: bool = False,
+    refresh_seconds: float = 1.0,
+) -> str:
+    """Render a figure into a standalone window.
+
+    ``auto_refresh`` emits the meta-refresh that makes a streaming window actually stream.
+    Without it the pop-out is a dead screenshot: the file underneath is rewritten on every
+    chunk, but nothing tells the already-open tab to reload it.
+    """
     title_html = html.escape(title)
     if fig is None:
         image_data = ""
@@ -203,11 +215,17 @@ def image_window_html(fig: Optional[plt.Figure], title: str) -> str:
         fig.savefig(buffer, format="png", dpi=180, bbox_inches="tight")
         image_data = base64.b64encode(buffer.getvalue()).decode("ascii")
     filename = safe_window_key(title) + ".png"
+    refresh = (
+        f"<meta http-equiv='refresh' content='{max(0.2, float(refresh_seconds)):.2f}'>"
+        if auto_refresh
+        else ""
+    )
     return f"""<!doctype html>
 <html>
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  {refresh}
   <title>{title_html}</title>
   <style>
     body {{
@@ -368,10 +386,20 @@ def write_plotly_window(
     return path
 
 
-def write_matplotlib_window(fig: plt.Figure, title: str, key: str) -> Path:
+def write_matplotlib_window(
+    fig: plt.Figure,
+    title: str,
+    key: str,
+    *,
+    auto_refresh: bool = False,
+    refresh_seconds: float = 1.0,
+) -> Path:
     WINDOW_DIR.mkdir(parents=True, exist_ok=True)
     path = WINDOW_DIR / f"{safe_window_key(key)}.html"
-    path.write_text(image_window_html(fig, title), encoding="utf-8")
+    path.write_text(
+        image_window_html(fig, title, auto_refresh=auto_refresh, refresh_seconds=refresh_seconds),
+        encoding="utf-8",
+    )
     return path
 
 

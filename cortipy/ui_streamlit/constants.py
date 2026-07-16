@@ -79,6 +79,16 @@ DEVICE_DEFAULT_CHANNELS = {
     "Offline": 8,
     "Dummy": 8,
 }
+# Devices whose reference electrode is fixed in hardware and cannot be chosen. The UNICORN
+# Hybrid streams data already referenced to its built-in reference, so a software
+# re-reference against an arbitrary EEG channel is neither needed nor meaningful.
+DEVICE_HARDWARE_REFERENCE = ("UNICORN",)
+
+
+def has_hardware_reference(device: str) -> bool:
+    return str(device or "") in DEVICE_HARDWARE_REFERENCE
+
+
 DEVICE_EXTRA_LABELS = {
     "ActiCHamp": ["GND"],
     "UNICORN": ["GND", "Ref"],
@@ -123,7 +133,8 @@ REQUIRED_METHOD_FREQUENCIES: Dict[str, tuple] = {
 # Requesting a rate the hardware can't do gets clamped by the producer, which makes a recording
 # run longer than RecordingTime (see the acquire() wall-time cap) — so constrain the choices here.
 DEVICE_FS_OPTIONS = {
-    "ActiCHamp": ["250", "500", "1000", "2000", "5000", "10000", "25000", "50000", "100000"],
+    # 250 Hz is not usable on this ActiCHamp; the lowest working rate is 500 Hz.
+    "ActiCHamp": ["500", "1000", "2000", "5000", "10000", "25000", "50000", "100000"],
     "UNICORN": ["250"],
 }
 

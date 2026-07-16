@@ -328,6 +328,11 @@ class ActiChampDevice(DeviceInterface):
             buf = self._buf
             buf.control.stopRequested = False
             buf.control.targetSamplingRate = 0.0
+            # Tell the producer to switch the amplifier into impedance mode. Without this the
+            # producer never measures impedances, so impSize stays 0 and every value stays 0 —
+            # which looked like "impedance never updates".
+            buf.control.measureImpedance = True
+            buf.control.showImpedanceLEDs = True
             buf.impSize = 0
             for idx in range(MAX_CHANNELS + 2):
                 buf.impedances[idx] = -1.0
@@ -336,22 +341,28 @@ class ActiChampDevice(DeviceInterface):
             first_positive_at: float | None = None
             last_values: list[float] = []
 
-            while True:
-                size = int(buf.impSize)
-                if size > 0:
-                    limit = min(size, MAX_CHANNELS + 2)
-                    last_values = [float(buf.impedances[i]) for i in range(limit)]
-                    if any(value > 0 for value in last_values):
-                        if first_positive_at is None:
-                            first_positive_at = time.time()
-                        if (time.time() - first_positive_at) >= max(0.0, float(settle_seconds)):
-                            return last_values
+            try:
+                while True:
+                    size = int(buf.impSize)
+                    if size > 0:
+                        limit = min(size, MAX_CHANNELS + 2)
+                        last_values = [float(buf.impedances[i]) for i in range(limit)]
+                        if any(value > 0 for value in last_values):
+                            if first_positive_at is None:
+                                first_positive_at = time.time()
+                            if (time.time() - first_positive_at) >= max(0.0, float(settle_seconds)):
+                                return last_values
 
-                if time.time() >= deadline:
-                    break
-                time.sleep(max(0.01, float(poll_interval)))
+                    if time.time() >= deadline:
+                        break
+                    time.sleep(max(0.01, float(poll_interval)))
 
-            return last_values
+                return last_values
+            finally:
+                # Leave impedance mode, or the next acquisition would start with the amplifier
+                # still measuring impedance instead of streaming EEG.
+                buf.control.measureImpedance = False
+                buf.control.showImpedanceLEDs = False
 
     # ------------------------------------------------------------------
     def _channel_limit(self, aux_channels: int) -> int:

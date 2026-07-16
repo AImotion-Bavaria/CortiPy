@@ -17,7 +17,6 @@ def test_live_view_keeps_moving_window_with_absolute_sample_offset(monkeypatch) 
         calls.append((buffer.copy(), fs, kwargs))
 
     monkeypatch.setattr(live, "_plot_live_buffer", capture_plot)
-    monkeypatch.setattr(live, "_plot_fft_spectrum", lambda *args, **kwargs: None)
 
     service = live.LiveViewService(Placeholder(), window_seconds=1.0, channel_indices=[0])
     service.push(np.arange(6, dtype=float)[:, None], fs=4.0)
@@ -28,20 +27,18 @@ def test_live_view_keeps_moving_window_with_absolute_sample_offset(monkeypatch) 
     assert calls[-1][2]["window_seconds"] == 1.0
 
 
-def test_live_view_final_channel_windows_are_opt_in(monkeypatch) -> None:
-    individual_calls = []
+def test_live_view_renders_the_chosen_plot_type(monkeypatch) -> None:
+    # The service renders one plot (the operator's choice) inline; FFT and per-channel are
+    # now plot types, not separate windows.
+    calls = []
+    monkeypatch.setattr(live, "_plot_live_buffer", lambda *a, **k: calls.append(k))
 
-    monkeypatch.setattr(live, "_plot_live_buffer", lambda *args, **kwargs: None)
-    monkeypatch.setattr(live, "_plot_fft_spectrum", lambda *args, **kwargs: None)
-    monkeypatch.setattr(
-        live,
-        "_plot_individual_channels",
-        lambda *args, **kwargs: individual_calls.append((args, kwargs)),
+    service = live.LiveViewService(
+        Placeholder(), window_seconds=1.0, channel_indices=[0], plot_type=live.PLOT_OVERLAID
     )
-
-    service = live.LiveViewService(Placeholder(), window_seconds=1.0, channel_indices=[0], final_channel_windows=True)
     service.push(np.arange(4, dtype=float)[:, None], fs=4.0)
     service.mark_complete()
 
-    assert len(individual_calls) == 1
-    assert individual_calls[0][1]["sample_offset"] == 0
+    assert calls, "the service should render the buffer"
+    assert all(k["plot_type"] == live.PLOT_OVERLAID for k in calls)
+    assert all(k["render_inline"] is True for k in calls)

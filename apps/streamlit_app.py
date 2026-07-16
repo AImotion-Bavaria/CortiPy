@@ -255,7 +255,8 @@ def main() -> None:
                 progress_placeholder=progress_placeholder,
                 total_seconds=_selected_recording_seconds(params_to_run),
                 max_update_seconds=0.5,
-                final_channel_windows=bool(selection and "All" not in selection),
+                scale=ui.resolve_live_scale(st.session_state.get("live_view_scale")),
+                plot_type=st.session_state.get("live_view_plot", ui.DEFAULT_LIVE_PLOT),
             )
             if live_view_enabled:
                 st.session_state["_live_view_active"] = True
