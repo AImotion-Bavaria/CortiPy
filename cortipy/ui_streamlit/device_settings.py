@@ -3,22 +3,18 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List
 
 import streamlit as st
 
-try:
-    from serial.tools import list_ports
-
-    _SERIAL_IMPORT_ERROR: Optional[str] = None
-except Exception as exc:  # pragma: no cover - depends on the environment
-    list_ports = None
-    # Swallowing this silently left the dropdown with nothing but "Manual entry" and no
-    # explanation, which reads exactly like "the UI only offers one device".
-    _SERIAL_IMPORT_ERROR = str(exc)
-
 from cortipy.ui_streamlit.constants import DEVICE_CONFIG_SCHEMA, device_default_values
 from cortipy.ui_streamlit.fields import coerce_number
+from cortipy.ui_streamlit.serial_ports import (
+    SERIAL_IMPORT_ERROR as _SERIAL_IMPORT_ERROR,
+    list_ports,
+    serial_port_options,
+    windows_bluetooth_names,
+)
 
 LOGGER = logging.getLogger(__name__)
 
@@ -35,55 +31,24 @@ DEVICE_FIELD_WIDTHS: Dict[str, float] = {
 # Placeholder occupying the narrow column that holds the port's Rescan button.
 _RESCAN_SLOT = object()
 
-# A paired UNICORN shows up as a virtual serial port whose name carries one of these.
-UNICORN_PORT_HINTS = ("unicorn", "un-", "g.tec", "gtec")
+_PORT_CACHE_KEY = "_serial_port_options"
 
 
-def _looks_like_unicorn(*fields: str) -> bool:
-    haystack = " ".join(f for f in fields if f).lower()
-    return any(hint in haystack for hint in UNICORN_PORT_HINTS)
+def cached_serial_port_options(force: bool = False) -> List[tuple]:
+    """Port list, cached across reruns.
 
-
-def serial_port_options() -> List[Tuple[str, str]]:
-    """Every serial port the OS reports, likely UNICORNs first.
-
-    Each paired headset is its own virtual COM/cu port, so listing all of them is what
-    surfaces multiple simultaneous connections.
+    Resolving Bluetooth device names on Windows shells out to PowerShell, which costs a
+    noticeable fraction of a second — far too slow to repeat on every Streamlit rerun.
+    "Rescan" is what re-enumerates, which is also when a newly paired headset appears.
     """
-    if list_ports is None:
-        return []
-    seen = set()
-    options: List[Tuple[str, str, bool]] = []
-    for info in list_ports.comports():
-        device = getattr(info, "device", None) or getattr(info, "name", None)
-        if not device or device in seen:
-            continue
-        description = getattr(info, "description", "") or getattr(info, "product", "")
-        manufacturer = getattr(info, "manufacturer", "")
-        serial_no = getattr(info, "serial_number", "") or getattr(info, "serial", "")
-        vid = getattr(info, "vid", None)
-        pid = getattr(info, "pid", None)
-        usb_id = f"{vid:04X}:{pid:04X}" if isinstance(vid, int) and isinstance(pid, int) else ""
-        details_parts = []
-        if description and description != device:
-            details_parts.append(description)
-        if manufacturer:
-            details_parts.append(manufacturer)
-        if usb_id:
-            details_parts.append(usb_id)
-        if serial_no:
-            details_parts.append(f"SN {serial_no}")
-        details = ", ".join(details_parts)
-        is_unicorn = _looks_like_unicorn(device, description, manufacturer, serial_no)
-        label = f"{device} - {details}" if details else device
-        if is_unicorn:
-            label = f"UNICORN · {label}"
-        options.append((device, label, is_unicorn))
-        seen.add(device)
-
-    # Likely UNICORNs first, then everything else, each group alphabetical.
-    options.sort(key=lambda item: (not item[2], item[0]))
-    return [(device, label) for device, label, _ in options]
+    if force:
+        st.session_state.pop(_PORT_CACHE_KEY, None)
+    cached = st.session_state.get(_PORT_CACHE_KEY)
+    if cached is not None:
+        return cached
+    options = serial_port_options(windows_bluetooth_names())
+    st.session_state[_PORT_CACHE_KEY] = options
+    return options
 
 
 def render_unicorn_port_input(target, field: Dict[str, Any], current: Any, key: str, rescan_target=None) -> str:
@@ -96,11 +61,11 @@ def render_unicorn_port_input(target, field: Dict[str, Any], current: Any, key: 
     # Streamlit reruns keep the old option list; rescanning has to be explicit or a headset
     # paired after the app started never appears.
     rescan_on = rescan_target if rescan_target is not None else target
-    if rescan_on.button("Rescan", key=f"{key}_rescan", width="stretch",
-                        help="Re-enumerate connected serial/Bluetooth devices."):
-        st.session_state.pop(f"{key}_ports", None)
-
-    port_entries = serial_port_options()
+    rescan = rescan_on.button(
+        "Rescan", key=f"{key}_rescan", width="stretch",
+        help="Re-enumerate connected serial/Bluetooth devices. Press this after pairing a headset.",
+    )
+    port_entries = cached_serial_port_options(force=rescan)
     labels = {port: label for port, label in port_entries}
     options: List[str] = [port for port, _ in port_entries]
 
