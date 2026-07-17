@@ -2573,9 +2573,21 @@ def simulated_recording_data(params: Dict[str, Any]) -> np.ndarray:
 
 @st.cache_data
 def list_saved_sessions(base_dir: Path) -> List[Path]:
+    """Resumable session folders under ``base_dir``, newest first.
+
+    Only folders that actually hold a ``params.json`` count. A run interrupted before it
+    saved, or an export-only folder (``jsonld_export``/``bids_export``), has nothing to
+    resume from — listing it made it "the latest session" and then "Continue experiment"
+    failed with *params.json missing*.
+    """
     if not base_dir.exists():
         return []
-    return sorted([path for path in base_dir.iterdir() if path.is_dir()], reverse=True)
+    sessions = [
+        path
+        for path in base_dir.iterdir()
+        if path.is_dir() and (path / "params.json").is_file()
+    ]
+    return sorted(sessions, reverse=True)
 
 
 def run_pipeline_once(
