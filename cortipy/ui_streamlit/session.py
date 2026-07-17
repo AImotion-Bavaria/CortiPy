@@ -647,6 +647,13 @@ def _plotly_topography(rows: List[Dict[str, Any]]) -> Optional["go.Figure"]:
     return fig
 
 
+# The sidebar's single run-mode selector; kept as constants so load_params_into_state and
+# render_sidebar_controls agree on the exact labels.
+RUN_MODE_LIVE = "Live device"
+RUN_MODE_SIM = "Simulate (no hardware)"
+RUN_MODE_REPLAY = "Replay imported file"
+
+
 def load_params_into_state(
     params: Dict[str, Any],
     data_override: Optional[np.ndarray] = None,
@@ -756,6 +763,12 @@ def load_params_into_state(
     # recording to reuse its settings made it impossible to record again.
     st.session_state["use_imported_data"] = bool(enable_replay) and data_array is not None
     st.session_state["imported_params_raw"] = params
+    # Keep the sidebar's run-mode selector in step with a load: a recording opened for
+    # replay shows "Replay", while reusing settings must not leave it stuck there.
+    if st.session_state["use_imported_data"]:
+        st.session_state["run_mode_choice"] = RUN_MODE_REPLAY
+    elif st.session_state.get("run_mode_choice") == RUN_MODE_REPLAY:
+        st.session_state["run_mode_choice"] = RUN_MODE_LIVE
 
 
 def ensure_state() -> None:
@@ -1389,40 +1402,46 @@ def render_method_form(method: str) -> Dict[str, Any]:
     return dict(method_state)
 
 
-def _render_cap_electrode_selector(device: str, rows: List[Dict[str, Any]]) -> tuple[str, str]:
-    """Cap-wide electrode type + model, with the model list filtered to the chosen type.
+def _electrode_model_options(rows: List[Dict[str, Any]]) -> List[str]:
+    """Every known model, plus any unknown ones already on the montage (kept, not dropped)."""
+    options = list(ELECTRODE_MODELS)
+    for row in rows:
+        model = str(row.get("Model") or "").strip()
+        if model and model not in options:
+            options.append(model)
+    return options
 
-    Returns (rubric, model). One electrode is used across the whole cap, so the type is
-    chosen once and the model dropdown shows only that type's models — the per-row grid
-    column could not do this, which is why it listed all models.
+
+def _render_apply_all_electrodes(device: str, rows: List[Dict[str, Any]]) -> Optional[tuple[str, str]]:
+    """Optional convenience: stamp one electrode onto every channel at once.
+
+    Each channel picks its own model in the table; this is just a shortcut for the common
+    case of a uniform cap. It returns (rubric, model) *only* when Apply is clicked, so it
+    never overwrites per-channel choices on an ordinary rerun (which was the whole problem
+    with the previous cap-wide-only selector).
     """
-    # Seed the type from whatever the montage already carries, else the first rubric.
-    existing = next((r.get("Rubrik") for r in rows if r.get("Rubrik")), None)
-    current_rubric = _valid_electrode_rubrik(existing)
-
-    cols = st.columns(2)
-    rubric = cols[0].selectbox(
-        "Electrode type",
-        options=ELECTRODE_RUBRICS,
-        index=ELECTRODE_RUBRICS.index(current_rubric) if current_rubric in ELECTRODE_RUBRICS else 0,
-        key=f"cap_electrode_type_{device}",
-        help="One electrode type for the whole cap. The model list below is filtered to it.",
-    )
-
-    models = list(ELECTRODE_LIBRARY.get(rubric, []))
-    existing_model = next((r.get("Model") for r in rows if r.get("Model")), None)
-    # Keep an unknown model from an imported dataset selectable rather than dropping it.
-    if existing_model and existing_model not in models and MODEL_TO_RUBRIK.get(existing_model, rubric) == rubric:
-        models.append(str(existing_model))
-    model_default = existing_model if existing_model in models else (models[0] if models else "")
-    model = cols[1].selectbox(
-        "Electrode model",
-        options=models or [""],
-        index=models.index(model_default) if model_default in models else 0,
-        key=f"cap_electrode_model_{device}_{rubric}",
-        help="Applied to every channel.",
-    )
-    return rubric, str(model or "")
+    with st.expander("Set one electrode for all channels", expanded=False):
+        existing = next((r.get("Rubrik") for r in rows if r.get("Rubrik")), None)
+        current_rubric = _valid_electrode_rubrik(existing)
+        cols = st.columns([2, 2, 1], vertical_alignment="bottom")
+        rubric = cols[0].selectbox(
+            "Electrode type",
+            options=ELECTRODE_RUBRICS,
+            index=ELECTRODE_RUBRICS.index(current_rubric) if current_rubric in ELECTRODE_RUBRICS else 0,
+            key=f"capall_type_{device}",
+            help="The model list is filtered to this type.",
+        )
+        models = list(ELECTRODE_LIBRARY.get(rubric, [])) or [""]
+        model = cols[1].selectbox(
+            "Electrode model",
+            options=models,
+            index=0,
+            key=f"capall_model_{device}_{rubric}",
+        )
+        apply = cols[2].button("Apply to all", key=f"capall_apply_{device}", width="stretch")
+    if apply:
+        return rubric, str(model or "")
+    return None
 
 
 def _requested_eeg_channel_count(device: str) -> int:
@@ -1688,11 +1707,20 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 st.session_state.setdefault("method_forms", {}).setdefault(method, {})["ReferenceChannel"] = new_ref
                 st.session_state.pop(f"{method}_ReferenceChannel", None)  # keep the method form in sync
 
-        # One electrode type + model for the whole cap. A per-row model dropdown can't be
-        # filtered to its row's type (Streamlit column options are per-column, not per-row),
-        # so it used to list all 66 models regardless of type. You pick the type once, then a
-        # model from that type, and it applies to every channel.
-        cap_rubric, cap_model = _render_cap_electrode_selector(device, rows)
+        # Each channel carries its own electrode: pick the model per row in the table below
+        # (the type is derived from it). "Set one electrode for all channels" is an optional
+        # shortcut for a uniform cap; it only writes when clicked, so it never clobbers the
+        # per-channel choices.
+        apply_all = _render_apply_all_electrodes(device, rows)
+        if apply_all is not None:
+            all_rubric, all_model = apply_all
+            for entry in all_rows:
+                entry["Rubrik"] = all_rubric
+                entry["Model"] = all_model
+            channel_state[device] = all_rows
+            _bump_channel_editor_revision(device)
+            st.rerun()
+        model_options = _electrode_model_options(rows)
 
         # The table spans the full width and the scalp map sits underneath it.
         table_col = st.container()
@@ -1708,9 +1736,9 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 help="Show the PosX/PosY columns. Normally you place electrodes on the scalp map instead.",
             )
             if edit_coords:
-                column_order = ["Channel", "Position", "PosX", "PosY", "Impedance"]
+                column_order = ["Channel", "Position", "PosX", "PosY", "Model", "Impedance"]
             else:
-                column_order = ["Channel", "Position", "Impedance"]
+                column_order = ["Channel", "Position", "Model", "Impedance"]
 
             # The editor drops columns it is not showing, so remember the coordinates and
             # put them back afterwards — otherwise hiding them would silently reset them.
@@ -1730,6 +1758,14 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                         "Electrode / Position",
                         help="10-20 label or custom montage description",
                         width=200,
+                    ),
+                    "Model": st.column_config.SelectboxColumn(
+                        "Electrode model",
+                        help="The electrode used on this channel. Pick per channel, or use "
+                             "'Set one electrode for all channels' above for a uniform cap.",
+                        width=300,
+                        options=model_options,
+                        required=False,
                     ),
                     "Impedance": st.column_config.NumberColumn(
                         "Impedance (kOhm)",
@@ -1757,14 +1793,19 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 },
             )
             extras = set(DEVICE_EXTRA_LABELS.get(device, []))
-            corrected_model = False
             for row_idx, row in enumerate(edited):
                 # Every row on screen is a channel being recorded, so it is active by
                 # definition; the count is what decides, not a per-row toggle.
                 row["Active"] = True
-                # Electrode type and model come from the single cap-wide choice above.
-                row["Rubrik"] = cap_rubric
-                row["Model"] = cap_model
+                # Each channel keeps its own electrode; the type follows the chosen model.
+                model = str(row.get("Model") or "").strip()
+                if model:
+                    row["Model"] = model
+                    # A known model fixes the type; an unknown one keeps the row's type.
+                    row["Rubrik"] = MODEL_TO_RUBRIK.get(model) or _valid_electrode_rubrik(row.get("Rubrik"))
+                else:
+                    row["Rubrik"] = _valid_electrode_rubrik(row.get("Rubrik"))
+                    row["Model"] = _model_for_rubrik(row["Rubrik"], row.get("Model"))
                 if not row.get("Position"):
                     row["Position"] = row["Channel"].replace(" ", "")
                 pos_x = coerce_number(row.get("PosX"))
@@ -1788,16 +1829,12 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
             merged = {str(r.get("Channel")): dict(r) for r in all_rows}
             for row in edited:
                 merged[str(row["Channel"])] = row
+            # Edited rows already carry their own per-channel electrode; off-screen rows keep
+            # theirs. Only the recorded/extra distinction is applied here.
             for name, entry in merged.items():
-                entry["Rubrik"] = cap_rubric
-                entry["Model"] = cap_model
                 if name not in extras and name not in shown:
                     entry["Active"] = False  # beyond the recorded count
             channel_state[device] = list(merged.values())
-
-            if corrected_model:
-                _bump_channel_editor_revision(device)
-                st.rerun()
 
         with map_col:
             st.caption("Scalp map")
@@ -1883,11 +1920,13 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
     # The rolling window is fixed, so traces stay comparable between runs.
     window = LIVE_WINDOW_SECONDS
     plot_cols = st.columns([1, 1, 1])
+    # This tab owns its own plot/scale widgets, keyed apart from the sidebar's live-view
+    # controls — two widgets may not share a key, and the sidebar renders on this page too.
     plot_cols[0].selectbox(
         "Live plot",
         options=list(LIVE_PLOT_TYPES),
-        index=list(LIVE_PLOT_TYPES).index(st.session_state.get("live_view_plot", DEFAULT_LIVE_PLOT)),
-        key="live_view_plot",
+        index=list(LIVE_PLOT_TYPES).index(st.session_state.get("live_preview_plot", DEFAULT_LIVE_PLOT)),
+        key="live_preview_plot",
         help="Which plot to show. Works for every method.",
     )
     scale_cols = plot_cols
@@ -1895,9 +1934,9 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
         "Scaling (y-axis)",
         options=list(LIVE_SCALE_OPTIONS),
         index=list(LIVE_SCALE_OPTIONS).index(
-            st.session_state.get("live_view_scale", DEFAULT_LIVE_SCALE)
+            st.session_state.get("live_preview_scale", DEFAULT_LIVE_SCALE)
         ),
-        key="live_view_scale",
+        key="live_preview_scale",
         help="Auto fits each channel to its own data. A fixed range keeps channels and runs "
              "on identical axes, which is what makes them comparable.",
     )
@@ -1950,8 +1989,8 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
                 window=float(args["window"]),
                 update_interval=float(args["interval"]),
                 final_interactive=not state.get("_live_preview_unlimited", False),
-                scale=resolve_live_scale(st.session_state.get("live_view_scale")),
-                plot_type=st.session_state.get("live_view_plot", DEFAULT_LIVE_PLOT),
+                scale=resolve_live_scale(st.session_state.get("live_preview_scale")),
+                plot_type=st.session_state.get("live_preview_plot", DEFAULT_LIVE_PLOT),
             )
             state["_live_preview_last_buffer"] = buffer
             if state.get("_live_preview_unlimited", False) and state.get("_live_preview_active", False):
@@ -1972,8 +2011,8 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
         indices = _normalize_channel_indices(state["_live_preview_args"].get("selected_indices"), channel_count)
         _plot_live_buffer(
             buffer, fs, placeholder, channel_indices=indices, params=params, render_inline=True,
-            plot_type=st.session_state.get("live_view_plot", DEFAULT_LIVE_PLOT),
-            scale=resolve_live_scale(st.session_state.get("live_view_scale")),
+            plot_type=st.session_state.get("live_preview_plot", DEFAULT_LIVE_PLOT),
+            scale=resolve_live_scale(st.session_state.get("live_preview_scale")),
         )
         st.success(f"Stopped live preview after capturing {buffer.shape[0]} samples.")
 
@@ -2805,8 +2844,17 @@ def render_saved_sessions(base_dir: Path) -> tuple[Optional[tuple[str, Dict[str,
     return primary_payload, compare_payloads
 
 
-def handle_upload(target) -> None:
-    with target.expander("Fallback upload / attach data", expanded=False):
+def handle_upload(target, *, embedded: bool = False) -> None:
+    # `embedded` renders the uploaders directly into `target` (no expander of its own),
+    # for callers that already sit inside an expander — Streamlit forbids nesting expanders.
+    if embedded:
+        from contextlib import nullcontext
+
+        target.caption("Attach a config or data file")
+        container = nullcontext(target)
+    else:
+        container = target.expander("Fallback upload / attach data", expanded=False)
+    with container:
         uploaded = st.file_uploader(
             "Load JSON/TOML config, params.json, or JSON-LD metadata",
             type=["json", "jsonld", "toml", "tml"],
@@ -2886,100 +2934,219 @@ def render_sidebar_controls() -> SidebarControls:
     sidebar = st.sidebar
     sidebar.title("Controls")
 
+    # ------------------------------------------------------------------
+    # 1 · Save to — the one always-visible essential; advanced targets fold away.
+    # ------------------------------------------------------------------
     with sidebar.container(border=True):
-        st.subheader("Measurement")
+        st.markdown("**1 · Save to**")
 
         default_save = st.text_input(
             "Experiment / save directory",
             value=str(DEFAULT_SAVE_DIR),
+            label_visibility="collapsed",
             help="Folder where run outputs are written. Point it at an existing experiment to continue it.",
         )
 
         exp_dir = Path(default_save).expanduser()
         prior_sessions = list_saved_sessions(exp_dir) if exp_dir.exists() else []
 
-        active_default = str(st.session_state.get("active_dataset_dir") or "")
-        active_dataset_value = st.text_input(
-            "Active dataset folder",
-            value=active_default,
-            help=(
-                "Optional. When set, Start measurement saves params.json, data.npz, and exports into this folder "
-                "instead of creating a new timestamped run folder."
-            ),
-            placeholder="Leave empty for a new timestamped run folder",
-            key="active_dataset_dir_input",
-        ).strip()
-        st.session_state["active_dataset_dir"] = active_dataset_value
-        dataset_path = active_dataset_path(default_save)
-        dataset_cols = st.columns(2)
-        if dataset_cols[0].button(
-            "Load dataset folder",
-            key="load_active_dataset_folder",
-            width="stretch",
-            disabled=dataset_path is None,
-            help="Load params.json or JSON-LD metadata, plus data.npz/parquet/edf when present.",
-        ):
-            assert dataset_path is not None
-            params_content, data_array, message = _load_dataset_folder(dataset_path)
-            if params_content:
-                load_params_into_state(params_content, data_array)
-                st.session_state["active_dataset_dir"] = str(dataset_path)
-                st.session_state["last_results"] = {
-                    "label": dataset_path.name,
-                    "params": params_content,
-                    "data": data_array,
-                }
-                st.session_state["_flash"] = message
-                st.rerun()
-            else:
-                st.warning(message)
-        if dataset_cols[1].button(
-            "Clear active folder",
-            key="clear_active_dataset_folder",
-            width="stretch",
-            disabled=dataset_path is None,
-        ):
-            st.session_state["active_dataset_dir"] = ""
-            st.session_state.pop("active_dataset_dir_input", None)
-            st.rerun()
-        if dataset_path is not None:
-            st.caption(f"Active target: {dataset_path}")
-
+        target_now = active_dataset_path(default_save)
+        if target_now is not None:
+            st.caption(f"Saving into dataset folder: {target_now.name}")
+        else:
+            st.caption("Each run creates a new timestamped folder here.")
         if prior_sessions:
-            latest = prior_sessions[0]
-            st.caption(f"{len(prior_sessions)} prior session(s) - latest: {latest.name}")
+            st.caption(f"{len(prior_sessions)} prior session(s) in this experiment.")
 
-            if st.button(
-                "Continue experiment (load latest settings)",
-                key="continue_experiment",
+        with st.expander("More: dataset folder & resume", expanded=False):
+            active_default = str(st.session_state.get("active_dataset_dir") or "")
+            active_dataset_value = st.text_input(
+                "Active dataset folder",
+                value=active_default,
+                help=(
+                    "Optional. When set, Start measurement saves params.json, data.npz, and exports into this folder "
+                    "instead of creating a new timestamped run folder."
+                ),
+                placeholder="Leave empty for a new timestamped run folder",
+                key="active_dataset_dir_input",
+            ).strip()
+            st.session_state["active_dataset_dir"] = active_dataset_value
+            dataset_path = active_dataset_path(default_save)
+            dataset_cols = st.columns(2)
+            if dataset_cols[0].button(
+                "Load dataset folder",
+                key="load_active_dataset_folder",
                 width="stretch",
-                help="Load the most recent session's parameters (not its data) so you can record the next subject.",
+                disabled=dataset_path is None,
+                help="Load params.json or JSON-LD metadata, plus data.npz/parquet/edf when present.",
             ):
-                params_content, _ = _load_session_contents(latest)
-
+                assert dataset_path is not None
+                params_content, data_array, message = _load_dataset_folder(dataset_path)
                 if params_content:
-                    load_params_into_state(normalize_params(params_content))
-                    st.session_state["imported_data"] = None
-                    st.session_state["use_imported_data"] = False
-                    st.session_state["active_dataset_dir"] = ""
-                    st.session_state.pop("active_dataset_dir_input", None)
-                    st.session_state["_flash"] = (
-                        f"Loaded settings from {latest.name}. Update the participant, then start the recording."
-                    )
+                    load_params_into_state(params_content, data_array)
+                    st.session_state["active_dataset_dir"] = str(dataset_path)
+                    st.session_state["last_results"] = {
+                        "label": dataset_path.name,
+                        "params": params_content,
+                        "data": data_array,
+                    }
+                    st.session_state["_flash"] = message
                     st.rerun()
                 else:
-                    st.warning("Latest session has no params.json to resume from.")
+                    st.warning(message)
+            if dataset_cols[1].button(
+                "Clear active folder",
+                key="clear_active_dataset_folder",
+                width="stretch",
+                disabled=dataset_path is None,
+            ):
+                st.session_state["active_dataset_dir"] = ""
+                st.session_state.pop("active_dataset_dir_input", None)
+                st.rerun()
+            if dataset_path is not None:
+                st.caption(f"Active target: {dataset_path}")
 
-        simulate = st.toggle(
-            "Simulate run",
-            value=False,
-            key="simulate_run_toggle",  # the staged config form reads this to relax the port gate
-            help="Generate synthetic EEG and save it without connecting to hardware.",
+            if prior_sessions:
+                latest = prior_sessions[0]
+                st.caption(f"Latest session: {latest.name}")
+
+                if st.button(
+                    "Continue experiment (load latest settings)",
+                    key="continue_experiment",
+                    width="stretch",
+                    help="Load the most recent session's parameters (not its data) so you can record the next subject.",
+                ):
+                    params_content, _ = _load_session_contents(latest)
+
+                    if params_content:
+                        load_params_into_state(normalize_params(params_content))
+                        st.session_state["imported_data"] = None
+                        st.session_state["use_imported_data"] = False
+                        st.session_state["active_dataset_dir"] = ""
+                        st.session_state.pop("active_dataset_dir_input", None)
+                        st.session_state["_flash"] = (
+                            f"Loaded settings from {latest.name}. Update the participant, then start the recording."
+                        )
+                        st.rerun()
+                    else:
+                        st.warning("Latest session has no params.json to resume from.")
+
+    # ------------------------------------------------------------------
+    # 2 · Run mode — one choice replaces the old simulate toggle + replay checkbox.
+    # ------------------------------------------------------------------
+    with sidebar.container(border=True):
+        st.markdown("**2 · Run mode**")
+        imported_data = st.session_state.get("imported_data")
+        run_options = [RUN_MODE_LIVE, RUN_MODE_SIM, RUN_MODE_REPLAY]
+
+        # Seed the selector from the stored flags the first time (or after a load set them),
+        # then let the widget own its state so the operator's choice sticks across reruns.
+        if "run_mode_choice" not in st.session_state:
+            if st.session_state.get("use_imported_data") and imported_data is not None:
+                st.session_state["run_mode_choice"] = RUN_MODE_REPLAY
+            elif _is_simulating():
+                st.session_state["run_mode_choice"] = RUN_MODE_SIM
+            else:
+                st.session_state["run_mode_choice"] = RUN_MODE_LIVE
+
+        run_mode = st.radio(
+            "Run mode",
+            run_options,
+            key="run_mode_choice",
+            label_visibility="collapsed",
         )
 
-    with sidebar.container(border=True):
-        st.subheader("Configuration & data")
+        simulate = run_mode == RUN_MODE_SIM
+        # These two flags are the source of truth every other module reads.
+        st.session_state["simulate_run_toggle"] = simulate
+        st.session_state["use_imported_data"] = run_mode == RUN_MODE_REPLAY and imported_data is not None
 
+        if run_mode == RUN_MODE_LIVE:
+            st.caption("Records from the connected hardware.")
+        elif run_mode == RUN_MODE_SIM:
+            st.caption("Generates synthetic EEG and saves it — no device needed.")
+        elif imported_data is None:
+            st.caption("Attach a data file under **Data & export** below, then this replays it.")
+        else:
+            st.caption("Re-runs analysis on the attached recording — no device needed.")
+
+    # ------------------------------------------------------------------
+    # 3 · Connect & start — unchanged behaviour, relabelled as the final step.
+    # ------------------------------------------------------------------
+    with sidebar.container(border=True):
+        st.markdown("**3 · Connect & start**")
+        snap = current_params_snapshot()
+        imported_data = st.session_state.get("imported_data")
+        use_imported = st.session_state.get("use_imported_data", False)
+        connection_required = _requires_device_connection(
+            snap,
+            simulate=simulate,
+            use_imported_data=use_imported,
+            imported_data=imported_data,
+        )
+
+        if not connection_required and st.session_state.get("_connected_device") is not None:
+            _disconnect_session_device()
+            st.session_state["_device_check"] = (
+                "warn",
+                "Hardware connection released because this mode does not require it.",
+            )
+        connected_device_cached = st.session_state.get("_connected_device") is not None
+        if snap is not None and connected_device_cached and not _session_device_ready(snap):
+            _disconnect_session_device()
+            st.session_state["_device_check"] = ("warn", "Configuration changed. Connect the device again before starting.")
+
+        if st.button(
+            "Connect device",
+            width="stretch",
+            key="test_device_connection",
+            disabled=snap is None or not connection_required,
+            help="Connect, probe, and keep the device ready so Start begins without another connection handshake.",
+        ):
+            if snap is None:
+                st.session_state["_device_check"] = ("warn", "Choose a method and device first.")
+            else:
+                _disconnect_session_device()
+                with st.spinner("Connecting..."):
+                    try:
+                        device, msg = connect_device_for_run(snap)
+                        st.session_state["_connected_device"] = device
+                        st.session_state["_connected_device_signature"] = _connection_signature(snap)
+                        st.session_state["_device_check"] = ("ok", f"{msg} Ready to start.")
+                    except Exception as exc:
+                        LOGGER.exception("Device connection failed")
+                        st.session_state["_device_check"] = ("err", str(exc))
+
+        check = st.session_state.get("_device_check")
+
+        if check:
+            kind, msg = check
+            {"ok": st.success, "warn": st.warning}.get(kind, st.error)(
+                {"ok": "[ok] ", "warn": "", "err": "[error] "}.get(kind, "") + msg
+            )
+
+        connection_ready = _session_device_ready(snap)
+        start_disabled = snap is None or (connection_required and not connection_ready)
+        start_button = st.button(
+            "Start measurement",
+            type="primary",
+            width="stretch",
+            key="start_measurement",
+            disabled=start_disabled,
+        )
+
+        if connection_required:
+            if connection_ready:
+                st.caption("Device is connected. Start begins acquisition using the live connection.")
+            else:
+                st.caption("Connect the device first. Simulate and replay do not require hardware.")
+        else:
+            st.caption("This mode does not require a hardware connection.")
+
+    # ------------------------------------------------------------------
+    # Advanced tools, folded away so the three steps above stay uncluttered.
+    # ------------------------------------------------------------------
+    with sidebar.expander("Data & export", expanded=False):
         snapshot = current_params_snapshot()
 
         st.download_button(
@@ -3099,25 +3266,10 @@ def render_sidebar_controls() -> SidebarControls:
                 "run or load a session to enable manual re-export."
             )
 
-        handle_upload(st)
+        st.divider()
+        handle_upload(st, embedded=True)
 
-        imported_data = st.session_state.get("imported_data")
-        # `bool(ndarray)` raises for anything with >1 element, which crashed the whole page
-        # on the rerun after the box was unchecked.
-        default_use_imported = st.session_state.get("use_imported_data", False)
-
-        use_imported_data = st.checkbox(
-            "Use imported data for offline replay",
-            value=default_use_imported and imported_data is not None,
-            disabled=imported_data is None,
-            key="use_imported_data_checkbox",
-        )
-
-        st.session_state["use_imported_data"] = use_imported_data and imported_data is not None
-
-    with sidebar.container(border=True):
-        st.subheader("Live view")
-
+    with sidebar.expander("Live view options", expanded=False):
         live_view_enabled = st.toggle(
             "During measurement",
             value=True,
@@ -3149,77 +3301,6 @@ def render_sidebar_controls() -> SidebarControls:
         st.caption(f"Rolling window fixed at {LIVE_WINDOW_SECONDS:g} s.")
         live_view_window = LIVE_WINDOW_SECONDS
 
-    with sidebar.container(border=True):
-        st.subheader("Run")
-        snap = current_params_snapshot()
-        imported_data = st.session_state.get("imported_data")
-        use_imported = st.session_state.get("use_imported_data", False)
-        connection_required = _requires_device_connection(
-            snap,
-            simulate=simulate,
-            use_imported_data=use_imported,
-            imported_data=imported_data,
-        )
-
-        if not connection_required and st.session_state.get("_connected_device") is not None:
-            _disconnect_session_device()
-            st.session_state["_device_check"] = (
-                "warn",
-                "Hardware connection released because this mode does not require it.",
-            )
-        connected_device_cached = st.session_state.get("_connected_device") is not None
-        if snap is not None and connected_device_cached and not _session_device_ready(snap):
-            _disconnect_session_device()
-            st.session_state["_device_check"] = ("warn", "Configuration changed. Connect the device again before starting.")
-
-        if st.button(
-            "Connect device",
-            width="stretch",
-            key="test_device_connection",
-            disabled=snap is None or not connection_required,
-            help="Connect, probe, and keep the device ready so Start begins without another connection handshake.",
-        ):
-            if snap is None:
-                st.session_state["_device_check"] = ("warn", "Choose a method and device first.")
-            else:
-                _disconnect_session_device()
-                with st.spinner("Connecting..."):
-                    try:
-                        device, msg = connect_device_for_run(snap)
-                        st.session_state["_connected_device"] = device
-                        st.session_state["_connected_device_signature"] = _connection_signature(snap)
-                        st.session_state["_device_check"] = ("ok", f"{msg} Ready to start.")
-                    except Exception as exc:
-                        LOGGER.exception("Device connection failed")
-                        st.session_state["_device_check"] = ("err", str(exc))
-
-        check = st.session_state.get("_device_check")
-
-        if check:
-            kind, msg = check
-            {"ok": st.success, "warn": st.warning}.get(kind, st.error)(
-                {"ok": "[ok] ", "warn": "", "err": "[error] "}.get(kind, "") + msg
-            )
-
-        connection_ready = _session_device_ready(snap)
-        start_disabled = snap is None or (connection_required and not connection_ready)
-        start_button = st.button(
-            "Start measurement",
-            type="primary",
-            width="stretch",
-            key="start_measurement",
-            disabled=start_disabled,
-        )
-
-        if connection_required:
-            if connection_ready:
-                st.caption("Device is connected. Start begins acquisition using the live connection.")
-            else:
-                st.caption("Connect the device first. Simulate run and offline replay do not require hardware.")
-        else:
-            st.caption("This mode does not require a hardware connection.")
-
-    # ONLY ONE diagnostics block (FIXED)
     with sidebar.expander("Diagnostics (logs)", expanded=False):
         st.caption(f"Log file: {LOG_PATH}")
 
