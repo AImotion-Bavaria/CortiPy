@@ -2571,22 +2571,33 @@ def simulated_recording_data(params: Dict[str, Any]) -> np.ndarray:
     return data
 
 
+def _folder_has_session(path: Path) -> bool:
+    """True when a folder holds something the loaders can turn back into a session.
+
+    That means CortiPy's own ``params.json`` **or** an exported metadata file — JSON-LD
+    (``.jsonld``, the default export container) or a plain settings ``.json``. Only these
+    are resumable; an interrupted run or an empty folder is not. JSON-LD counts because
+    ``_load_dataset_folder`` already knows how to read it back into params.
+    """
+    if (path / "params.json").is_file():
+        return True
+    if any(path.rglob("*.jsonld")):
+        return True
+    return any(p.name.lower() != "dataset_description.json" for p in path.glob("*.json"))
+
+
 @st.cache_data
 def list_saved_sessions(base_dir: Path) -> List[Path]:
     """Resumable session folders under ``base_dir``, newest first.
 
-    Only folders that actually hold a ``params.json`` count. A run interrupted before it
-    saved, or an export-only folder (``jsonld_export``/``bids_export``), has nothing to
-    resume from — listing it made it "the latest session" and then "Continue experiment"
-    failed with *params.json missing*.
+    Only folders that actually hold loadable session metadata count (see
+    :func:`_folder_has_session`). A run interrupted before it saved has nothing to resume
+    from — listing it made it "the latest session" and then "Continue experiment" failed
+    with *params.json missing*.
     """
     if not base_dir.exists():
         return []
-    sessions = [
-        path
-        for path in base_dir.iterdir()
-        if path.is_dir() and (path / "params.json").is_file()
-    ]
+    sessions = [path for path in base_dir.iterdir() if path.is_dir() and _folder_has_session(path)]
     return sorted(sessions, reverse=True)
 
 
@@ -2632,19 +2643,16 @@ def run_pipeline_once(
 
 
 def _load_session_contents(session_dir: Path) -> tuple[Optional[Dict[str, Any]], Optional[np.ndarray]]:
-    params_path = session_dir / "params.json"
-    data_path = session_dir / "data.npz"
-    params_content: Optional[Dict[str, Any]] = None
-    data_array: Optional[np.ndarray] = None
-    if params_path.exists():
-        try:
-            params_content = json.loads(params_path.read_text(encoding="utf-8"))
-        except Exception as exc:  # pragma: no cover
-            st.error(f"Failed to load params.json from {session_dir.name}: {exc}")
-    else:
-        st.warning(f"{params_path.name} missing in {session_dir.name}.")
-    if data_path.exists():
-        data_array = _load_npz_array(data_path)
+    """Load a session's params + data, accepting params.json **or** a JSON-LD/JSON export.
+
+    params.json is CortiPy's own per-run format, but JSON-LD (.jsonld) is the default
+    export container and is equally a valid, richer description of a session — the app
+    already converts it to params on upload. Resuming/loading a folder therefore accepts
+    either, via the JSON-LD-aware `_load_dataset_folder`, instead of only params.json.
+    """
+    params_content, data_array, message = _load_dataset_folder(session_dir)
+    if params_content is None:
+        st.warning(message)
     return params_content, data_array
 
 
