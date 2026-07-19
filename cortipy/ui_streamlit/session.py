@@ -2480,9 +2480,15 @@ def export_recording(data: Any, params: Dict[str, Any], out_dir: Path, container
         # still shows in the path. Number the run instead of overwriting the previous one.
         bids_task = custom or task
         run = f"{next_run_index(root, f'sub-{subject}_task-{bids_task}'):02d}"
+        # Standard BIDS sidecars drop CortiPy's rich config (Method, StimFreq, montage,
+        # participant). Stash the full params under a namespaced sidecar key — BIDS tolerates
+        # unknown keys, and it lets the loader restore the session losslessly on re-import.
+        cortipy_meta = {k: v for k, v in params.items() if k != "data"}
         BIDSLoader(root).to_bids(
             arr, sampling_rate=fs, ch_names=ch_names, subject=subject, task=bids_task, run=run,
-            format=fmt, overwrite=False, dataset_description={"Name": custom or params.get("Method") or "CortiPy export"},
+            format=fmt, overwrite=False,
+            dataset_description={"Name": custom or params.get("Method") or "CortiPy export"},
+            sidecar={"CortiPyParameters": cortipy_meta},
         )
         return root
 
@@ -2583,6 +2589,8 @@ def _folder_has_session(path: Path) -> bool:
         return True
     if any(path.rglob("*.jsonld")):
         return True
+    if any(dd.parent.glob("sub-*") for dd in path.rglob("dataset_description.json")):
+        return True  # a BIDS export
     return any(p.name.lower() != "dataset_description.json" for p in path.glob("*.json"))
 
 
@@ -2726,6 +2734,60 @@ def _find_first_existing_file(base_dir: Path, candidates: List[str]) -> Optional
     return None
 
 
+def _minimal_params_from_bids(result, root: Path) -> Dict[str, Any]:
+    """Best-effort params for a BIDS export with no embedded CortiPy config.
+
+    Standard BIDS carries the sampling rate and channel names but not CortiPy's Method /
+    stimulus / montage, so those are approximated. Loading is still useful — you get the
+    data and channels back to view or replay.
+    """
+    ch_names = list(getattr(result.raw, "ch_names", []) or [])
+    name = (result.metadata or {}).get("dataset_description", {}).get("Name")
+    method = name if name in METHOD_SCHEMAS else "Alpha"
+    channels = [{"Channel": f"Ch {i + 1}", "Position": nm, "Active": True} for i, nm in enumerate(ch_names)]
+    return {
+        "Method": method,
+        "Device": "Offline",
+        "Parameters": {"fs": float(result.sampling_rate), "NumberEEGChannels": len(ch_names)},
+        "Channels": channels,
+    }
+
+
+def _load_bids_dataset(dataset_dir: Path):
+    """Load a BIDS export back into (params, data, source_name), or None if it is not BIDS.
+
+    CortiPy embeds the full params under the sidecar's ``CortiPyParameters`` key, so its own
+    BIDS exports round-trip losslessly; a third-party BIDS dataset falls back to a minimal
+    reconstruction.
+    """
+    root = None
+    for description in sorted(dataset_dir.rglob("dataset_description.json")):
+        if any(description.parent.glob("sub-*")):
+            root = description.parent
+            break
+    if root is None:
+        return None
+    try:
+        from cortipy.shared.bids import BIDSLoader
+
+        result = BIDSLoader(root).read_bids()
+    except Exception:
+        return None
+
+    data = np.asarray(result.data, dtype=float)
+    n_ch = len(getattr(result.raw, "ch_names", []) or [])
+    if data.ndim == 2 and n_ch and data.shape[1] != n_ch and data.shape[0] == n_ch:
+        data = data.T  # normalise to (samples, channels)
+
+    embedded = None
+    for sidecar in (result.metadata or {}).get("sidecars", {}).values():
+        if isinstance(sidecar, dict) and isinstance(sidecar.get("CortiPyParameters"), dict):
+            embedded = sidecar["CortiPyParameters"]
+            break
+    params = normalize_params(embedded) if embedded else _minimal_params_from_bids(result, root)
+    return params, data, result.source_path.name
+
+
 def _load_dataset_folder(dataset_dir: Path) -> tuple[Optional[Dict[str, Any]], Optional[np.ndarray], str]:
     """Load params/metadata plus raw data from an existing dataset folder."""
     dataset_dir = Path(dataset_dir).expanduser()
@@ -2782,7 +2844,11 @@ def _load_dataset_folder(dataset_dir: Path) -> tuple[Optional[Dict[str, Any]], O
         data_array = _load_data_file_path(data_path)
 
     if params_content is None:
-        return None, data_array, f"No params.json, JSON config, or JSON-LD metadata found in {dataset_dir}."
+        bids = _load_bids_dataset(dataset_dir)
+        if bids is not None:
+            bids_params, bids_data, source_name = bids
+            return bids_params, bids_data, f"Loaded BIDS export ({source_name}) from {dataset_dir.name}."
+        return None, data_array, f"No params.json, JSON-LD, BIDS, or settings data found in {dataset_dir}."
 
     data_note = f" with {data_path.name}" if data_path is not None and data_array is not None else ""
     return params_content, data_array, f"Loaded {source_label or 'settings'}{data_note} from {dataset_dir.name}."
