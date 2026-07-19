@@ -2825,14 +2825,19 @@ def render_saved_sessions(base_dir: Path) -> tuple[Optional[tuple[str, Dict[str,
             st.json(params_content)
             if st.button("Load session into editor", key=f"load_session_{primary.name}"):
                 load_params_into_state(normalize_params(params_content), data_array)
-                st.session_state["active_dataset_dir"] = str(primary)
+                # Loading fills the editor but must NOT become the save target, or the next
+                # recording would overwrite this dataset. Recording writes a fresh folder.
+                st.session_state["active_dataset_dir"] = ""
                 st.session_state.pop("active_dataset_dir_input", None)
                 st.session_state["last_results"] = {
                     "label": primary.name,
                     "params": normalize_params(params_content),
                     "data": data_array,
                 }
-                st.session_state["_flash"] = "Session loaded. This folder is now the active dataset target."
+                st.session_state["_flash"] = (
+                    f"Loaded {primary.name} into the editor. The next recording is saved to a new "
+                    "folder — this dataset is left untouched."
+                )
                 st.rerun()
         else:
             st.warning("params.json missing.")
@@ -3004,13 +3009,17 @@ def render_sidebar_controls() -> SidebarControls:
                 params_content, data_array, message = _load_dataset_folder(dataset_path)
                 if params_content:
                     load_params_into_state(params_content, data_array)
-                    st.session_state["active_dataset_dir"] = str(dataset_path)
+                    # Loading a folder must not turn it into the save target, or the next
+                    # recording would overwrite it. Clear it; recording writes a new folder.
+                    loaded_name = dataset_path.name
+                    st.session_state["active_dataset_dir"] = ""
+                    st.session_state.pop("active_dataset_dir_input", None)
                     st.session_state["last_results"] = {
-                        "label": dataset_path.name,
+                        "label": loaded_name,
                         "params": params_content,
                         "data": data_array,
                     }
-                    st.session_state["_flash"] = message
+                    st.session_state["_flash"] = f"{message} The next recording is saved to a new folder."
                     st.rerun()
                 else:
                     st.warning(message)
@@ -3201,14 +3210,19 @@ def render_sidebar_controls() -> SidebarControls:
                         st.error(f"Failed to load settings: {exc}")
                     else:
                         load_params_into_state(params_loaded, data_loaded)
-                        st.session_state["active_dataset_dir"] = str(dataset_dir)
+                        # Loading must not become the save target, or the next recording
+                        # would overwrite the source. Recording writes a fresh folder.
+                        st.session_state["active_dataset_dir"] = ""
                         st.session_state.pop("active_dataset_dir_input", None)
                         st.session_state["last_results"] = {
                             "label": dataset_dir.name,
                             "params": params_loaded,
                             "data": data_loaded,
                         }
-                        st.session_state["_flash"] = f"Loaded settings from {selected_path.name}."
+                        st.session_state["_flash"] = (
+                            f"Loaded settings from {selected_path.name}. The next recording is "
+                            "saved to a new folder."
+                        )
                         st.rerun()
 
         last = st.session_state.get("last_results") or {}
