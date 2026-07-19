@@ -40,17 +40,21 @@ class SaveManager:
         target_dir.mkdir(parents=True, exist_ok=True)
         self.last_target_dir = target_dir
 
+        # Recording into a folder that already holds one (an explicit "active dataset
+        # folder" reused across runs) must not overwrite it. Number the run instead, so
+        # every recording is kept; the loader reads back the newest one.
+        params_name, data_name = self._next_recording_names(target_dir)
+
         safe_params = dict(params)
         data = safe_params.pop("data", None)
         safe_params.setdefault("Timestamp", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
 
-        data_file = None
         if data is not None:
-            data_file = target_dir / "data.npz"
+            data_file = target_dir / data_name
             np.savez_compressed(data_file, data=np.asarray(data))
             safe_params["DataFile"] = data_file.name
 
-        (target_dir / "params.json").write_text(
+        (target_dir / params_name).write_text(
             json.dumps(safe_params, indent=2, default=_json_fallback),
             encoding="utf-8",
         )
@@ -59,6 +63,24 @@ class SaveManager:
             self.database_callback(params)
 
         return target_dir
+
+    @staticmethod
+    def _next_recording_names(target_dir: Path) -> tuple[str, str]:
+        """(params_name, data_name) for the next recording in ``target_dir``.
+
+        The first recording is ``params.json`` / ``data.npz`` (unchanged). If those already
+        exist, subsequent recordings become ``params_run-02.json`` / ``data_run-02.npz``,
+        ``…run-03…`` and so on — nothing is overwritten. ``params.json`` counts as run 1.
+        """
+        runs = [1] if (target_dir / "params.json").exists() else []
+        for path in target_dir.glob("params_run-*.json"):
+            match = re.search(r"run-(\d+)", path.name)
+            if match:
+                runs.append(int(match.group(1)))
+        if not runs:
+            return "params.json", "data.npz"
+        nxt = max(runs) + 1
+        return f"params_run-{nxt:02d}.json", f"data_run-{nxt:02d}.npz"
 
     def _default_target_dir(self, params: Dict[str, Any]) -> Path:
         """Name the run folder after the operator's typed filename when there is one.

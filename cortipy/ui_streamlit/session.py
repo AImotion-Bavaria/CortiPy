@@ -2734,7 +2734,10 @@ def _load_dataset_folder(dataset_dir: Path) -> tuple[Optional[Dict[str, Any]], O
 
     params_content: Optional[Dict[str, Any]] = None
     source_label = ""
-    params_path = _find_first_existing_file(dataset_dir, ["params.json"])
+    # A folder reused as an active dataset holds numbered recordings (params.json = run 1,
+    # then params_run-02.json, …). Load the newest run so "load" shows the latest recording.
+    numbered = sorted(dataset_dir.glob("params_run-*.json"))
+    params_path: Optional[Path] = numbered[-1] if numbered else _find_first_existing_file(dataset_dir, ["params.json"])
     if params_path is None:
         jsonld_files = sorted(dataset_dir.rglob("*.jsonld"))
         if jsonld_files:
@@ -2989,8 +2992,9 @@ def render_sidebar_controls() -> SidebarControls:
                 "Active dataset folder",
                 value=active_default,
                 help=(
-                    "Optional. When set, Start measurement saves params.json, data.npz, and exports into this folder "
-                    "instead of creating a new timestamped run folder."
+                    "Optional. When set, Start measurement saves into this folder instead of a new timestamped one. "
+                    "Recording again keeps the previous one: runs are numbered (run-02, run-03, …), never overwritten, "
+                    "and loading the folder shows the newest run."
                 ),
                 placeholder="Leave empty for a new timestamped run folder",
                 key="active_dataset_dir_input",
