@@ -201,17 +201,9 @@ def main() -> None:
         )
         if channels_for_run <= 0:
             channels_for_run = DEVICE_DEFAULT_CHANNELS.get(assembled_params.get("Device"), 8)
-        selection = st.session_state.get("live_preview_channel_selection") or ["All"]
-        if "All" in selection or not selection:
-            selected_indices = list(range(max(1, channels_for_run)))
-        else:
-            channel_labels = [
-                row.get("Channel") or f"Ch {idx + 1}"
-                for idx, row in enumerate(assembled_params.get("Channels", []))
-            ] or [f"Ch {idx + 1}" for idx in range(max(1, channels_for_run))]
-            selected_indices = [channel_labels.index(label) for label in selection if label in channel_labels]
-        if not selected_indices:
-            selected_indices = list(range(max(1, channels_for_run)))
+        # The measurement live view shows every recorded channel. (An earlier per-channel
+        # selector was never wired to a control, so it silently always meant "All".)
+        selected_indices = list(range(max(1, channels_for_run)))
         save_dir = Path(default_save).expanduser()
         save_dir.mkdir(parents=True, exist_ok=True)
         target_dir = Path(active_dataset_dir).expanduser() if active_dataset_dir else None

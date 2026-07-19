@@ -159,16 +159,20 @@ TEN_TWENTY_32 = [
     "FC5", "FC1", "FC2", "FC6", "T7", "C3", "Cz", "C4", "T8", "CP5", "CP1",
     "CP2", "CP6", "P7", "P3", "Pz", "P4", "P8", "PO3", "PO4", "Oz",
 ]
-UNICORN_8 = ["Fp1", "Fp2", "C3", "C4", "P3", "P4", "O1", "O2"]
+# The UNICORN Hybrid Black has a FIXED hardware montage — the electrodes cannot be moved,
+# so its default must be the actual layout or every topomap/label sits on the wrong site.
+UNICORN_8 = ["Fz", "C3", "Cz", "C4", "Pz", "PO7", "Oz", "PO8"]
+# A generic 8-channel default for devices without a fixed montage.
+GENERIC_8 = ["Fp1", "Fp2", "C3", "C4", "P3", "P4", "O1", "O2"]
 BIOPACK_16 = TEN_TWENTY_32[:16]
 
 DEVICE_POSITION_DEFAULTS = {
     "ActiCHamp": TEN_TWENTY_32,
     "UNICORN": UNICORN_8,
     "BIOPACK": BIOPACK_16,
-    "LSL": UNICORN_8,
-    "Offline": UNICORN_8,
-    "Dummy": UNICORN_8,
+    "LSL": GENERIC_8,
+    "Offline": GENERIC_8,
+    "Dummy": GENERIC_8,
 }
 
 

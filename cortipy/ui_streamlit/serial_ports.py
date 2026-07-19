@@ -170,8 +170,14 @@ def serial_port_options(bluetooth_names: Optional[Dict[str, str]] = None) -> Lis
         seen.add(device)
         found.append((device, label, is_unicorn))
 
-    # Likely UNICORNs first, then everything else, each group alphabetical.
-    found.sort(key=lambda item: (not item[2], item[0]))
+    # Likely UNICORNs first, then everything else. Sort COM ports numerically (COM2 before
+    # COM10, not lexically), falling back to the name for non-COM devices (/dev/…).
+    def _port_key(item):
+        device = item[0]
+        match = re.search(r"(\d+)$", device)
+        return (not item[2], 0 if match else 1, int(match.group(1)) if match else 0, device.lower())
+
+    found.sort(key=_port_key)
     return [(device, label) for device, label, _ in found]
 
 

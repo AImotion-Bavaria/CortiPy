@@ -40,6 +40,12 @@ def normalize_params(config: Mapping[str, Any]) -> Dict[str, Any]:
     if channels is not None:
         normalized["Channels"] = list(channels)
 
+    # GND/Reference electrodes hold measured impedances but occupy no data column. They live
+    # outside "Channels", so they must be carried explicitly or every load blanks them.
+    reference_electrodes = config.get("ReferenceElectrodes") or config.get("referenceElectrodes")
+    if reference_electrodes is not None:
+        normalized["ReferenceElectrodes"] = list(reference_electrodes)
+
     data = config.get("data") or config.get("Data")
     if data is not None:
         normalized["data"] = data

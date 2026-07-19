@@ -743,6 +743,9 @@ def load_params_into_state(
     for f in DEVICE_CONFIG_SCHEMA.get(device, []):
         st.session_state.pop(f"device_{device}_{f['name']}", None)
         st.session_state.pop(f"device_{device}_{f['name']}_manual", None)
+    # The Electrodes-page reference selector uses a fixed key; without clearing it, a stale
+    # on-screen value would write itself back over the just-loaded ReferenceChannel.
+    st.session_state.pop(f"ref_electrode_{device}", None)
     for key in (
         "participant_Code",
         "participant_Initials",
@@ -763,12 +766,14 @@ def load_params_into_state(
     # recording to reuse its settings made it impossible to record again.
     st.session_state["use_imported_data"] = bool(enable_replay) and data_array is not None
     st.session_state["imported_params_raw"] = params
-    # Keep the sidebar's run-mode selector in step with a load: a recording opened for
-    # replay shows "Replay", while reusing settings must not leave it stuck there.
+    # Keep the sidebar's run-mode selector in step with a load, but do NOT write the radio's
+    # own key here: this runs from the uploader too, AFTER the radio is instantiated, and
+    # Streamlit forbids mutating a widget key post-instantiation (it crashed the whole page).
+    # Instead record a pending choice that render_sidebar_controls applies BEFORE the radio.
     if st.session_state["use_imported_data"]:
-        st.session_state["run_mode_choice"] = RUN_MODE_REPLAY
+        st.session_state["_pending_run_mode"] = RUN_MODE_REPLAY
     elif st.session_state.get("run_mode_choice") == RUN_MODE_REPLAY:
-        st.session_state["run_mode_choice"] = RUN_MODE_LIVE
+        st.session_state["_pending_run_mode"] = RUN_MODE_LIVE
 
 
 def ensure_state() -> None:
@@ -2247,6 +2252,18 @@ def validate_params(params: Dict[str, Any]) -> List[str]:
         if not port:
             issues.append("UNICORN configuration requires a serial port / address.")
 
+    # A reference channel past the recorded EEG count is silently dropped downstream (analysis
+    # falls back to channel 1). Reachable by lowering the channel count after picking a higher
+    # reference, or by loading metadata whose reference exceeds the current montage.
+    reference = parameters.get("ReferenceChannel")
+    if reference not in (None, "", 0) and not has_hardware_reference(device or ""):
+        reference_num = coerce_number(reference)
+        n_eeg = len(params.get("Channels") or []) or (coerce_number(parameters.get("NumberEEGChannels")) or 0)
+        if reference_num is not None and n_eeg and not (1 <= reference_num <= n_eeg):
+            issues.append(
+                f"Reference channel {int(reference_num)} is out of range (1-{int(n_eeg)} EEG channels)."
+            )
+
     issues.extend(missing_method_frequencies(method, parameters))
     return issues
 
@@ -2589,8 +2606,8 @@ def _folder_has_session(path: Path) -> bool:
         return True
     if any(path.rglob("*.jsonld")):
         return True
-    if any(dd.parent.glob("sub-*") for dd in path.rglob("dataset_description.json")):
-        return True  # a BIDS export
+    if any(any(dd.parent.glob("sub-*")) for dd in path.rglob("dataset_description.json")):
+        return True  # a BIDS export (dataset_description.json beside a sub-* directory)
     return any(p.name.lower() != "dataset_description.json" for p in path.glob("*.json"))
 
 
@@ -2788,6 +2805,31 @@ def _load_bids_dataset(dataset_dir: Path):
     return params, data, result.source_path.name
 
 
+def _data_for_selected_params(
+    selected_path: Path, params_loaded: Dict[str, Any], dataset_dir: Path
+) -> Optional[np.ndarray]:
+    """Load the data that belongs to a specifically chosen params file.
+
+    The file dialog can point at a *non-newest* run's params.json in a multi-run folder;
+    its DataFile names that run's data, so we resolve it beside the selected file first and
+    only fall back to a folder-level load when the params carry no DataFile pointer.
+    """
+    datafile = params_loaded.get("DataFile") if isinstance(params_loaded, dict) else None
+    if datafile:
+        name = Path(str(datafile))
+        for candidate in (
+            selected_path.parent / name,
+            dataset_dir / name,
+            dataset_dir / "raw_data" / name.name,
+            dataset_dir / "jsonld_export" / "raw_data" / name.name,
+        ):
+            if candidate.exists() and candidate.is_file():
+                return _load_data_file_path(candidate)
+        return None  # named data is missing — do not substitute another run's data
+    _, data_loaded, _ = _load_dataset_folder(dataset_dir)
+    return data_loaded
+
+
 def _load_dataset_folder(dataset_dir: Path) -> tuple[Optional[Dict[str, Any]], Optional[np.ndarray], str]:
     """Load params/metadata plus raw data from an existing dataset folder."""
     dataset_dir = Path(dataset_dir).expanduser()
@@ -2798,7 +2840,12 @@ def _load_dataset_folder(dataset_dir: Path) -> tuple[Optional[Dict[str, Any]], O
     source_label = ""
     # A folder reused as an active dataset holds numbered recordings (params.json = run 1,
     # then params_run-02.json, …). Load the newest run so "load" shows the latest recording.
-    numbered = sorted(dataset_dir.glob("params_run-*.json"))
+    # Sort by the numeric run index, not lexically, or run-100 would rank below run-99.
+    def _run_index(path: Path) -> int:
+        match = re.search(r"run-(\d+)", path.name)
+        return int(match.group(1)) if match else 0
+
+    numbered = sorted(dataset_dir.glob("params_run-*.json"), key=_run_index)
     params_path: Optional[Path] = numbered[-1] if numbered else _find_first_existing_file(dataset_dir, ["params.json"])
     if params_path is None:
         jsonld_files = sorted(dataset_dir.rglob("*.jsonld"))
@@ -2822,24 +2869,26 @@ def _load_dataset_folder(dataset_dir: Path) -> tuple[Optional[Dict[str, Any]], O
 
     data_array: Optional[np.ndarray] = None
     data_path: Optional[Path] = None
-    if params_content:
-        raw_name = params_content.get("DataFile")
-        if raw_name:
-            raw_path = Path(str(raw_name))
-            raw_candidates = [
-                dataset_dir / raw_path,
-                dataset_dir / "raw_data" / raw_path.name,
-                dataset_dir / "jsonld_export" / "raw_data" / raw_path.name,
-            ]
-            data_path = next((path for path in raw_candidates if path.exists() and path.is_file()), None)
-    if data_path is None:
+    declared_datafile = params_content.get("DataFile") if params_content else None
+    if declared_datafile:
+        # The params name a specific run's data file. Use ONLY that — if it is missing, do
+        # not silently pair a different run's data.npz (that would describe the wrong columns).
+        raw_path = Path(str(declared_datafile))
+        raw_candidates = [
+            dataset_dir / raw_path,
+            dataset_dir / "raw_data" / raw_path.name,
+            dataset_dir / "jsonld_export" / "raw_data" / raw_path.name,
+        ]
+        data_path = next((path for path in raw_candidates if path.exists() and path.is_file()), None)
+    else:
+        # No explicit pointer (legacy or foreign folder): fall back to the obvious data file.
         data_path = _find_first_existing_file(dataset_dir, ["data.npz"])
-    if data_path is None:
-        for pattern in ("*.npz", "*.parquet", "*.edf"):
-            matches = sorted(dataset_dir.rglob(pattern))
-            if matches:
-                data_path = matches[0]
-                break
+        if data_path is None:
+            for pattern in ("*.npz", "*.parquet", "*.edf"):
+                matches = sorted(dataset_dir.rglob(pattern))
+                if matches:
+                    data_path = matches[0]
+                    break
     if data_path is not None:
         data_array = _load_data_file_path(data_path)
 
@@ -3147,6 +3196,11 @@ def render_sidebar_controls() -> SidebarControls:
                 st.session_state["run_mode_choice"] = RUN_MODE_SIM
             else:
                 st.session_state["run_mode_choice"] = RUN_MODE_LIVE
+        # A load/upload may have requested a mode change. Apply it HERE — before the widget is
+        # instantiated — because Streamlit forbids writing the key afterwards.
+        pending_mode = st.session_state.pop("_pending_run_mode", None)
+        if pending_mode in run_options:
+            st.session_state["run_mode_choice"] = pending_mode
 
         run_mode = st.radio(
             "Run mode",
@@ -3275,7 +3329,9 @@ def render_sidebar_controls() -> SidebarControls:
                     try:
                         params_loaded = _load_settings_file_path(selected_path)
                         dataset_dir = _dataset_dir_for_settings_file(selected_path)
-                        _, data_loaded, _ = _load_dataset_folder(dataset_dir)
+                        # Pair the data with the SELECTED params file (via its DataFile), not
+                        # the newest run in the folder, or a non-newest pick loads mismatched data.
+                        data_loaded = _data_for_selected_params(selected_path, params_loaded, dataset_dir)
                     except Exception as exc:
                         st.error(f"Failed to load settings: {exc}")
                     else:

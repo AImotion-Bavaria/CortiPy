@@ -340,14 +340,14 @@ def plot_fft_live(freq: np.ndarray, data: np.ndarray, ylabel: str, title: str, p
         "#17becf",
     ]
 
-    device = params.get("Device", "")
-    offset = 1 if device == "ActiCHamp" else 2
+    # Channels is positional over the EEG columns, so data column i is channel i (like
+    # _channel_plot_title). The old per-device offset was stale compensation for GND/Ref rows
+    # that used to be prepended to the montage; it shifted every label by one.
     channel_labels = _resolve_channels(params, data.shape[1])
     for idx in range(data.shape[1]):
-        label_idx = idx + offset - 1
         label = (
-            channel_labels[label_idx].label
-            if 0 <= label_idx < len(channel_labels)
+            channel_labels[idx].label
+            if 0 <= idx < len(channel_labels)
             else f"Channel {idx+1}"
         )
         color = colors[idx % len(colors)]

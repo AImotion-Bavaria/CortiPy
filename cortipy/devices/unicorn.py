@@ -134,6 +134,9 @@ class UnicornDevice(DeviceInterface):
     def prepare_for_recording(self) -> None:
         if self._serial is not None:
             self._serial.reset_input_buffer()
+        # Drop any packet captured during the handshake (the Bluetooth sync-fallback path
+        # stashes one in _pending); otherwise that stale sample becomes recording sample 0.
+        self._pending.clear()
 
     # ------------------------------------------------------------------
     def _read_exact(self, size: int) -> bytes:
