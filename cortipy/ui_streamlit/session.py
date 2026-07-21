@@ -1530,6 +1530,24 @@ def ensure_channel_rows(device: str, existing: Optional[List[Dict[str, Any]]] = 
     return rows
 
 
+def _apply_channel_count(device: str, method: str) -> None:
+    """on_change handler for the Electrodes 'Channels to record' stepper.
+
+    Runs inside Streamlit's single rerun for the click and writes the new count BEFORE the
+    page body renders. That is what stops rapid +/- clicks from racing an extra st.rerun()
+    and snapping the selection back — there is no second rerun and no reload flash.
+    """
+    raw = st.session_state.get(f"electrodes_count_{device}")
+    new_count = coerce_number(raw)
+    if new_count is None or new_count < 1:
+        return
+    st.session_state.setdefault("method_forms", {}).setdefault(method, {})["NumberEEGChannels"] = int(new_count)
+    # Keep the method-form widget in step, and force the data editor to re-init for the new
+    # row count (its key carries the revision).
+    st.session_state.pop(f"{method}_NumberEEGChannels", None)
+    _bump_channel_editor_revision(device)
+
+
 def render_channel_editor(device: str) -> List[Dict[str, Any]]:
     if not device:
         # Without a device there is no montage, no channel count and no impedance support,
@@ -1568,22 +1586,26 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
             "Ground/Reference are always included."
         )
         if method and any(f.name == "NumberEEGChannels" for f in METHOD_SCHEMAS.get(method, [])):
-            new_count = head_r.number_input(
+            # A STABLE key (not tied to `count`) plus an on_change callback: rapid +/- clicks
+            # accumulate instead of snapping back, and there is no extra rerun/flash. The old
+            # `..._{count}` key rebuilt the widget on every change, which caused exactly that.
+            count_key = f"electrodes_count_{device}"
+            # Seed/reconcile the stored value so an external NumberEEGChannels change (method
+            # form / loaded session) is reflected. After a user edit the two already agree, so
+            # this only ever corrects external changes — it never fights the stepper.
+            if int(st.session_state.get(count_key, count) or count) != count:
+                st.session_state[count_key] = count
+            st.session_state.setdefault(count_key, count)
+            head_r.number_input(
                 "Channels to record",
                 min_value=1,
                 max_value=len(eeg_rows),
-                value=count,
                 step=1,
-                key=f"electrodes_count_{device}_{count}",
+                key=count_key,
+                on_change=_apply_channel_count,
+                args=(device, method),
                 help="Same setting as NumberEEGChannels in Session configuration.",
             )
-            if int(new_count) != count:
-                method_state["NumberEEGChannels"] = int(new_count)
-                # Clear the method form's widget state, or Streamlit keeps showing the old
-                # number over there and the two views disagree.
-                st.session_state.pop(f"{method}_NumberEEGChannels", None)
-                _bump_channel_editor_revision(device)
-                st.rerun()
         if device in IMPEDANCE_CAPABLE_DEVICES:
             fs_value = st.session_state.get("general_form", {}).get("fs")
             status = st.session_state.get("_actichamp_impedance_status")

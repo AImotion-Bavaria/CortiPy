@@ -139,3 +139,40 @@ def test_uploader_replay_does_not_crash_the_sidebar(tmp_path):
     at.run()
     assert not at.exception  # used to raise StreamlitAPIException (set widget key post-instantiation)
     assert at.session_state["_pending_run_mode"] == ui.RUN_MODE_REPLAY
+
+
+# --- Channels-to-record stepper: stable key, no revert on +/- ----------------
+def test_channels_stepper_updates_without_reverting(tmp_path):
+    import numpy.testing  # noqa: F401 (macOS fork guard)
+    from streamlit.testing.v1 import AppTest
+
+    harness = tmp_path / "h.py"
+    harness.write_text(
+        "import streamlit as st\n"
+        "from cortipy.ui_streamlit import session as ui\n"
+        "ui.ensure_state()\n"
+        "st.session_state['general_form']['Device'] = 'UNICORN'\n"
+        "st.session_state['general_form']['Method'] = 'SSVEP'\n"
+        "if '_seeded' not in st.session_state:\n"
+        "    st.session_state.setdefault('method_forms', {}).setdefault('SSVEP', {})['NumberEEGChannels'] = 3\n"
+        "    st.session_state['_seeded'] = True\n"
+        "ui.render_channel_editor('UNICORN')\n"
+    )
+    at = AppTest.from_file(str(harness), default_timeout=60)
+    at.run()
+
+    def stepper():
+        return next(n for n in at.number_input if n.key == "electrodes_count_UNICORN")
+
+    def count():
+        return at.session_state["method_forms"]["SSVEP"]["NumberEEGChannels"]
+
+    assert stepper().key == "electrodes_count_UNICORN"  # stable key, not electrodes_count_UNICORN_3
+    assert stepper().value == 3
+
+    stepper().set_value(6).run()
+    assert not at.exception
+    assert count() == 6 and stepper().value == 6
+
+    stepper().set_value(2).run()  # a further change must not snap back
+    assert count() == 2 and stepper().value == 2
