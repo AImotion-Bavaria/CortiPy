@@ -446,26 +446,22 @@ HANDEDNESS_OPTIONS = ["Right", "Left", "Ambidextrous"]
 
 def render_numeric_input(target, field: FieldSchema, current: Any, key: str):
     as_number = coerce_number(current)
-    if is_integer_field(field.name):
-        default = int(as_number) if as_number is not None else 0
-        value = target.number_input(
-            field.name,
-            value=default,
-            step=1,
-            format="%d",
-            help=field.tooltip or None,
-            key=key,
-        )
-        return int(value)
-    default = float(as_number) if as_number is not None else 0.0
-    return target.number_input(
-        field.name,
-        value=default,
-        step=0.1,
-        format="%.3f",
-        help=field.tooltip or None,
-        key=key,
+    integer = is_integer_field(field.name)
+    default = (int(as_number) if as_number is not None else 0) if integer else (
+        float(as_number) if as_number is not None else 0.0
     )
+    # The field owns its value via session_state instead of a value= default. Passing value=
+    # AND key= made the stepper briefly snap back to the stored default on a slow rerun (the
+    # "+/- jumps back" report). It is seeded once; loading a session / switching device pops
+    # this key (see load_params_into_state), so it re-seeds from the new value then.
+    existing = st.session_state.get(key)
+    if not isinstance(existing, (int, float)) or isinstance(existing, bool):
+        st.session_state[key] = default
+    if integer:
+        value = target.number_input(field.name, step=1, format="%d", help=field.tooltip or None, key=key)
+        return int(value)
+    value = target.number_input(field.name, step=0.1, format="%.3f", help=field.tooltip or None, key=key)
+    return float(value)
 
 
 
@@ -2026,11 +2022,15 @@ def render_participant_form() -> Dict[str, Any]:
             )
             age_number = coerce_number(participant.get("Age"))
             age_default = int(age_number) if isinstance(age_number, (int, float)) and age_number > 0 else 0
+            # Key-only (no value=) so the stepper does not snap back on a slow rerun.
+            if not isinstance(st.session_state.get("participant_Age"), (int, float)) or isinstance(
+                st.session_state.get("participant_Age"), bool
+            ):
+                st.session_state["participant_Age"] = age_default
             participant["Age"] = cols[2].number_input(
                 "Age",
                 min_value=0,
                 max_value=110,
-                value=age_default,
                 key="participant_Age",
             )
             gender_value = resolve_choice(GENDER_OPTIONS, participant.get("Gender"))

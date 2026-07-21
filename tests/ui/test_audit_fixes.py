@@ -178,6 +178,39 @@ def test_channels_stepper_updates_without_reverting(tmp_path):
     assert count() == 2 and stepper().value == 2
 
 
+# --- Numeric method/general steppers: key-only, stick, and re-seed on load ----
+def test_numeric_fields_stick_and_reseed_on_load(tmp_path):
+    import numpy.testing  # noqa: F401 (macOS fork guard)
+    from streamlit.testing.v1 import AppTest
+
+    harness = tmp_path / "h.py"
+    harness.write_text(
+        "import streamlit as st\n"
+        "from cortipy.ui_streamlit import session as ui\n"
+        "ui.ensure_state()\n"
+        "st.session_state['general_form']['Device'] = 'ActiCHamp'\n"
+        "st.session_state['general_form']['Method'] = 'SSVEP'\n"
+        "if st.session_state.pop('_do_load', False):\n"
+        "    ui.load_params_into_state({'Method': 'SSVEP', 'Device': 'ActiCHamp',\n"
+        "        'Parameters': {'fs': 500, 'StimFreq': 12, 'NumberEEGChannels': 5}})\n"
+        "ui.render_method_form('SSVEP')\n"
+    )
+    at = AppTest.from_file(str(harness), default_timeout=60)
+    at.run()
+
+    def nec():
+        return next(n for n in at.number_input if n.label == "NumberEEGChannels")
+
+    nec().set_value(16).run()
+    assert nec().value == 16  # a stepper change sticks (no value= to snap it back)
+    nec().set_value(24).run()
+    assert nec().value == 24
+
+    at.session_state["_do_load"] = True
+    at.run()  # loading a session must re-seed the field (load pops the widget key)
+    assert nec().value == 5
+
+
 # --- Dataset workflow: recording count for the "N recording(s)" caption ------
 def test_dataset_recording_count(tmp_path):
     empty = tmp_path / "empty"

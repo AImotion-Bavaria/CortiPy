@@ -154,8 +154,10 @@ def render_device_config(device: str) -> Dict[str, Any]:
                 fallback = field.get("default", 0.0)
                 numeric = coerce_number(current)
                 value_default = float(numeric if numeric is not None else fallback or 0.0)
+                # Key-only (no value=) so the stepper does not snap back on a slow rerun.
+                if not isinstance(st.session_state.get(key), (int, float)) or isinstance(st.session_state.get(key), bool):
+                    st.session_state[key] = value_default
                 kwargs: Dict[str, Any] = {
-                    "value": value_default,
                     "step": float(field.get("step", 0.5)),
                     "help": field.get("help"),
                     "key": key,
