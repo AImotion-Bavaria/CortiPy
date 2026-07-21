@@ -144,19 +144,128 @@ def _run_powershell(script: str, timeout: float):
     return None, last_error, None, None
 
 
+# A Bluetooth SPP port's hwid carries the paired device's MAC, e.g.
+#   BTHENUM\{0000...}_VID&...\7&39BA7CFE&0&60B647849B80_C00000000  ->  60B647849B80
+# (Incoming/server ports use the all-zero MAC 000000000000 and are skipped.)
+_BT_MAC_RE = re.compile(r"&([0-9A-Fa-f]{12})_", re.IGNORECASE)
+
+
+def _mac_from_hwid(hwid: Optional[str]) -> Optional[str]:
+    for match in _BT_MAC_RE.finditer(str(hwid or "")):
+        mac = match.group(1)
+        if mac != "0" * 12:
+            return mac.lower()
+    return None
+
+
+def _bthport_registry_names() -> Dict[str, str]:
+    """MAC (lowercase) -> friendly name, from HKLM\\...\\BTHPORT\\Parameters\\Devices.
+
+    This is where Windows keeps the real paired-device name (UN-2023.05.03, HC06xGreen).
+    The PnP 'parent' of a Bluetooth SPP port is only the generic RFCOMM node, so the port
+    dropdown must resolve the name via the device's MAC here instead.
+    """
+    names: Dict[str, str] = {}
+    try:
+        import winreg  # Windows-only stdlib
+    except Exception:  # pragma: no cover - non-Windows
+        return names
+
+    path = r"SYSTEM\CurrentControlSet\Services\BTHPORT\Parameters\Devices"
+    try:
+        devices = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
+    except OSError as exc:  # pragma: no cover - Windows only
+        LOGGER.info("Bluetooth device registry not readable: %s", exc)
+        return names
+    try:
+        index = 0
+        while True:
+            try:
+                mac = winreg.EnumKey(devices, index)
+            except OSError:
+                break
+            index += 1
+            try:
+                with winreg.OpenKey(devices, mac) as sub:
+                    raw, _ = winreg.QueryValueEx(sub, "Name")
+            except OSError:
+                continue
+            try:
+                name = bytes(raw).split(b"\x00", 1)[0].decode("utf-8", "replace").strip()
+            except Exception:
+                name = ""
+            if name:
+                names[mac.lower()] = name
+    finally:
+        devices.Close()
+    return names
+
+
+# Ask Windows for the Bluetooth *devices* (not the Ports). Each one's FriendlyName is the
+# real name (UN-2023.05.03, HC06xGreen) and its InstanceId carries the device MAC.
+_BT_DEVICE_QUERY = (
+    "Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue "
+    "| Select-Object -Property FriendlyName,InstanceId | ConvertTo-Json -Depth 10"
+)
+
+
+def _device_key_from_hwid(hwid: Optional[str]) -> Optional[str]:
+    """The Bluetooth device MAC in a serial port's hwid (upper-case), or None."""
+    matches = re.findall(r"&([0-9A-Fa-f]{12})", str(hwid or ""))
+    return matches[0].upper() if matches else None
+
+
+def parse_bluetooth_class_json(payload: str) -> Dict[str, str]:
+    """MAC (upper) -> friendly name, from 'Get-PnpDevice -Class Bluetooth' JSON.
+
+    A device InstanceId looks like ``BTHENUM\\Dev_60B647849B80\\...`` or carries ``&<MAC>``;
+    both forms are indexed so a serial port's MAC resolves to the paired device's name.
+    """
+    names: Dict[str, str] = {}
+    text = (payload or "").strip()
+    if not text:
+        return names
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return names
+    for item in (data if isinstance(data, list) else [data]):
+        if not isinstance(item, dict):
+            continue
+        friendly = str(item.get("FriendlyName") or "").strip()
+        instance = str(item.get("InstanceId") or "")
+        if not friendly:
+            continue
+        for match in re.finditer(r"(?:DEV|BLUETOOTHDEVICE)_([0-9A-Fa-f]+)", instance, re.IGNORECASE):
+            names[match.group(1).upper()] = friendly
+        for match in re.finditer(r"&([0-9A-Fa-f]{12})", instance):
+            names[match.group(1).upper()] = friendly
+    return names
+
+
 def windows_bluetooth_names(timeout: float = 8.0) -> Dict[str, str]:
-    """COM port -> paired Bluetooth device name. Empty off Windows, or on any failure."""
-    if os.name != "nt":
+    """COM port -> paired Bluetooth device name. Empty off Windows, or on any failure.
+
+    The PnP parent/bus name of a Bluetooth SPP port is only a generic RFCOMM label, so the
+    real name is resolved via the port's MAC (from its hwid): first against the Bluetooth
+    *devices* (Get-PnpDevice -Class Bluetooth), then the Bluetooth registry as a fallback.
+    """
+    if os.name != "nt" or list_ports is None:
         return {}
-    stdout, stderr, returncode, exe = _run_powershell(_WINDOWS_PNP_QUERY, timeout)
-    if stdout is None:
-        LOGGER.info("Could not query Windows for Bluetooth device names: %s", stderr)
+
+    stdout, _stderr, _rc, _exe = _run_powershell(_BT_DEVICE_QUERY, timeout)
+    by_mac = parse_bluetooth_class_json(stdout or "")
+    if not by_mac:  # fallback: read the name straight from the Bluetooth device registry
+        by_mac = {mac.upper(): name for mac, name in _bthport_registry_names().items()}
+    if not by_mac:
         return {}
-    if returncode not in (0, None) and not stdout.strip():
-        LOGGER.info("Windows PnP query (%s) exited %s: %s", exe, returncode, (stderr or "")[:200])
-        return {}
-    # ConvertTo-Json may still have produced usable output even on a nonzero exit, so parse it.
-    return parse_windows_pnp_json(stdout)
+
+    names: Dict[str, str] = {}
+    for info in list_ports.comports():
+        key = _device_key_from_hwid(getattr(info, "hwid", "") or "")
+        if key and key in by_mac:
+            names[str(getattr(info, "device", "")).upper()] = by_mac[key]
+    return names
 
 
 def diagnose(timeout: float = 8.0) -> Dict[str, object]:
@@ -167,12 +276,14 @@ def diagnose(timeout: float = 8.0) -> Dict[str, object]:
     """
     report: Dict[str, object] = {"platform": os.name, "pyserial_error": SERIAL_IMPORT_ERROR}
     if os.name == "nt":
-        stdout, stderr, returncode, exe = _run_powershell(_WINDOWS_PNP_QUERY, timeout)
+        stdout, stderr, returncode, exe = _run_powershell(_BT_DEVICE_QUERY, timeout)
         report["powershell_exe"] = exe
         report["powershell_returncode"] = returncode
         report["powershell_stdout"] = stdout
         report["powershell_stderr"] = stderr
-        report["parsed_names"] = parse_windows_pnp_json(stdout or "")
+        report["bluetooth_devices_by_mac"] = parse_bluetooth_class_json(stdout or "")
+        report["registry_names"] = _bthport_registry_names()
+        report["resolved_names"] = windows_bluetooth_names(timeout)
     ports = []
     if list_ports is not None:
         for info in list_ports.comports():
@@ -181,6 +292,7 @@ def diagnose(timeout: float = 8.0) -> Dict[str, object]:
                 "description": getattr(info, "description", None),
                 "manufacturer": getattr(info, "manufacturer", None),
                 "hwid": getattr(info, "hwid", None),
+                "mac_key": _device_key_from_hwid(getattr(info, "hwid", None)),
             })
     report["pyserial_ports"] = ports
     return report
@@ -268,20 +380,20 @@ if __name__ == "__main__":  # pragma: no cover - operator diagnostic
         raise SystemExit(1)
 
     if report["platform"] == "nt":
-        print(f"\n--- Windows PnP name query ---")
+        print(f"\n--- Bluetooth device query ---")
         print(f"powershell: {report.get('powershell_exe')}  (exit {report.get('powershell_returncode')})")
         stderr = (report.get("powershell_stderr") or "").strip()
         if stderr:
             print(f"stderr: {stderr[:500]}")
-        stdout = (report.get("powershell_stdout") or "").strip()
-        print(f"raw stdout: {stdout[:1500] or '(empty)'}")
-        print(f"parsed COM -> name: {report.get('parsed_names') or '(none)'}")
+        print(f"MAC -> name (Get-PnpDevice -Class Bluetooth): {report.get('bluetooth_devices_by_mac') or '(none)'}")
+        print(f"MAC -> name (registry fallback):              {report.get('registry_names') or '(none)'}")
+        print(f"resolved COM -> name: {report.get('resolved_names') or '(none)'}")
 
     print(f"\n--- pyserial ports ---")
     for port in report.get("pyserial_ports", []):
-        print(f"  {port['device']}: desc={port['description']!r} mfr={port['manufacturer']!r} hwid={port['hwid']!r}")
+        print(f"  {port['device']}: mac={port.get('mac_key')} hwid={port['hwid']!r}")
 
-    bt = report.get("parsed_names") if report["platform"] == "nt" else {}
+    bt = report.get("resolved_names") if report["platform"] == "nt" else {}
     options = serial_port_options(bt or {})
     print(f"\n--- dropdown will show ({len(options)}) ---")
     for device, label in options:

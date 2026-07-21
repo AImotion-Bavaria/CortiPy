@@ -99,6 +99,60 @@ class TestWindowsPnpParsing:
         assert windows_bluetooth_names() == {}
 
 
+class TestBluetoothDeviceResolution:
+    """The real name comes from the Bluetooth *device* (via the port's MAC), not the port."""
+
+    # Real hwids captured from a German Windows 11 box.
+    HWIDS = {
+        "COM15": r"BTHENUM\{00001101-0000-1000-8000-00805F9B34FB}_VID&00010047_PID&F000\7&39BA7CFE&0&60B647849B80_C00000000",
+        "COM16": r"BTHENUM\{00001101-0000-1000-8000-00805F9B34FB}_LOCALMFG&000A\7&39BA7CFE&0&98DA600E1209_C00000000",
+        "COM5": r"BTHENUM\{00001101-0000-1000-8000-00805F9B34FB}_LOCALMFG&0000\7&39BA7CFE&0&000000000000_00000007",
+        "COM1": r"ACPI\PNP0501\SIOBUAR2",
+    }
+
+    def test_mac_key_from_hwid(self):
+        from cortipy.ui_streamlit.serial_ports import _device_key_from_hwid
+        assert _device_key_from_hwid(self.HWIDS["COM15"]) == "60B647849B80"
+        assert _device_key_from_hwid(self.HWIDS["COM16"]) == "98DA600E1209"
+        assert _device_key_from_hwid(self.HWIDS["COM5"]) == "000000000000"  # incoming/server port
+        assert _device_key_from_hwid(self.HWIDS["COM1"]) is None  # not a Bluetooth port
+
+    def test_parse_bluetooth_class_json_indexes_by_mac(self):
+        from cortipy.ui_streamlit.serial_ports import parse_bluetooth_class_json
+        payload = json.dumps([
+            {"FriendlyName": "UN-2023.05.03", "InstanceId": r"BTHENUM\Dev_60B647849B80\7&a&0&60B647849B80"},
+            {"FriendlyName": "HC06xGreen", "InstanceId": r"BTHLE\Dev_98DA600E1209\x"},
+            {"FriendlyName": "Intel(R) Wireless Bluetooth(R)", "InstanceId": r"USB\VID_8087&PID_0026\5&y"},
+        ])
+        by_mac = parse_bluetooth_class_json(payload)
+        assert by_mac["60B647849B80"] == "UN-2023.05.03"
+        assert by_mac["98DA600E1209"] == "HC06xGreen"
+        # the radio adapter carries no device MAC, so it never mislabels a port
+        assert "Intel(R) Wireless Bluetooth(R)" not in by_mac.values()
+
+    def test_single_object_json_is_accepted(self):
+        from cortipy.ui_streamlit.serial_ports import parse_bluetooth_class_json
+        single = json.dumps({"FriendlyName": "UN-2020.01.01", "InstanceId": r"BTHENUM\Dev_112233445566\x"})
+        assert parse_bluetooth_class_json(single) == {"112233445566": "UN-2020.01.01"}
+
+    def test_end_to_end_resolves_com_ports_to_device_names(self, monkeypatch):
+        import cortipy.ui_streamlit.serial_ports as sp
+
+        ports = [FakePort(dev) for dev in self.HWIDS]
+        for port in ports:
+            port.hwid = self.HWIDS[port.device]
+        bt_json = json.dumps([
+            {"FriendlyName": "UN-2023.05.03", "InstanceId": r"BTHENUM\Dev_60B647849B80\x"},
+            {"FriendlyName": "HC06xGreen", "InstanceId": r"BTHLE\Dev_98DA600E1209\x"},
+        ])
+        monkeypatch.setattr(sp.os, "name", "nt")
+        monkeypatch.setattr(sp.list_ports, "comports", lambda: ports)
+        monkeypatch.setattr(sp, "_run_powershell", lambda *a, **k: (bt_json, "", 0, "powershell"))
+
+        names = sp.windows_bluetooth_names()
+        assert names == {"COM15": "UN-2023.05.03", "COM16": "HC06xGreen"}  # COM5/COM1 stay generic
+
+
 class TestPortLabelling:
     def test_windows_bluetooth_port_is_labelled_with_the_real_device(self):
         port = FakePort(
