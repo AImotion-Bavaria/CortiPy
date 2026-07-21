@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from copy import deepcopy
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -96,6 +97,45 @@ class SbidsExporter:
         self._known_subjects = set()
         self._known_devices = set()
 
+    @classmethod
+    def from_document(cls, doc: dict) -> "SbidsExporter":
+        """Reopen an existing SBIDS document to append more recordings to the same dataset."""
+        graph = doc.get("@graph", []) or []
+        dataset_node = next((n for n in graph if "Dataset" in str(n.get("@type", ""))), {})
+        dataset_id = str(doc.get("@id", "")).replace("urn:dataset:", "") or "DATASET"
+        dataset_name = dataset_node.get("schema:name") or dataset_id
+        exporter = cls(dataset_id=dataset_id, dataset_name=dataset_name)
+        exporter.doc = doc
+        exporter.doc.setdefault("@context", deepcopy(cls.BASE_CONTEXT))
+        exporter._graph = doc.setdefault("@graph", [])
+        exporter._known_subjects = {
+            str(n["@id"]).replace("urn:subject:", "")
+            for n in exporter._graph if str(n.get("@id", "")).startswith("urn:subject:")
+        }
+        exporter._known_devices = {
+            str(n["@id"]).replace("urn:device:", "")
+            for n in exporter._graph if str(n.get("@id", "")).startswith("urn:device:")
+        }
+        return exporter
+
+    def remove_recording(self, filename_stem: str) -> None:
+        """Drop a recording (and its file/channel nodes) so it can be re-saved (overwrite)."""
+        pattern = re.compile(rf"_{re.escape(filename_stem)}(?:_|$)")
+        self._graph[:] = [
+            node for node in self._graph
+            if not (
+                str(node.get("@id", "")).startswith(("urn:recording:", "urn:file:", "urn:channel:"))
+                and pattern.search(str(node.get("@id", "")))
+            )
+        ]
+
+    def has_recording(self, filename_stem: str) -> bool:
+        pattern = re.compile(rf"_{re.escape(filename_stem)}$")
+        return any(
+            str(node.get("@id", "")).startswith("urn:recording:") and pattern.search(str(node.get("@id", "")))
+            for node in self._graph
+        )
+
     def add_recording_from_cortipy_json(
         self,
         meta_json: dict,
@@ -163,6 +203,15 @@ class SbidsExporter:
             if unit_code:
                 prop_node["schema:unitCode"] = unit_code
             recording_node["schema:additionalProperty"].append(prop_node)
+        # Carry the full Parameters block verbatim so nothing the property list omits is lost
+        # on re-import — most importantly the connection settings (UNICORN COM port / address),
+        # so a loaded dataset can restore them into the config.
+        if isinstance(params, dict) and params:
+            recording_node["schema:additionalProperty"].append({
+                "@type": "schema:PropertyValue",
+                "schema:name": "CortiPyParameters",
+                "schema:value": json.dumps(params, default=str),
+            })
         variable_measured = []
         # GND/Ref live outside Channels (they hold no data column) but still carry impedance
         # worth recording. They are emitted as AUXChannel nodes and read back the same way.

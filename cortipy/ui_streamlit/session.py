@@ -2459,24 +2459,38 @@ def dataset_recording_stem(params: Dict[str, Any]) -> str:
 def save_recording_to_dataset(
     data: Any, params: Dict[str, Any], folder: Path, *, overwrite: bool = False
 ) -> tuple[str, Path]:
-    """Save a recording as ``<folder>/<filename>.jsonld`` + ``raw_data/<filename>.parquet``.
+    """Save a run into the dataset: ONE ``<folder-name>.jsonld`` + ``raw_data/<run>.parquet``.
 
-    This is the whole recording — the JSON-LD metadata carries the full config and points at
-    the Parquet raw data. No params.json/data.npz are written (they duplicated this and only
-    bloated the folder). ``<filename>`` comes from the operator's Filename.
+    A dataset is one folder with a single SBIDS JSON-LD named after the folder; every run is
+    appended to it (the format from the CortiPy paper) and its raw data goes to a Parquet in
+    ``raw_data/`` named after the run's Filename. The JSON-LD carries the full config verbatim
+    — including the UNICORN COM port — so a loaded dataset can restore it. No params.json /
+    data.npz.
 
-    Returns ``(status, jsonld_path)``: ``"saved"`` on success, or ``"exists"`` when a recording
-    of that name is already there and ``overwrite`` is False (so the caller can ask what to do).
+    Returns ``(status, jsonld_path)``: ``"saved"``, or ``"exists"`` when a run of that name is
+    already in the dataset and ``overwrite`` is False (so the caller can overwrite or rename).
     """
     from cortipy.shared.bids import BIDSLoadResult, _coerce_to_raw_array
-    from cortipy.shared.dataset import CortiDataset
+    from cortipy.shared.dataset import _export_recording_data, _meta_from_result
+    from cortipy.shared.sbids import SbidsExporter
 
     folder = Path(folder)
     folder.mkdir(parents=True, exist_ok=True)
     stem = dataset_recording_stem(params)
-    out = folder / f"{stem}.jsonld"
-    if out.exists() and not overwrite:
-        return "exists", out
+    jsonld = folder / f"{folder.name}.jsonld"
+
+    # Open the existing dataset to append to it, or start a fresh one named after the folder.
+    exporter: Optional[SbidsExporter] = None
+    if jsonld.exists():
+        try:
+            exporter = SbidsExporter.from_document(json.loads(jsonld.read_text(encoding="utf-8")))
+        except Exception:
+            LOGGER.exception("Could not reopen dataset %s; starting a fresh document", jsonld.name)
+    if exporter is None:
+        exporter = SbidsExporter(dataset_id=(_sanitize_stem(folder.name) or "DATASET"), dataset_name=folder.name)
+
+    if exporter.has_recording(stem) and not overwrite:
+        return "exists", jsonld
 
     arr = np.asarray(data, dtype=float)
     if arr.ndim != 2:
@@ -2487,21 +2501,32 @@ def save_recording_to_dataset(
     ch_names = [(c.get("Position") or c.get("Channel")) for c in chans] or None
     if ch_names and len(ch_names) != arr.shape[1]:
         ch_names = None  # montage does not match the data width; fall back to Ch1..N
-
     raw = _coerce_to_raw_array(arr, fs, ch_names, None)
     result = BIDSLoadResult(
         raw=raw, data=arr, sampling_rate=fs, events=None, channels=None,
         metadata={"params": params}, source_path=Path(stem), ancillary_files=[],
     )
-    # Remove a stale same-named recording's raw file so it cannot linger on overwrite.
+
+    raw_dir = folder / "raw_data"
     if overwrite:
-        for stale in folder.glob(f"raw_data/{stem}.*"):
+        exporter.remove_recording(stem)
+        for stale in raw_dir.glob(f"{stem}.*"):
             try:
                 stale.unlink()
             except OSError:
                 pass
-    CortiDataset(result).to_sbids(out, export_format="parquet")
-    return "saved", out
+
+    dest_path, content_url, file_size = _export_recording_data(
+        raw=result.raw, data=result.data, raw_dir=raw_dir, export_format="parquet", stem=stem,
+    )
+    meta = _meta_from_result(result, content_url)
+    participant = (params.get("Metadata") or {}).get("Participant") or {}
+    exporter.add_recording_from_cortipy_json(
+        meta_json=meta, raw_file=str(dest_path),
+        subject_id=participant.get("Code"), file_size_bytes=file_size, content_url=content_url,
+    )
+    exporter.save(str(jsonld))
+    return "saved", jsonld
 
 
 def export_recording(data: Any, params: Dict[str, Any], out_dir: Path, container: str, raw_format: str) -> Path:

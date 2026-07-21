@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 import tempfile
@@ -226,12 +227,13 @@ def params_from_jsonld_doc(
     nodes = [node for node in nodes if isinstance(node, dict)]
     id_map = {jsonld_node_id(node): node for node in nodes if jsonld_node_id(node)}
 
+    # A dataset can hold several recordings (one per run). Take the LAST — the newest run —
+    # so loading a dataset resumes from its most recent recording.
     recording = None
     for node in nodes:
         types = jsonld_types(node)
         if "createaction" in types or "recording" in types or node.get("schema:result") or node.get("result"):
             recording = node
-            break
     recording = recording or (nodes[0] if nodes else {})
     if not recording:
         st.error("JSON-LD import did not contain a recording node.")
@@ -334,6 +336,18 @@ def params_from_jsonld_doc(
         value = prop(prop_name)
         if value not in (None, "", []):
             parameters[_param_key] = value
+
+    # The full Parameters block is stored verbatim under "CortiPyParameters" — merge in
+    # anything the property list above does not cover (e.g. the UNICORN COM port/address), so
+    # loading a dataset can restore the connection settings. Reconstructed values win.
+    embedded = prop("CortiPyParameters")
+    if embedded is not None:
+        try:
+            full = json.loads(embedded) if isinstance(embedded, str) else embedded
+        except (ValueError, TypeError):
+            full = None
+        if isinstance(full, dict):
+            parameters = {**{k: v for k, v in full.items() if v not in (None, "", [])}, **parameters}
 
     return {
         "Method": method,
