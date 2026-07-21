@@ -327,6 +327,10 @@ class ActiChampDevice(DeviceInterface):
 
             buf = self._buf
             buf.control.stopRequested = False
+            # Remember the acquisition rate so we can restore it: impedance mode needs
+            # targetSamplingRate=0, but leaving it at 0 afterwards broke the next recording
+            # (it streamed at a wrong/garbled rate, e.g. ~67 Hz instead of 500 Hz).
+            previous_sampling_rate = float(buf.control.targetSamplingRate)
             buf.control.targetSamplingRate = 0.0
             # Tell the producer to switch the amplifier into impedance mode. Without this the
             # producer never measures impedances, so impSize stays 0 and every value stays 0 —
@@ -363,6 +367,8 @@ class ActiChampDevice(DeviceInterface):
                 # still measuring impedance instead of streaming EEG.
                 buf.control.measureImpedance = False
                 buf.control.showImpedanceLEDs = False
+                # Restore the acquisition rate so a subsequent recording streams correctly.
+                buf.control.targetSamplingRate = previous_sampling_rate
 
     # ------------------------------------------------------------------
     def _channel_limit(self, aux_channels: int) -> int:

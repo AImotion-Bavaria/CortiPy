@@ -851,18 +851,27 @@ def _fetch_actichamp_impedances(
     LOGGER.info("Attempting ActiCHamp impedance read (fs=%s, channels=%s)", fs, channel_count)
     values: List[float] = []
 
+    # Prefer the already-connected device: reading impedances through it reuses its running
+    # producer and mapped shared memory. Spinning up a throwaway producer here fought the
+    # connected one for the single 'EEG_SharedMemory' block and timed out ("Unable to map ...").
+    connected = st.session_state.get("_connected_device")
+    reuse_connected = connected is not None and callable(getattr(connected, "read_impedances", None))
+
     try:
         with (contextlib.nullcontext() if quiet else st.spinner("Checking ActiCHamp impedances...")):
-            device = DeviceFactory.create(params)
-            try:
-                reader = getattr(device, "read_impedances", None)
-                values = (
-                    reader(wait_seconds=wait_seconds, settle_seconds=settle_seconds)
-                    if callable(reader)
-                    else []
-                )
-            finally:
-                device.disconnect()
+            if reuse_connected:
+                values = connected.read_impedances(wait_seconds=wait_seconds, settle_seconds=settle_seconds)
+            else:
+                device = DeviceFactory.create(params)
+                try:
+                    reader = getattr(device, "read_impedances", None)
+                    values = (
+                        reader(wait_seconds=wait_seconds, settle_seconds=settle_seconds)
+                        if callable(reader)
+                        else []
+                    )
+                finally:
+                    device.disconnect()
     except Exception as exc:  # pragma: no cover
         LOGGER.exception("ActiCHamp impedance read failed")
         if not quiet:
@@ -896,21 +905,6 @@ def _fetch_actichamp_impedances(
             f"Loaded {len(values)} impedance values ({low:.1f}-{high:.1f} kOhm)."
         )
     st.session_state["_actichamp_impedance_timestamp"] = time.time()
-
-
-def _impedance_status_rows(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    display_rows: List[Dict[str, Any]] = []
-    for row in rows:
-        channel = row.get("Channel") or row.get("Label") or ""
-        impedance = coerce_number(row.get("Impedance"))
-        display_rows.append(
-            {
-                "Channel": channel,
-                "Position": row.get("Position") or channel,
-                "Impedance (kOhm)": round(float(impedance), 1) if impedance is not None else None,
-            }
-        )
-    return display_rows
 
 
 def _position_angle(label: str, fallback_idx: int) -> float:
@@ -1610,61 +1604,30 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
             fs_value = st.session_state.get("general_form", {}).get("fs")
             status = st.session_state.get("_actichamp_impedance_status")
             last_ts = st.session_state.get("_actichamp_impedance_timestamp")
-            impedance_cols = st.columns([0.8, 0.8, 2.4])
-            continuous_impedance = impedance_cols[0].toggle(
-                "Live impedance",
-                value=bool(st.session_state.get("_actichamp_impedance_auto", False)),
-                key="_actichamp_impedance_auto",
-                help="Continuously refresh measured ActiChamp impedance values while this page is open.",
-            )
-            if impedance_cols[1].button("Read once", key="actichamp_impedance_button", disabled=continuous_impedance):
+            device_connected = st.session_state.get("_connected_device") is not None
+            # One button. It fills the Impedance column of the table below — there is no
+            # separate impedance table. It reads through the connected device when there is
+            # one (reliable, no producer contention); connecting also fills it automatically.
+            imp_cols = st.columns([1.3, 2.7], vertical_alignment="center")
+            if imp_cols[0].button(
+                "Read impedance",
+                key="actichamp_impedance_button",
+                width="stretch",
+                help="Measure electrode impedances and fill the Impedance column below.",
+            ):
                 st.session_state["_actichamp_impedance_loaded"] = False
-                _fetch_actichamp_impedances(fs_value)
+                _fetch_actichamp_impedances(fs_value, force=True)
                 rows = st.session_state["channel_tables"].get("ActiCHamp", rows)
                 editor_revision = int(st.session_state["_channel_editor_revision"].get(device, 0))
+            caption_bits = []
             if status:
-                impedance_cols[2].caption(status)
+                caption_bits.append(status)
             if last_ts:
-                ts_str = time.strftime("%H:%M:%S", time.localtime(last_ts))
-                impedance_cols[2].caption(f"Last impedance read: {ts_str}")
-
-            if continuous_impedance:
-                run_every = 5.0
-                fragment = getattr(st, "fragment", None)
-                if callable(fragment):
-                    @fragment(run_every=run_every)
-                    def _live_actichamp_impedance() -> None:
-                        _fetch_actichamp_impedances(
-                            fs_value,
-                            force=True,
-                            quiet=True,
-                            wait_seconds=4.0,
-                            settle_seconds=0.5,
-                        )
-                        live_rows = st.session_state["channel_tables"].get("ActiCHamp", rows)
-                        message = st.session_state.get("_actichamp_impedance_status")
-                        if message:
-                            st.caption(message)
-                        st.dataframe(
-                            _impedance_status_rows(live_rows),
-                            hide_index=True,
-                            use_container_width=True,
-                        )
-
-                    _live_actichamp_impedance()
-                else:
-                    now = time.time()
-                    if not last_ts or now - float(last_ts) >= 5.0:
-                        _fetch_actichamp_impedances(
-                            fs_value,
-                            force=True,
-                            quiet=True,
-                            wait_seconds=4.0,
-                            settle_seconds=0.5,
-                        )
-                        rows = st.session_state["channel_tables"].get("ActiCHamp", rows)
-                        editor_revision = int(st.session_state["_channel_editor_revision"].get(device, 0))
-                    st.dataframe(_impedance_status_rows(rows), hide_index=True, use_container_width=True)
+                caption_bits.append(f"last read {time.strftime('%H:%M:%S', time.localtime(last_ts))}")
+            if not device_connected:
+                caption_bits.append("Connect the device first for a reliable read (it then fills automatically).")
+            if caption_bits:
+                imp_cols[1].caption(" · ".join(caption_bits))
         else:
             st.caption(
                 f"Continuous impedance polling is not available for {device}; "
@@ -3309,6 +3272,13 @@ def render_sidebar_controls() -> SidebarControls:
                         st.session_state["_connected_device"] = device
                         st.session_state["_connected_device_signature"] = _connection_signature(snap)
                         st.session_state["_device_check"] = ("ok", f"{msg} Ready to start.")
+                        # For ActiCHamp, read impedances right away THROUGH the connected device
+                        # (reuses its producer) and fill the electrode table — no extra click.
+                        if (snap.get("Device") or "") in IMPEDANCE_CAPABLE_DEVICES:
+                            st.session_state["_actichamp_impedance_loaded"] = False
+                            _fetch_actichamp_impedances(
+                                snap.get("Parameters", {}).get("fs"), force=True, quiet=True
+                            )
                     except Exception as exc:
                         LOGGER.exception("Device connection failed")
                         st.session_state["_device_check"] = ("err", str(exc))
