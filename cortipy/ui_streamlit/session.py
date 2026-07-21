@@ -1073,6 +1073,7 @@ def _remember_device_selection(device: str) -> None:
         return
     st.session_state["_last_device_selection"] = device
     st.session_state["_actichamp_impedance_loaded"] = False
+    st.session_state["_actichamp_impedance_autofetched"] = False  # let the Electrodes tab auto-read again
     st.session_state["_actichamp_impedance_status"] = None
     st.session_state["_actichamp_impedance_timestamp"] = None
 
@@ -1598,71 +1599,36 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
             )
         if device in IMPEDANCE_CAPABLE_DEVICES:
             fs_value = st.session_state.get("general_form", {}).get("fs")
-            status = st.session_state.get("_actichamp_impedance_status")
-            last_ts = st.session_state.get("_actichamp_impedance_timestamp")
             device_connected = st.session_state.get("_connected_device") is not None
-            # One button. It fills the Impedance column of the table below — there is no
-            # separate impedance table. It reads through the connected device when there is
-            # one (reliable, no producer contention); connecting also fills it automatically.
-            imp_cols = st.columns([1.3, 2.7], vertical_alignment="center")
-            if imp_cols[0].button(
-                "Read impedance",
-                key="actichamp_impedance_button",
-                width="stretch",
-                help="Measure electrode impedances and fill the Impedance column below.",
+            # Impedances load automatically when the Electrodes tab is opened (no button). It is
+            # done once per device selection / connection, reusing the connected device when one
+            # is present (reliable, no producer contention). It fills the Impedance column below.
+            if not st.session_state.get("_actichamp_impedance_loaded") and not st.session_state.get(
+                "_actichamp_impedance_autofetched"
             ):
-                st.session_state["_actichamp_impedance_loaded"] = False
-                _fetch_actichamp_impedances(fs_value, force=True)
+                st.session_state["_actichamp_impedance_autofetched"] = True
+                with st.spinner("Reading ActiCHamp impedances..."):
+                    _fetch_actichamp_impedances(fs_value, force=True, quiet=True)
                 rows = st.session_state["channel_tables"].get("ActiCHamp", rows)
                 editor_revision = int(st.session_state["_channel_editor_revision"].get(device, 0))
+            status = st.session_state.get("_actichamp_impedance_status")
+            last_ts = st.session_state.get("_actichamp_impedance_timestamp")
             caption_bits = []
             if status:
                 caption_bits.append(status)
             if last_ts:
                 caption_bits.append(f"last read {time.strftime('%H:%M:%S', time.localtime(last_ts))}")
             if not device_connected:
-                caption_bits.append("Connect the device first for a reliable read (it then fills automatically).")
+                caption_bits.append("Connect the device for a reliable read; impedances then fill automatically.")
             if caption_bits:
-                imp_cols[1].caption(" · ".join(caption_bits))
+                st.caption(" · ".join(caption_bits))
         else:
             st.caption(
                 f"Continuous impedance polling is not available for {device}; "
                 "enter measured impedance values manually when needed."
             )
 
-        # Quick setup: fill the standard montage / bulk-toggle active channels without hand-editing.
         extras_set = set(DEVICE_EXTRA_LABELS.get(device, []))
-        with st.expander("Channel setup shortcuts", expanded=False):
-            qs = st.columns(3)
-            if qs[0].button("Fill positions", key=f"fill_pos_{device}",
-                            help="Set each channel's Position from the device's standard montage and activate it."):
-                preset = DEVICE_POSITION_DEFAULTS.get(device, [])
-                eeg_idx = 0
-                for row in rows:
-                    if row["Channel"] in extras_set:
-                        continue
-                    if eeg_idx < len(preset):
-                        row["Position"] = preset[eeg_idx]
-                        row["PosX"], row["PosY"] = _safe_channel_coords(preset[eeg_idx], eeg_idx)
-                    row["Active"] = True
-                    eeg_idx += 1
-                channel_state[device] = rows
-                _bump_channel_editor_revision(device)
-                st.rerun()
-            if qs[1].button("Activate all", key=f"activate_all_{device}"):
-                for row in rows:
-                    row["Active"] = True
-                channel_state[device] = rows
-                _bump_channel_editor_revision(device)
-                st.rerun()
-            if qs[2].button("Deactivate EEG", key=f"deactivate_eeg_{device}",
-                            help="Turn off all EEG channels (Ground/Reference stay on)."):
-                for row in rows:
-                    if row["Channel"] not in extras_set:
-                        row["Active"] = False
-                channel_state[device] = rows
-                _bump_channel_editor_revision(device)
-                st.rerun()
 
         # ReferenceChannel is a 1-based index over EEG channels. Analysis subtracts the
         # selected channel from every EEG channel; Ground/Reference extras are not EEG columns.
@@ -1694,18 +1660,7 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 st.session_state.pop(f"{method}_ReferenceChannel", None)  # keep the method form in sync
 
         # Each channel carries its own electrode: pick the model per row in the table below
-        # (the type is derived from it). "Set one electrode for all channels" is an optional
-        # shortcut for a uniform cap; it only writes when clicked, so it never clobbers the
-        # per-channel choices.
-        apply_all = _render_apply_all_electrodes(device, rows)
-        if apply_all is not None:
-            all_rubric, all_model = apply_all
-            for entry in all_rows:
-                entry["Rubrik"] = all_rubric
-                entry["Model"] = all_model
-            channel_state[device] = all_rows
-            _bump_channel_editor_revision(device)
-            st.rerun()
+        # (the type is derived from it).
         model_options = _electrode_model_options(rows)
 
         # The table spans the full width and the scalp map sits underneath it.
@@ -1747,8 +1702,7 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                     ),
                     "Model": st.column_config.SelectboxColumn(
                         "Electrode model",
-                        help="The electrode used on this channel. Pick per channel, or use "
-                             "'Set one electrode for all channels' above for a uniform cap.",
+                        help="The electrode used on this channel; the type is derived from it.",
                         width=300,
                         options=model_options,
                         required=False,
@@ -1824,42 +1778,6 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
 
         with map_col:
             st.caption("Scalp map")
-            enable_click_placement = st.checkbox(
-                "Enable click placement",
-                value=False,
-                key=f"enable_topo_click_{device}",
-                help="Loads an optional custom Streamlit component for placing electrodes by clicking the map.",
-            )
-            if enable_click_placement and plotly_events is not None and go is not None:
-                channel_labels = [row.get("Channel") or f"Ch {idx+1}" for idx, row in enumerate(edited)]
-                target = st.selectbox("Channel to place", options=channel_labels, key=f"topo_target_{device}")
-                fig = _plotly_topography(edited)
-                st.caption("Pick a channel, then click on the head map to place it.")
-                events = plotly_events(
-                    fig,
-                    click_event=True,
-                    select_event=True,
-                    override_height=520,
-                    override_width=520,
-                    key=f"topo_events_{device}",
-                )
-                if events:
-                    evt = events[0]
-                    x_new = evt.get("x")
-                    y_new = evt.get("y")
-                    if x_new is not None and y_new is not None:
-                        idx = channel_labels.index(target)
-                        edited[idx]["PosX"] = float(x_new)
-                        edited[idx]["PosY"] = float(y_new)
-                        channel_state[device] = edited
-                        st.session_state["_topo_last_message"] = f"Updated {target} to ({x_new:.2f}, {y_new:.2f})."
-                        st.rerun()
-                if msg := st.session_state.get("_topo_last_message"):
-                    st.info(msg)
-            elif enable_click_placement:
-                st.info("Install optional deps `plotly` and `streamlit-plotly-events` for click placement.")
-            else:
-                st.caption("Click placement is off. Use the coordinate columns to edit positions, or enable it here.")
             _plot_topography(edited, st.empty())
     return edited
 
@@ -3358,6 +3276,7 @@ def render_sidebar_controls() -> SidebarControls:
                         # (reuses its producer) and fill the electrode table — no extra click.
                         if (snap.get("Device") or "") in IMPEDANCE_CAPABLE_DEVICES:
                             st.session_state["_actichamp_impedance_loaded"] = False
+                            st.session_state["_actichamp_impedance_autofetched"] = False
                             _fetch_actichamp_impedances(
                                 snap.get("Parameters", {}).get("fs"), force=True, quiet=True
                             )
