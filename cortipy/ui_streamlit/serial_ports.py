@@ -38,18 +38,34 @@ LOGGER = logging.getLogger(__name__)
 # is "UN-<date>", which is why the bare "un-" is here.
 UNICORN_PORT_HINTS = ("unicorn", "un-", "g.tec", "gtec")
 
-# Ask Windows for each serial port and the friendly name of the device it hangs off.
+# Ask Windows for each serial port, the friendly name of the device it hangs off (its PnP
+# parent), and the bus-reported device description. Force UTF-8 so German driver names decode
+# on any console codepage. We take whichever of parent/bus name is not a generic driver label.
 _WINDOWS_PNP_QUERY = r"""
 $ErrorActionPreference = 'SilentlyContinue'
-Get-PnpDevice -Class Ports -PresentOnly | ForEach-Object {
-    $parentId = (Get-PnpDeviceProperty -InstanceId $_.InstanceId -KeyName 'DEVPKEY_Device_Parent').Data
+try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
+$out = Get-PnpDevice -Class Ports -PresentOnly | ForEach-Object {
+    $inst = $_.InstanceId
+    $parentId = (Get-PnpDeviceProperty -InstanceId $inst -KeyName 'DEVPKEY_Device_Parent').Data
     $parentName = $null
     if ($parentId) { $parentName = (Get-PnpDevice -InstanceId $parentId).FriendlyName }
-    [pscustomobject]@{ port = $_.FriendlyName; device = $parentName }
-} | ConvertTo-Json -Compress
+    $busName = (Get-PnpDeviceProperty -InstanceId $inst -KeyName 'DEVPKEY_Device_BusReportedDeviceDesc').Data
+    [pscustomobject]@{ port = $_.FriendlyName; device = $parentName; busName = $busName }
+}
+$out | ConvertTo-Json -Compress
 """
 
+_POWERSHELL_CANDIDATES = ("powershell", "pwsh")
+
 _COM_IN_NAME = re.compile(r"\((COM\d+)\)", re.IGNORECASE)
+
+# Generic Bluetooth-SPP driver labels that name the *driver*, not the paired device. When the
+# PnP parent carries one of these too, it is useless — fall back to the bus-reported name.
+_GENERIC_NAME = re.compile(
+    r"standard.*bluetooth|bluetooth.*(link|verbindung)|serielle?\s+über\s+bluetooth"
+    r"|standardm|rfcomm|^microsoft$",
+    re.IGNORECASE,
+)
 
 # pyserial fills these in when it knows nothing; they say less than an empty string.
 _PLACEHOLDER_DETAILS = {"n/a", "unknown", "none", "-"}
@@ -82,32 +98,92 @@ def parse_windows_pnp_json(payload: str) -> Dict[str, str]:
         if not isinstance(entry, dict):
             continue
         port_label = str(entry.get("port") or "")
-        device_name = str(entry.get("device") or "").strip()
         match = _COM_IN_NAME.search(port_label)
-        if not match or not device_name:
+        if not match:
+            continue
+        # Prefer the PnP parent's name; if that is a generic driver label (or missing), fall
+        # back to the bus-reported device description before giving up on this port.
+        device_name = _first_real_name(entry.get("device"), entry.get("busName"))
+        if not device_name:
             continue
         names[match.group(1).upper()] = device_name
     return names
+
+
+def _first_real_name(*candidates: Optional[str]) -> str:
+    """First candidate that is a real device name, not empty and not a generic driver label."""
+    for candidate in candidates:
+        text = str(candidate or "").strip()
+        if text and not _GENERIC_NAME.search(text):
+            return text
+    return ""
+
+
+def _run_powershell(script: str, timeout: float):
+    """Run a PowerShell script decoded as UTF-8. Returns (stdout, stderr, returncode, exe).
+
+    Tries Windows PowerShell then PowerShell 7. On total failure returns (None, error, None, None).
+    """
+    last_error = "no PowerShell interpreter found"
+    for exe in _POWERSHELL_CANDIDATES:
+        try:
+            proc = subprocess.run(
+                [exe, "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout,
+            )
+        except FileNotFoundError:
+            last_error = f"'{exe}' not found on PATH"
+            continue
+        except Exception as exc:  # pragma: no cover - Windows only
+            return None, str(exc), None, exe
+        return proc.stdout, proc.stderr, proc.returncode, exe
+    return None, last_error, None, None
 
 
 def windows_bluetooth_names(timeout: float = 8.0) -> Dict[str, str]:
     """COM port -> paired Bluetooth device name. Empty off Windows, or on any failure."""
     if os.name != "nt":
         return {}
-    try:
-        proc = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", _WINDOWS_PNP_QUERY],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
-    except Exception as exc:  # pragma: no cover - Windows only
-        LOGGER.info("Could not query Windows for Bluetooth device names: %s", exc)
+    stdout, stderr, returncode, exe = _run_powershell(_WINDOWS_PNP_QUERY, timeout)
+    if stdout is None:
+        LOGGER.info("Could not query Windows for Bluetooth device names: %s", stderr)
         return {}
-    if proc.returncode != 0:  # pragma: no cover - Windows only
-        LOGGER.info("Windows PnP query exited %s: %s", proc.returncode, (proc.stderr or "")[:200])
+    if returncode not in (0, None) and not stdout.strip():
+        LOGGER.info("Windows PnP query (%s) exited %s: %s", exe, returncode, (stderr or "")[:200])
         return {}
-    return parse_windows_pnp_json(proc.stdout)
+    # ConvertTo-Json may still have produced usable output even on a nonzero exit, so parse it.
+    return parse_windows_pnp_json(stdout)
+
+
+def diagnose(timeout: float = 8.0) -> Dict[str, object]:
+    """Collect everything needed to debug Windows port-name resolution.
+
+    Returns the raw PowerShell stdout/stderr/return code, the parsed COM->name map, and the
+    ports pyserial reports. Meant to be printed on the measurement machine and shared.
+    """
+    report: Dict[str, object] = {"platform": os.name, "pyserial_error": SERIAL_IMPORT_ERROR}
+    if os.name == "nt":
+        stdout, stderr, returncode, exe = _run_powershell(_WINDOWS_PNP_QUERY, timeout)
+        report["powershell_exe"] = exe
+        report["powershell_returncode"] = returncode
+        report["powershell_stdout"] = stdout
+        report["powershell_stderr"] = stderr
+        report["parsed_names"] = parse_windows_pnp_json(stdout or "")
+    ports = []
+    if list_ports is not None:
+        for info in list_ports.comports():
+            ports.append({
+                "device": getattr(info, "device", None),
+                "description": getattr(info, "description", None),
+                "manufacturer": getattr(info, "manufacturer", None),
+                "hwid": getattr(info, "hwid", None),
+            })
+    report["pyserial_ports"] = ports
+    return report
 
 
 def _meaningful(value: str) -> str:
@@ -182,20 +258,33 @@ def serial_port_options(bluetooth_names: Optional[Dict[str, str]] = None) -> Lis
 
 
 if __name__ == "__main__":  # pragma: no cover - operator diagnostic
-    # Run on the measurement machine to see exactly what the port dropdown will show:
+    # Run on the measurement machine to see exactly what the port dropdown will show, and —
+    # if names are missing — WHY. Paste the whole output when reporting a problem:
     #     python -m cortipy.ui_streamlit.serial_ports
-    print(f"platform: {os.name}")
-    if list_ports is None:
-        print(f"pyserial unavailable: {SERIAL_IMPORT_ERROR}")
+    report = diagnose()
+    print(f"platform: {report['platform']}")
+    if report.get("pyserial_error"):
+        print(f"pyserial unavailable: {report['pyserial_error']}")
         raise SystemExit(1)
 
-    bt = windows_bluetooth_names()
-    print(f"bluetooth device names resolved: {bt or '(none — expected off Windows)'}")
+    if report["platform"] == "nt":
+        print(f"\n--- Windows PnP name query ---")
+        print(f"powershell: {report.get('powershell_exe')}  (exit {report.get('powershell_returncode')})")
+        stderr = (report.get("powershell_stderr") or "").strip()
+        if stderr:
+            print(f"stderr: {stderr[:500]}")
+        stdout = (report.get("powershell_stdout") or "").strip()
+        print(f"raw stdout: {stdout[:1500] or '(empty)'}")
+        print(f"parsed COM -> name: {report.get('parsed_names') or '(none)'}")
 
-    options = serial_port_options(bt)
-    if not options:
-        print("no serial ports found — pair the headset first")
-        raise SystemExit(0)
-    print(f"\n{len(options)} port(s):")
+    print(f"\n--- pyserial ports ---")
+    for port in report.get("pyserial_ports", []):
+        print(f"  {port['device']}: desc={port['description']!r} mfr={port['manufacturer']!r} hwid={port['hwid']!r}")
+
+    bt = report.get("parsed_names") if report["platform"] == "nt" else {}
+    options = serial_port_options(bt or {})
+    print(f"\n--- dropdown will show ({len(options)}) ---")
     for device, label in options:
         print(f"  {device:24} {label}")
+    if not options:
+        print("  (no serial ports — pair the headset first)")

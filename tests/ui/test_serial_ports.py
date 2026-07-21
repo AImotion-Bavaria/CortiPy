@@ -76,6 +76,24 @@ class TestWindowsPnpParsing:
         payload = json.dumps([{"port": "Some device with no port", "device": "UN-2021.05.05"}])
         assert parse_windows_pnp_json(payload) == {}
 
+    def test_generic_parent_name_falls_back_to_the_bus_reported_name(self):
+        # Some Bluetooth stacks name the PnP parent generically too; the bus-reported
+        # description then carries the real headset name.
+        payload = json.dumps([{
+            "port": "Standardmäßige serielle über Bluetooth-Verbindung (COM12)",
+            "device": "Standardmäßige Bluetooth-Verbindung",  # generic driver label
+            "busName": "UN-2021.05.05",
+        }])
+        assert parse_windows_pnp_json(payload) == {"COM12": "UN-2021.05.05"}
+
+    def test_a_purely_generic_port_yields_no_name(self):
+        payload = json.dumps([{
+            "port": "Standard Serial over Bluetooth link (COM7)",
+            "device": "Standard Serial over Bluetooth link",
+            "busName": "Bluetooth Device (RFCOMM Protocol TDI)",
+        }])
+        assert parse_windows_pnp_json(payload) == {}  # nothing distinguishing to show
+
     def test_returns_nothing_off_windows(self, monkeypatch):
         monkeypatch.setattr("cortipy.ui_streamlit.serial_ports.os.name", "posix")
         assert windows_bluetooth_names() == {}
