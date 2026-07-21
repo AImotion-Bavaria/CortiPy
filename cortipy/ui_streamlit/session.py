@@ -2447,6 +2447,63 @@ def next_run_index(root: Path, stem_base: str) -> int:
     return highest + 1
 
 
+def dataset_recording_stem(params: Dict[str, Any]) -> str:
+    """The base filename a recording is saved under (from the operator's Filename)."""
+    pblock = params.get("Parameters", {}) if isinstance(params, dict) else {}
+    part = (params.get("Metadata") or {}).get("Participant") or {}
+    subject = str(part.get("Code") or "01").replace(" ", "") or "01"
+    task = str(params.get("Method") or "task").lower()
+    return _sanitize_stem(pblock.get("Filename")) or f"{subject}_{task}"
+
+
+def save_recording_to_dataset(
+    data: Any, params: Dict[str, Any], folder: Path, *, overwrite: bool = False
+) -> tuple[str, Path]:
+    """Save a recording as ``<folder>/<filename>.jsonld`` + ``raw_data/<filename>.parquet``.
+
+    This is the whole recording — the JSON-LD metadata carries the full config and points at
+    the Parquet raw data. No params.json/data.npz are written (they duplicated this and only
+    bloated the folder). ``<filename>`` comes from the operator's Filename.
+
+    Returns ``(status, jsonld_path)``: ``"saved"`` on success, or ``"exists"`` when a recording
+    of that name is already there and ``overwrite`` is False (so the caller can ask what to do).
+    """
+    from cortipy.shared.bids import BIDSLoadResult, _coerce_to_raw_array
+    from cortipy.shared.dataset import CortiDataset
+
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    stem = dataset_recording_stem(params)
+    out = folder / f"{stem}.jsonld"
+    if out.exists() and not overwrite:
+        return "exists", out
+
+    arr = np.asarray(data, dtype=float)
+    if arr.ndim != 2:
+        raise ValueError("Recording data must be 2-D (samples x channels).")
+    pblock = params.get("Parameters", {}) if isinstance(params, dict) else {}
+    fs = float(coerce_number(pblock.get("fs")) or 250.0)
+    chans = params.get("Channels") or []
+    ch_names = [(c.get("Position") or c.get("Channel")) for c in chans] or None
+    if ch_names and len(ch_names) != arr.shape[1]:
+        ch_names = None  # montage does not match the data width; fall back to Ch1..N
+
+    raw = _coerce_to_raw_array(arr, fs, ch_names, None)
+    result = BIDSLoadResult(
+        raw=raw, data=arr, sampling_rate=fs, events=None, channels=None,
+        metadata={"params": params}, source_path=Path(stem), ancillary_files=[],
+    )
+    # Remove a stale same-named recording's raw file so it cannot linger on overwrite.
+    if overwrite:
+        for stale in folder.glob(f"raw_data/{stem}.*"):
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+    CortiDataset(result).to_sbids(out, export_format="parquet")
+    return "saved", out
+
+
 def export_recording(data: Any, params: Dict[str, Any], out_dir: Path, container: str, raw_format: str) -> Path:
     """Export a recording as BIDS or JSON-LD metadata with a selectable raw layer."""
     from cortipy.shared.bids import BIDSLoader, BIDSLoadResult, _coerce_to_raw_array
@@ -2618,7 +2675,6 @@ def run_pipeline_once(
     connected_device: Optional[DeviceInterface] = None,
     target_dir: Optional[Path] = None,
 ) -> tuple[Dict[str, Any], Optional[Path]]:
-    saver = SaveManager(save_dir)
     provider_called = {"done": False}
     captured: Dict[str, Any] = {}
 
@@ -2629,9 +2685,10 @@ def run_pipeline_once(
         return params
 
     def save_and_capture(run_params: Dict[str, Any]) -> None:
+        # Capture the finished params (data included) but do NOT write params.json/data.npz.
+        # The app writes the recording as a single JSON-LD + Parquet into the dataset folder.
         captured["params"] = run_params
-        saver(run_params, target_dir=target_dir)
-        captured["path"] = getattr(saver, "last_target_dir", None)
+        captured["path"] = Path(target_dir) if target_dir else Path(save_dir)
 
     def attach_context(context):
         if live_view is not None:

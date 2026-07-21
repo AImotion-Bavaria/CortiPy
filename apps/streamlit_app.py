@@ -57,6 +57,96 @@ def _export_selected_recording(
         return None, str(exc)
 
 
+def _persist_recording(params_to_run, dataset_folder, active_dataset_dir, run_status, live_view_service, prefix):
+    """Save the finished recording as a single JSON-LD + Parquet into the dataset folder.
+
+    On a name clash it holds the recording and asks the operator to overwrite or rename
+    (the dialog renders in main()); nothing is written or lost until they choose.
+    """
+    data = params_to_run.get("data")
+    stem = ui.dataset_recording_stem(params_to_run)
+    overwrite = st.session_state.pop("_overwrite_confirmed_stem", None) == stem
+    try:
+        status, out = ui.save_recording_to_dataset(data, params_to_run, dataset_folder, overwrite=overwrite)
+    except Exception as exc:
+        ui.LOGGER.exception("Saving recording failed")
+        st.session_state["last_results"] = {"label": "Unsaved run", "params": params_to_run, "data": data}
+        live_view_service.mark_complete()
+        run_status.update(label=f"{prefix} But saving failed: {exc}", state="error")
+        return
+
+    if status == "exists":
+        st.session_state["_pending_recording"] = params_to_run
+        st.session_state["_pending_recording_folder"] = str(dataset_folder)
+        st.session_state["last_results"] = {"label": stem, "params": params_to_run, "data": data}
+        live_view_service.mark_complete()
+        run_status.update(
+            label=f"{prefix} A recording named '{stem}' already exists — choose overwrite or a new name below.",
+            state="error",
+        )
+        return
+
+    if not active_dataset_dir:
+        st.session_state["active_dataset_dir"] = str(dataset_folder)  # adopt so the next run extends it
+    st.session_state["last_results"] = {
+        "label": out.stem, "params": params_to_run, "data": data, "export_path": out, "export_error": None,
+    }
+    live_view_service.mark_complete()
+    run_status.update(label=f"{prefix} Saved -> {out.name}. Open the Charts tab.", state="complete")
+
+
+def _finish_pending_save(out: Path) -> None:
+    folder = st.session_state.pop("_pending_recording_folder", None)
+    params = st.session_state.pop("_pending_recording", None)
+    if folder and not st.session_state.get("active_dataset_dir"):
+        st.session_state["active_dataset_dir"] = folder
+    if params is not None:
+        st.session_state["last_results"] = {
+            "label": out.stem, "params": params, "data": params.get("data"),
+            "export_path": out, "export_error": None,
+        }
+    st.session_state["_flash"] = f"Saved -> {out.name}."
+
+
+@st.dialog("Recording name already exists")
+def _render_overwrite_dialog() -> None:
+    params = st.session_state.get("_pending_recording")
+    folder = st.session_state.get("_pending_recording_folder")
+    if params is None or folder is None:
+        return
+    stem = ui.dataset_recording_stem(params)
+    st.warning(f"A recording named **{stem}** already exists in this dataset.")
+    st.caption("Save it under a new name, or overwrite the existing recording.")
+    new_name = st.text_input("New name", value=f"{stem}_2")
+    cols = st.columns(2)
+    if cols[0].button("Save as new name", type="primary", width="stretch"):
+        renamed = dict(params)
+        renamed["Parameters"] = dict(renamed.get("Parameters") or {})
+        renamed["Parameters"]["Filename"] = new_name
+        try:
+            status, out = ui.save_recording_to_dataset(renamed.get("data"), renamed, folder, overwrite=False)
+        except Exception as exc:
+            st.error(f"Save failed: {exc}")
+            return
+        if status == "exists":
+            st.error("That name also exists — pick another.")
+            return
+        _finish_pending_save(out)
+        st.rerun()
+    if cols[1].button("Overwrite", width="stretch"):
+        try:
+            _status, out = ui.save_recording_to_dataset(params.get("data"), params, folder, overwrite=True)
+        except Exception as exc:
+            st.error(f"Save failed: {exc}")
+            return
+        _finish_pending_save(out)
+        st.rerun()
+    if st.button("Cancel (keep in charts, do not save)"):
+        st.session_state.pop("_pending_recording", None)
+        st.session_state.pop("_pending_recording_folder", None)
+        st.rerun()
+
+
 def main() -> None:
     st.set_page_config(page_title="cortipy UI", layout="wide")
     inject_global_styles(st)
@@ -206,12 +296,16 @@ def main() -> None:
         selected_indices = list(range(max(1, channels_for_run)))
         save_dir = Path(default_save).expanduser()
         save_dir.mkdir(parents=True, exist_ok=True)
-        target_dir = Path(active_dataset_dir).expanduser() if active_dataset_dir else None
-        if target_dir is not None:
-            target_dir.mkdir(parents=True, exist_ok=True)
         params_to_run = dict(assembled_params)
         params_to_run.pop("Evaluation", None)
         params_to_run.pop("data", None)
+        # The dataset folder recordings are written into: the chosen one, else a folder named
+        # after this recording (adopted as the dataset after a successful save).
+        if active_dataset_dir:
+            dataset_folder = Path(active_dataset_dir).expanduser()
+        else:
+            dataset_folder = save_dir / ui.dataset_recording_stem(params_to_run)
+        dataset_folder.mkdir(parents=True, exist_ok=True)
         imported_data = st.session_state.get("imported_data")
         use_imported = st.session_state.get("use_imported_data", False)
         connection_required = ui._requires_device_connection(
@@ -256,28 +350,10 @@ def main() -> None:
             try:
                 if simulate:
                     params_to_run["data"] = ui.simulated_recording_data(params_to_run)
-                    saved_path = SaveManager(save_dir)(params_to_run, target_dir=target_dir)
-                    if not active_dataset_dir and saved_path is not None:
-                        # Adopt the folder just created so the NEXT recording extends it
-                        # instead of making yet another folder.
-                        st.session_state["active_dataset_dir"] = str(saved_path)
-                    export_path, export_error = _export_selected_recording(
-                        params_to_run.get("data"),
-                        params_to_run,
-                        saved_path,
+                    _persist_recording(
+                        params_to_run, dataset_folder, active_dataset_dir,
+                        run_status, live_view_service, "Simulated data.",
                     )
-                    st.session_state["last_results"] = {
-                        "label": getattr(saved_path, "name", "Simulated run"),
-                        "params": params_to_run,
-                        "data": params_to_run.get("data"),
-                        "export_path": export_path,
-                        "export_error": export_error,
-                    }
-                    live_view_service.mark_complete()
-                    export_note = f" Exported -> {export_path}" if export_path else ""
-                    run_status.update(label=f"Simulated data saved.{export_note} Open the Charts tab.", state="complete")
-                    if export_error:
-                        st.warning(f"Recording saved, but selected export failed: {export_error}")
                 else:
                     if use_imported and imported_data is None:
                         run_status.update(label="No imported data attached", state="error")
@@ -288,36 +364,17 @@ def main() -> None:
                             params_to_run["data"] = imported_data
                         if connected_device is not None:
                             connected_device.prepare_for_recording()
-                        run_params, saved_path = ui.run_pipeline_once(
+                        run_params, _ = ui.run_pipeline_once(
                             params_to_run,
                             save_dir,
                             live_view=live_view_service,
                             connected_device=connected_device,
-                            target_dir=target_dir,
+                            target_dir=dataset_folder,
                         )
-                        if not active_dataset_dir and saved_path is not None:
-                            # Adopt the folder just created so the NEXT recording extends it.
-                            st.session_state["active_dataset_dir"] = str(saved_path)
-                        st.session_state["last_results"] = {
-                            "label": getattr(saved_path, "name", "Last run"),
-                            "params": run_params,
-                            "data": run_params.get("data"),
-                        }
-                        export_path, export_error = _export_selected_recording(
-                            run_params.get("data"),
-                            run_params,
-                            saved_path,
+                        _persist_recording(
+                            run_params, dataset_folder, active_dataset_dir,
+                            run_status, live_view_service, "Measurement finished.",
                         )
-                        st.session_state["last_results"]["export_path"] = export_path
-                        st.session_state["last_results"]["export_error"] = export_error
-                        live_view_service.mark_complete()
-                        export_note = f" Exported -> {export_path}" if export_path else ""
-                        run_status.update(
-                            label=f"Measurement finished and saved.{export_note} Open the Charts tab.",
-                            state="complete",
-                        )
-                        if export_error:
-                            st.warning(f"Recording saved, but selected export failed: {export_error}")
             except Exception as exc:  # pragma: no cover
                 ui.LOGGER.exception("Measurement failed")
                 run_status.update(label="Measurement failed", state="error")
@@ -336,6 +393,10 @@ def main() -> None:
                         "warn",
                         "Measurement finished. Connect again before the next hardware run.",
                     )
+
+    # A recording whose name already existed is held until the operator decides here.
+    if st.session_state.get("_pending_recording") is not None:
+        _render_overwrite_dialog()
 
     ui.render_footer()
 
