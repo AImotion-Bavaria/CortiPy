@@ -257,6 +257,10 @@ def main() -> None:
                 if simulate:
                     params_to_run["data"] = ui.simulated_recording_data(params_to_run)
                     saved_path = SaveManager(save_dir)(params_to_run, target_dir=target_dir)
+                    if not active_dataset_dir and saved_path is not None:
+                        # Adopt the folder just created so the NEXT recording extends it
+                        # instead of making yet another folder.
+                        st.session_state["active_dataset_dir"] = str(saved_path)
                     export_path, export_error = _export_selected_recording(
                         params_to_run.get("data"),
                         params_to_run,
@@ -291,6 +295,9 @@ def main() -> None:
                             connected_device=connected_device,
                             target_dir=target_dir,
                         )
+                        if not active_dataset_dir and saved_path is not None:
+                            # Adopt the folder just created so the NEXT recording extends it.
+                            st.session_state["active_dataset_dir"] = str(saved_path)
                         st.session_state["last_results"] = {
                             "label": getattr(saved_path, "name", "Last run"),
                             "params": run_params,

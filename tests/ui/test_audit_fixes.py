@@ -176,3 +176,27 @@ def test_channels_stepper_updates_without_reverting(tmp_path):
 
     stepper().set_value(2).run()  # a further change must not snap back
     assert count() == 2 and stepper().value == 2
+
+
+# --- Dataset workflow: recording count for the "N recording(s)" caption ------
+def test_dataset_recording_count(tmp_path):
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert ui._dataset_recording_count(empty) == 0
+
+    one = tmp_path / "one"
+    one.mkdir()
+    (one / "params.json").write_text("{}")
+    assert ui._dataset_recording_count(one) == 1
+
+    three = tmp_path / "three"
+    three.mkdir()
+    (three / "params.json").write_text("{}")
+    (three / "params_run-02.json").write_text("{}")
+    (three / "params_run-03.json").write_text("{}")
+    assert ui._dataset_recording_count(three) == 3
+
+    jsonld_only = tmp_path / "jl"
+    (jsonld_only / "jsonld_export").mkdir(parents=True)
+    (jsonld_only / "jsonld_export" / "meta_run-01.jsonld").write_text("{}")
+    assert ui._dataset_recording_count(jsonld_only) == 1

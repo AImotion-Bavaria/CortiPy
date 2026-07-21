@@ -3095,111 +3095,132 @@ def handle_upload(target, *, embedded: bool = False) -> None:
                 st.session_state["_flash"] = f"Imported JSON-LD metadata from '{jsonld_upload.name}'."
                 st.rerun()
 
+def _open_folder_dialog(initial_dir: Path, title: str = "Select dataset folder") -> Optional[Path]:
+    """Native Explorer/Finder folder picker. Returns the chosen folder, or None if cancelled."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except Exception as exc:
+        raise RuntimeError(f"Native folder dialog is unavailable: {exc}") from exc
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        root.attributes("-topmost", True)
+    except Exception:
+        pass
+    try:
+        selected = filedialog.askdirectory(
+            title=title,
+            initialdir=str(initial_dir if initial_dir.exists() else Path.cwd()),
+            mustexist=False,  # let "New" create/select a fresh folder in the dialog
+        )
+    finally:
+        root.destroy()
+    return Path(selected) if selected else None
+
+
+def _dataset_recording_count(folder: Path) -> int:
+    """How many recordings a dataset folder already holds (best effort)."""
+    folder = Path(folder)
+    if not folder.exists():
+        return 0
+    count = len(list(folder.glob("params_run-*.json")))
+    if (folder / "params.json").is_file():
+        count += 1
+    if count == 0:  # JSON-LD-only / exported dataset
+        count = len({p.name for p in folder.rglob("*.jsonld")})
+    return count
+
+
+@st.dialog("Dataset looks incomplete")
+def _incomplete_dataset_dialog(folder: str, message: str) -> None:
+    st.warning(f"'{Path(folder).name}' does not contain a readable CortiPy dataset.")
+    st.caption(message)
+    st.caption("Use it as a fresh dataset (new recordings will be created here), or pick another folder.")
+    cols = st.columns(2)
+    if cols[0].button("Use as new dataset", type="primary", width="stretch"):
+        Path(folder).mkdir(parents=True, exist_ok=True)
+        st.session_state["active_dataset_dir"] = str(folder)
+        st.session_state.pop("active_dataset_dir_input", None)
+        st.session_state.pop("_dataset_incomplete", None)
+        st.session_state["_dataset_msg"] = ("ok", f"New dataset at '{Path(folder).name}'. Recordings are saved here.")
+        st.rerun()
+    if cols[1].button("Cancel", width="stretch"):
+        st.session_state.pop("_dataset_incomplete", None)
+        st.rerun()
+
+
 def render_sidebar_controls() -> SidebarControls:
     sidebar = st.sidebar
     sidebar.title("Controls")
 
     # ------------------------------------------------------------------
-    # 1 · Save to — the one always-visible essential; advanced targets fold away.
+    # 1 · Dataset — pick where recordings go: a new folder, or an existing dataset to extend.
     # ------------------------------------------------------------------
+    default_save = str(DEFAULT_SAVE_DIR)  # internal base; the active dataset folder is the real target
     with sidebar.container(border=True):
-        st.markdown("**1 · Save to**")
+        st.markdown("**1 · Dataset**")
+        active = str(st.session_state.get("active_dataset_dir") or "").strip()
 
-        default_save = st.text_input(
-            "Experiment / save directory",
-            value=str(DEFAULT_SAVE_DIR),
-            label_visibility="collapsed",
-            help="Folder where run outputs are written. Point it at an existing experiment to continue it.",
+        pick_cols = st.columns(2)
+        new_clicked = pick_cols[0].button(
+            "＋ New…", key="dataset_new_btn", width="stretch",
+            help="Pick a folder for a fresh dataset. Every recording is auto-named and saved into it.",
+        )
+        load_clicked = pick_cols[1].button(
+            "📂 Load…", key="dataset_load_btn", width="stretch",
+            help="Pick an existing dataset folder to resume and extend it (reads its JSON-LD / params).",
         )
 
-        exp_dir = Path(default_save).expanduser()
-        prior_sessions = list_saved_sessions(exp_dir) if exp_dir.exists() else []
-
-        target_now = active_dataset_path(default_save)
-        if target_now is not None:
-            st.caption(f"Saving into dataset folder: {target_now.name}")
-        else:
-            st.caption("Each run creates a new timestamped folder here.")
-        if prior_sessions:
-            st.caption(f"{len(prior_sessions)} prior session(s) in this experiment.")
-
-        with st.expander("More: dataset folder & resume", expanded=False):
-            active_default = str(st.session_state.get("active_dataset_dir") or "")
-            active_dataset_value = st.text_input(
-                "Active dataset folder",
-                value=active_default,
-                help=(
-                    "Optional. When set, Start measurement saves into this folder instead of a new timestamped one. "
-                    "Recording again keeps the previous one: runs are numbered (run-02, run-03, …), never overwritten, "
-                    "and loading the folder shows the newest run."
-                ),
-                placeholder="Leave empty for a new timestamped run folder",
-                key="active_dataset_dir_input",
-            ).strip()
-            st.session_state["active_dataset_dir"] = active_dataset_value
-            dataset_path = active_dataset_path(default_save)
-            dataset_cols = st.columns(2)
-            if dataset_cols[0].button(
-                "Load dataset folder",
-                key="load_active_dataset_folder",
-                width="stretch",
-                disabled=dataset_path is None,
-                help="Load params.json or JSON-LD metadata, plus data.npz/parquet/edf when present.",
-            ):
-                assert dataset_path is not None
-                params_content, data_array, message = _load_dataset_folder(dataset_path)
-                if params_content:
-                    load_params_into_state(params_content, data_array)
-                    # Loading a folder must not turn it into the save target, or the next
-                    # recording would overwrite it. Clear it; recording writes a new folder.
-                    loaded_name = dataset_path.name
-                    st.session_state["active_dataset_dir"] = ""
-                    st.session_state.pop("active_dataset_dir_input", None)
-                    st.session_state["last_results"] = {
-                        "label": loaded_name,
-                        "params": params_content,
-                        "data": data_array,
-                    }
-                    st.session_state["_flash"] = f"{message} The next recording is saved to a new folder."
-                    st.rerun()
-                else:
-                    st.warning(message)
-            if dataset_cols[1].button(
-                "Clear active folder",
-                key="clear_active_dataset_folder",
-                width="stretch",
-                disabled=dataset_path is None,
-            ):
-                st.session_state["active_dataset_dir"] = ""
-                st.session_state.pop("active_dataset_dir_input", None)
-                st.rerun()
-            if dataset_path is not None:
-                st.caption(f"Active target: {dataset_path}")
-
-            if prior_sessions:
-                latest = prior_sessions[0]
-                st.caption(f"Latest session: {latest.name}")
-
-                if st.button(
-                    "Continue experiment (load latest settings)",
-                    key="continue_experiment",
-                    width="stretch",
-                    help="Load the most recent session's parameters (not its data) so you can record the next subject.",
-                ):
-                    params_content, _ = _load_session_contents(latest)
-
+        if new_clicked or load_clicked:
+            try:
+                initial = Path(active).parent if active else DEFAULT_SAVE_DIR
+                folder = _open_folder_dialog(initial, title="Select dataset folder")
+            except Exception as exc:
+                st.session_state["_dataset_msg"] = ("err", f"Could not open the folder dialog: {exc}")
+            else:
+                if folder is None:
+                    st.session_state["_dataset_msg"] = ("info", "No folder selected.")
+                elif load_clicked:
+                    params_content, data_array, message = _load_dataset_folder(folder)
                     if params_content:
-                        load_params_into_state(normalize_params(params_content))
-                        st.session_state["imported_data"] = None
-                        st.session_state["use_imported_data"] = False
-                        st.session_state["active_dataset_dir"] = ""
+                        load_params_into_state(params_content, data_array)
+                        st.session_state["active_dataset_dir"] = str(folder)
                         st.session_state.pop("active_dataset_dir_input", None)
-                        st.session_state["_flash"] = (
-                            f"Loaded settings from {latest.name}. Update the participant, then start the recording."
+                        st.session_state["last_results"] = {
+                            "label": folder.name, "params": params_content, "data": data_array,
+                        }
+                        st.session_state["_dataset_msg"] = (
+                            "ok", f"Loaded dataset '{folder.name}'. New recordings extend it.",
                         )
-                        st.rerun()
                     else:
-                        st.warning("Latest session has no params.json to resume from.")
+                        # Not a readable dataset -> popup asking what to do.
+                        st.session_state["_dataset_incomplete"] = (str(folder), message)
+                else:  # New
+                    folder.mkdir(parents=True, exist_ok=True)
+                    st.session_state["active_dataset_dir"] = str(folder)
+                    st.session_state.pop("active_dataset_dir_input", None)
+                    st.session_state["_dataset_msg"] = (
+                        "ok", f"New dataset at '{folder.name}'. Recordings are saved here.",
+                    )
+            st.rerun()
+
+        incomplete = st.session_state.get("_dataset_incomplete")
+        if incomplete:
+            _incomplete_dataset_dialog(incomplete[0], incomplete[1])
+
+        msg = st.session_state.pop("_dataset_msg", None)
+        if msg:
+            {"ok": st.success, "info": st.info}.get(msg[0], st.error)(msg[1])
+
+        if active:
+            active_path = Path(active)
+            n = _dataset_recording_count(active_path)
+            st.caption(f"📁 **{active_path.name}** — {n} recording(s); new ones are auto-named into this folder.")
+            st.caption(str(active_path))
+        else:
+            st.info("Choose **New** or **Load** to set the dataset folder — otherwise each run creates its own folder.")
 
     # ------------------------------------------------------------------
     # 2 · Run mode — one choice replaces the old simulate toggle + replay checkbox.
@@ -3241,7 +3262,7 @@ def render_sidebar_controls() -> SidebarControls:
         elif run_mode == RUN_MODE_SIM:
             st.caption("Generates synthetic EEG and saves it — no device needed.")
         elif imported_data is None:
-            st.caption("Attach a data file under **Data & export** below, then this replays it.")
+            st.caption("**Load** a dataset above to attach a recording, then this replays it.")
         else:
             st.caption("Re-runs analysis on the attached recording — no device needed.")
 
@@ -3318,138 +3339,8 @@ def render_sidebar_controls() -> SidebarControls:
         else:
             st.caption("This mode does not require a hardware connection.")
 
-    # ------------------------------------------------------------------
-    # Advanced tools, folded away so the three steps above stay uncluttered.
-    # ------------------------------------------------------------------
-    with sidebar.expander("Data & export", expanded=False):
-        snapshot = current_params_snapshot()
-
-        st.download_button(
-            "Export settings (params.json)",
-            data=params_to_json(snapshot) if snapshot else "{}",
-            file_name=f"{(snapshot or {}).get('Method', 'cortipy')}_params.json",
-            mime="application/json",
-            disabled=snapshot is None,
-            width="stretch",
-            help="Download the current method/device/electrode configuration to reuse later.",
-        )
-
-        if st.button(
-            "Load settings",
-            key="load_settings_file_dialog",
-            width="stretch",
-            help="Open a file picker for params.json, JSON-LD metadata, or TOML settings.",
-        ):
-            try:
-                selected_path = _open_settings_file_dialog(Path(default_save).expanduser())
-            except Exception as exc:
-                st.warning(f"Could not open native file dialog: {exc}. Use the uploader below.")
-            else:
-                if selected_path is None:
-                    st.info("No settings file selected.")
-                else:
-                    try:
-                        params_loaded = _load_settings_file_path(selected_path)
-                        dataset_dir = _dataset_dir_for_settings_file(selected_path)
-                        # Pair the data with the SELECTED params file (via its DataFile), not
-                        # the newest run in the folder, or a non-newest pick loads mismatched data.
-                        data_loaded = _data_for_selected_params(selected_path, params_loaded, dataset_dir)
-                    except Exception as exc:
-                        st.error(f"Failed to load settings: {exc}")
-                    else:
-                        load_params_into_state(params_loaded, data_loaded)
-                        # Loading must not become the save target, or the next recording
-                        # would overwrite the source. Recording writes a fresh folder.
-                        st.session_state["active_dataset_dir"] = ""
-                        st.session_state.pop("active_dataset_dir_input", None)
-                        st.session_state["last_results"] = {
-                            "label": dataset_dir.name,
-                            "params": params_loaded,
-                            "data": data_loaded,
-                        }
-                        st.session_state["_flash"] = (
-                            f"Loaded settings from {selected_path.name}. The next recording is "
-                            "saved to a new folder."
-                        )
-                        st.rerun()
-
-        last = st.session_state.get("last_results") or {}
-        imported_data = st.session_state.get("imported_data")
-        last_data = last.get("data")
-        export_data = last_data if last_data is not None else imported_data
-        export_params = last.get("params") or snapshot or st.session_state.get("imported_params_raw") or {}
-        has_export_params = bool(export_params)
-        has_export_data = export_data is not None
-
-        st.markdown("**Export recording**")
-
-        exp_cols = st.columns(2)
-        export_container_options = ["JSON-LD", "BIDS"]
-        if st.session_state.get("export_container") == "SBIDS":
-            st.session_state["export_container"] = "JSON-LD"
-        if st.session_state.get("export_container") not in (None, *export_container_options):
-            st.session_state["export_container"] = "JSON-LD"
-
-        export_container = exp_cols[0].selectbox(
-            "Container",
-            export_container_options,
-            key="export_container",
-        )
-
-        export_format_options = (
-            ["Parquet", "EDF", "NPZ"]
-            if export_container == "JSON-LD"
-            else ["Parquet", "EDF"]
-        )
-        if st.session_state.get("export_raw_format") not in export_format_options:
-            st.session_state["export_raw_format"] = "Parquet"
-
-        export_fmt = exp_cols[1].selectbox(
-            "Raw format",
-            export_format_options,
-            key="export_raw_format",
-        )
-
-        if st.button(
-            f"Export as {export_container} + {export_fmt}",
-            disabled=not has_export_params,
-            width="stretch",
-            key="export_recording_btn",
-        ):
-            if not has_export_data:
-                st.info(
-                    f"{export_container} + {export_fmt} is selected for the next run. "
-                    "Run or import data to write an export immediately."
-                )
-            else:
-                try:
-                    export_dir = active_dataset_path(default_save) or Path(default_save).expanduser()
-                    export_dir.mkdir(parents=True, exist_ok=True)
-                    out = export_recording(
-                        export_data,
-                        export_params,
-                        export_dir,
-                        export_container,
-                        export_fmt,
-                    )
-                    st.success(f"Exported {export_container} + {export_fmt} -> {out}")
-                except Exception as exc:
-                    LOGGER.exception("Recording export failed")
-                    st.error(f"Export failed: {exc}")
-
-        if has_export_data:
-            source_label = "last run" if last_data is not None else "imported data"
-            st.caption(f"Use the button to write another copy of the {source_label} in the selected export format.")
-        elif has_export_params:
-            st.caption("Click the export button to keep these settings for the next run; no recording data is attached yet.")
-        else:
-            st.caption(
-                "Choose export settings now. Each new run writes this format into the run folder; "
-                "run or load a session to enable manual re-export."
-            )
-
-        st.divider()
-        handle_upload(st, embedded=True)
+    # (The 'Data & export' section is intentionally hidden for now: recordings are saved
+    # and exported straight into the active dataset folder chosen above.)
 
     with sidebar.expander("Live view options", expanded=False):
         live_view_enabled = st.toggle(
