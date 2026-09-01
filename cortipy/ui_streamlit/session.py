@@ -2306,6 +2306,14 @@ def connect_device_for_run(params: Dict[str, Any]) -> tuple[DeviceInterface, str
     try:
         device.connect()
         sample = _as_2d_array(device.acquire(probe_s, aux))
+
+        if str(params.get("Device", "")).lower() == "unicorn":
+            n_eeg = int(
+                params.get("Parameters", {}).get("NumberEEGChannels", 0)
+                or len(params.get("Channels", []))
+                or 8
+            )
+            sample = sample[:, :n_eeg]
         if sample.size == 0 or sample.shape[0] == 0:
             raise RuntimeError("Connected, but no samples were received (device may still be settling).")
         eff_fs = sample.shape[0] / probe_s
@@ -2407,10 +2415,17 @@ def save_recording_to_dataset(
     if exporter is None:
         exporter = SbidsExporter(dataset_id=(_sanitize_stem(folder.name) or "DATASET"), dataset_name=folder.name)
 
-    if exporter.has_recording(stem) and not overwrite:
-        return "exists", jsonld
+    raw_dir = folder / "raw_data"
+
+    if not overwrite:
+        recording_exists = exporter.has_recording(stem) or any(
+            raw_dir.glob(f"{stem}.*")
+        )
+        if recording_exists:
+            return "exists", jsonld
 
     arr = np.asarray(data, dtype=float)
+
     if arr.ndim != 2:
         raise ValueError("Recording data must be 2-D (samples x channels).")
     pblock = params.get("Parameters", {}) if isinstance(params, dict) else {}
@@ -2425,7 +2440,7 @@ def save_recording_to_dataset(
         metadata={"params": params}, source_path=Path(stem), ancillary_files=[],
     )
 
-    raw_dir = folder / "raw_data"
+
     if overwrite:
         exporter.remove_recording(stem)
         for stale in raw_dir.glob(f"{stem}.*"):

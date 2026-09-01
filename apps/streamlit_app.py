@@ -64,6 +64,30 @@ def _persist_recording(params_to_run, dataset_folder, active_dataset_dir, run_st
     (the dialog renders in main()); nothing is written or lost until they choose.
     """
     data = params_to_run.get("data")
+
+    # Keep only the channels that should be saved:
+    # UNICORN   -> selected EEG channels only
+    # ActiCHamp -> selected EEG + AUX channels
+    if data is not None:
+        data = np.asarray(data)
+
+        n_eeg = int(
+            params_to_run.get("Parameters", {}).get("NumberEEGChannels", 0)
+        )
+
+        if params_to_run.get("Device") == "ActiCHamp":
+            n_aux = int(
+                params_to_run.get("Parameters", {}).get("NumberAUXChannels", 0)
+            )
+        else:
+            n_aux = 0
+
+        n_keep = n_eeg + n_aux
+
+        if data.ndim == 2 and n_keep > 0:
+            data = data[:, :n_keep]
+            params_to_run["data"] = data
+
     stem = ui.dataset_recording_stem(params_to_run)
     overwrite = st.session_state.pop("_overwrite_confirmed_stem", None) == stem
     try:
