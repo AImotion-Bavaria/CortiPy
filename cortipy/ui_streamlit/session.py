@@ -1829,10 +1829,15 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
     plot_cols[0].selectbox(
         "Live plot",
         options=list(LIVE_PLOT_TYPES),
-        index=list(LIVE_PLOT_TYPES).index(st.session_state.get("live_preview_plot", DEFAULT_LIVE_PLOT)),
+        index=(
+            list(LIVE_PLOT_TYPES).index(st.session_state.get("live_preview_plot"))
+            if st.session_state.get("live_preview_plot") in LIVE_PLOT_TYPES
+            else list(LIVE_PLOT_TYPES).index(DEFAULT_LIVE_PLOT)
+        ),
         key="live_preview_plot",
         help="Which plot to show. Works for every method.",
     )
+    st.write("UI state:", st.session_state.get("live_preview_plot"))
     scale_cols = plot_cols
     scale_cols[1].selectbox(
         "Scaling (y-axis)",
@@ -1848,6 +1853,7 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
     interval = st.slider("Update interval (s)", min_value=0.05, max_value=1.0, value=0.25, step=0.05)
 
     placeholder = st.empty()
+    vep_placeholder = st.empty()
     fft_placeholder = st.empty()
     st.caption("Per-channel views")
     per_channel_container = st.container()
@@ -1882,6 +1888,7 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
         args = state["_live_preview_args"]
         chunk_duration = args["duration"] if math.isfinite(args["duration"]) else args["window"]
         try:
+            st.write("ABOUT TO RUN:", st.session_state.get("live_preview_plot", DEFAULT_LIVE_PLOT))
             buffer = run_live_preview(
                 params,
                 placeholder,
@@ -1895,6 +1902,7 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
                 final_interactive=not state.get("_live_preview_unlimited", False),
                 scale=resolve_live_scale(st.session_state.get("live_preview_scale")),
                 plot_type=st.session_state.get("live_preview_plot", DEFAULT_LIVE_PLOT),
+                vep_placeholder=vep_placeholder,
             )
             state["_live_preview_last_buffer"] = buffer
             if state.get("_live_preview_unlimited", False) and state.get("_live_preview_active", False):
@@ -1917,6 +1925,7 @@ def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]
             buffer, fs, placeholder, channel_indices=indices, params=params, render_inline=True,
             plot_type=st.session_state.get("live_preview_plot", DEFAULT_LIVE_PLOT),
             scale=resolve_live_scale(st.session_state.get("live_preview_scale")),
+            vep_placeholder=vep_placeholder,
         )
         st.success(f"Stopped live preview after capturing {buffer.shape[0]} samples.")
 
@@ -2117,8 +2126,13 @@ def assemble_params(
     aux_value = coerce_number(params["Parameters"].get("NumberAUXChannels"))
     aux_count = int(aux_value) if aux_value and aux_value > 0 else 0
     if channels and _device_emits_trigger(params["Device"], params["Parameters"]):
-        # The trigger rides in the final column, after EEG and AUX.
-        params["Parameters"]["TriggerChannel"] = len(channels) + aux_count + 1
+        # ActiCHamp VEP always uses physical AUX1, immediately after the 32 EEG inputs.
+        if str(params.get("Method", "")).lower() == "vep":
+            params["Parameters"]["TriggerChannel"] = 33
+        else:
+            trigger_value = coerce_number(params["Parameters"].get("TriggerChannel"))
+            if trigger_value is None or trigger_value < 1:
+                params["Parameters"]["TriggerChannel"] = len(channels) + 1
 
     # State the unit the samples are in rather than leaving every reader to assume.
     params["Parameters"]["SignalUnit"] = DEFAULT_SIGNAL_UNIT
@@ -2307,13 +2321,19 @@ def connect_device_for_run(params: Dict[str, Any]) -> tuple[DeviceInterface, str
         device.connect()
         sample = _as_2d_array(device.acquire(probe_s, aux))
 
-        if str(params.get("Device", "")).lower() == "unicorn":
-            n_eeg = int(
-                params.get("Parameters", {}).get("NumberEEGChannels", 0)
-                or len(params.get("Channels", []))
-                or 8
-            )
-            sample = sample[:, :n_eeg]
+        device_name = str(params.get("Device", "")).lower()
+
+        n_eeg = int(params.get("Parameters", {}).get("NumberEEGChannels", 0))
+        n_aux = int(params.get("Parameters", {}).get("NumberAUXChannels", 0))
+
+        if device_name == "unicorn":
+            n_keep = n_eeg
+        elif device_name == "actichamp":
+            n_keep = n_eeg + n_aux
+        else:
+            n_keep = sample.shape[1]
+
+        sample = sample[:, :n_keep]
         if sample.size == 0 or sample.shape[0] == 0:
             raise RuntimeError("Connected, but no samples were received (device may still be settling).")
         eff_fs = sample.shape[0] / probe_s
@@ -2449,16 +2469,27 @@ def save_recording_to_dataset(
             except OSError:
                 pass
 
-    dest_path, content_url, file_size = _export_recording_data(
-        raw=result.raw, data=result.data, raw_dir=raw_dir, export_format="parquet", stem=stem,
-    )
+    try:
+        dest_path, content_url, file_size = _export_recording_data(
+            raw=result.raw, data=result.data, raw_dir=raw_dir, export_format="parquet", stem=stem,
+        )
+    except (ImportError, ModuleNotFoundError, OSError, ValueError) as exc:
+        # Parquet requires an optional engine (pyarrow/fastparquet). Keep the recording
+        # saveable on installations that do not have one, while retaining the preferred
+        # format whenever it is available.
+        LOGGER.warning("Parquet export failed for %s; falling back to NPZ: %s", stem, exc)
+        dest_path, content_url, file_size = _export_recording_data(
+            raw=result.raw, data=result.data, raw_dir=raw_dir, export_format="npz", stem=stem,
+        )
     meta = _meta_from_result(result, content_url)
     participant = (params.get("Metadata") or {}).get("Participant") or {}
     exporter.add_recording_from_cortipy_json(
         meta_json=meta, raw_file=str(dest_path),
         subject_id=participant.get("Code"), file_size_bytes=file_size, content_url=content_url,
     )
-    exporter.save(str(jsonld))
+    temporary_jsonld = jsonld.with_suffix(".jsonld.tmp")
+    exporter.save(str(temporary_jsonld))
+    temporary_jsonld.replace(jsonld)
     return "saved", jsonld
 
 
@@ -3195,7 +3226,7 @@ def render_sidebar_controls() -> SidebarControls:
         if active:
             active_path = Path(active)
             n = _dataset_recording_count(active_path)
-            st.caption(f"📁 **{active_path.name}** — {n} recording(s); new ones are auto-named into this folder.")
+            st.caption(f"📁 **{active_path.name}**")
             st.caption(str(active_path))
         else:
             st.info("Choose **New** or **Load** to set the dataset folder — otherwise each run creates its own folder.")
@@ -3339,8 +3370,10 @@ def render_sidebar_controls() -> SidebarControls:
         st.selectbox(
             "Live plot",
             options=list(LIVE_PLOT_TYPES),
-            index=list(LIVE_PLOT_TYPES).index(
-                st.session_state.get("live_view_plot", DEFAULT_LIVE_PLOT)
+            index=(
+                list(LIVE_PLOT_TYPES).index(st.session_state.get("live_view_plot"))
+                if st.session_state.get("live_view_plot") in LIVE_PLOT_TYPES
+                else list(LIVE_PLOT_TYPES).index(DEFAULT_LIVE_PLOT)
             ),
             disabled=not live_view_enabled,
             key="live_view_plot",

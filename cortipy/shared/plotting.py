@@ -400,7 +400,6 @@ def plot_live_avg_vep(avg_signal: np.ndarray, params: dict, max_time: float) -> 
     fig.tight_layout()
     fig.canvas.draw_idle()
     _show_in_streamlit(fig, figure_key)
-    _show_in_streamlit(fig, figure_key)
 
 
 def plot_live_avg_bera(

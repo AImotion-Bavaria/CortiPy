@@ -11,6 +11,11 @@ from typing import Any, Dict, List, Optional
 import matplotlib.pyplot as plt
 import numpy as np
 import streamlit as st
+
+from cortipy.shared.filtering import filter_vep
+from cortipy.shared.triggers import trigger_adc
+
+
 try:
     import plotly.graph_objects as go
 except Exception:  # pragma: no cover
@@ -58,6 +63,13 @@ LIVE_WINDOW_SECONDS = 10.0
 # How often the pop-out window reloads itself while streaming.
 LIVE_REFRESH_SECONDS = 0.75
 
+# VEP averages improve as more complete epochs arrive, so refresh this plot at the
+# same cadence as the acquisition module rather than on every small display chunk.
+VEP_REFRESH_SECONDS = 5.0
+
+# Display-only limit. Acquisition, VEP processing, evaluation, and saving retain fs.
+LIVE_DISPLAY_MAX_HZ = 250.0
+
 # Y-axis scaling. "Auto" fits each channel to its own data; the fixed steps let you compare
 # channels (and runs) on identical axes, which auto-scaling actively prevents.
 LIVE_SCALE_OPTIONS: Dict[str, Optional[float]] = {
@@ -76,9 +88,17 @@ PLOT_STACKED = "Stacked per-channel"
 PLOT_OVERLAID = "Overlaid signal"
 PLOT_FFT = "FFT / spectrum"
 PLOT_SINGLE = "Single channel"
-LIVE_PLOT_TYPES = (PLOT_STACKED, PLOT_OVERLAID, PLOT_FFT, PLOT_SINGLE)
-DEFAULT_LIVE_PLOT = PLOT_STACKED
+PLOT_VEP_AVERAGE = "VEP average"
 
+
+
+LIVE_PLOT_TYPES = (
+    PLOT_STACKED,
+    PLOT_OVERLAID,
+    PLOT_FFT,
+    PLOT_SINGLE,
+)
+DEFAULT_LIVE_PLOT = PLOT_STACKED
 
 def resolve_live_scale(label: Optional[str]) -> Optional[float]:
     """µV half-range for a scaling choice; None means auto-fit."""
@@ -101,6 +121,19 @@ def _channel_limits(values: np.ndarray, scale: Optional[float]) -> tuple[float, 
         lo, hi = lo - 1.0, hi + 1.0
     pad = 0.12 * (hi - lo)
     return lo - pad, hi + pad
+
+
+def _decimate_for_display(
+    buffer: np.ndarray,
+    time_axis: np.ndarray,
+    fs: float,
+    max_rate: float = LIVE_DISPLAY_MAX_HZ,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Reduce plotted points without changing the acquisition or analysis buffers."""
+    if fs <= max_rate or fs <= 0 or buffer.shape[0] <= 1:
+        return buffer, time_axis
+    stride = max(1, int(math.ceil(fs / max_rate)))
+    return buffer[::stride], time_axis[::stride]
 
 
 def _stacked_channel_figure(
@@ -246,6 +279,105 @@ def _single_channel_figure(
     return fig
 
 
+
+def _vep_average_figure(
+    average_signal: Optional[np.ndarray] = None,
+    fs: float = 0.0,
+    channel_label: str = "VEP channel",
+    status: Optional[str] = None,
+) -> plt.Figure:
+    """Build the live VEP average figure, including an optional averaged epoch."""
+    fig, ax = plt.subplots(figsize=(11.0, 4.5))
+
+    if average_signal is not None and average_signal.size and fs > 0:
+        time_ms = np.arange(average_signal.size, dtype=float) / fs * 1000.0
+        ax.plot(time_ms, average_signal, color="tab:blue", linewidth=1.2)
+        ax.set_title(f"Live VEP average - {channel_label}")
+        if status:
+            ax.text(
+                0.01, 0.96, status, transform=ax.transAxes,
+                ha="left", va="top", fontsize=9, color="#5b6770",
+            )
+    else:
+        ax.set_title("Live VEP average")
+        if status:
+            ax.text(0.5, 0.5, status, transform=ax.transAxes, ha="center", va="center", color="#5b6770")
+    ax.set_xlabel("Time (ms)")
+    ax.set_ylabel("Amplitude (µV)")
+    ax.set_xlim(0, 510)
+    ax.grid(True, alpha=0.25)
+
+    fig.tight_layout()
+    return fig
+
+
+def _live_vep_average(
+    buffer: np.ndarray,
+    fs: float,
+    params: Optional[Dict[str, Any]],
+) -> tuple[Optional[np.ndarray], str, str]:
+    """Reference, edge-detect, segment, and average the live VEP epochs."""
+    if buffer.ndim != 2 or buffer.shape[0] < 4 or fs <= 0 or not isinstance(params, dict):
+        return None, "VEP channel", "Waiting for live VEP data"
+
+    param_block = params.get("Parameters", {}) or {}
+    max_time = float(param_block.get("VEPMaxTime", 0.35) or 0.35)
+    if max_time <= 0:
+        max_time = 0.35
+    trigger_idx = int(param_block.get("TriggerChannel", buffer.shape[1])) - 1
+    if trigger_idx < 0 or trigger_idx >= buffer.shape[1]:
+        return None, "VEP channel", "Trigger channel is not available"
+
+    referenced = apply_eeg_reference(np.asarray(buffer, dtype=float), param_block)
+    eeg_count = max(1, min(eeg_channel_count(param_block, referenced.shape[1]), referenced.shape[1]))
+    filter_mask = np.zeros(referenced.shape[1], dtype=bool)
+    filter_mask[:eeg_count] = True
+    filter_mask[trigger_idx] = False
+    try:
+        if filter_mask.any():
+            referenced[:, filter_mask] = filter_vep(referenced[:, filter_mask], 0.5, fs)
+        triggered = trigger_adc(
+            referenced,
+            fs,
+            trigger_idx,
+            max_time,
+            edge=str(param_block.get("edge", "b")),
+        )
+        trigger_positions = np.flatnonzero(triggered[:, trigger_idx] > 0.5)
+    except (IndexError, ValueError, TypeError):
+        return None, "VEP channel", "Unable to process the VEP trigger channel"
+
+    epoch_samples = max(1, int(round(max_time * fs)))
+    epochs = [
+        referenced[position : position + epoch_samples]
+        for position in trigger_positions
+        if position + epoch_samples <= referenced.shape[0]
+    ]
+    elapsed_seconds = buffer.shape[0] / float(fs)
+    trigger_rate = trigger_positions.size / elapsed_seconds if elapsed_seconds > 0 else 0.0
+    if not epochs:
+        return None, "VEP channel", (
+            f"Triggers: {trigger_positions.size} total ({trigger_rate:.2f} Hz); "
+            "complete epochs: 0"
+        )
+    segments = np.stack(epochs, axis=0)
+
+    live_channel = max(1, int(param_block.get("LivePlotCH", 1))) - 1
+    if live_channel < 0 or live_channel >= eeg_count or live_channel >= segments.shape[2]:
+        live_channel = 0
+    average_signal = segments[:, :, live_channel].mean(axis=0)
+    average_signal -= np.mean(average_signal)
+    labels = channel_labels(params, eeg_count)
+    label_index = live_channel
+    if trigger_idx < label_index:
+        label_index -= 1
+    label_index = max(0, min(label_index, len(labels) - 1)) if labels else 0
+    return average_signal, _ch_label(labels, label_index), (
+        f"Triggers: {trigger_positions.size} total ({trigger_rate:.2f} Hz); "
+        f"averaged epochs: {segments.shape[0]}"
+    )
+
+
 def build_live_figure(
     plot_type: str,
     buffer: np.ndarray,
@@ -315,9 +447,16 @@ def _plot_live_buffer(
     scale: Optional[float] = None,
     plot_type: str = DEFAULT_LIVE_PLOT,
     render_inline: bool = True,
+    vep_placeholder=None,
+    vep_buffer: Optional[np.ndarray] = None,
+    render_vep: bool = True,
 ) -> None:
+    LOGGER.info("Selected live plot: %s", plot_type)
     if buffer.size == 0:
         return
+
+    
+    raw_buffer = buffer
     buffer, ch_labels = _eeg_view(buffer, params)
     if buffer.size == 0:
         return
@@ -337,6 +476,21 @@ def _plot_live_buffer(
         time_axis_max = time_axis[-1]
     total_channels = buffer.shape[1]
     indices = _normalize_channel_indices(channel_indices, total_channels)
+    if str((params or {}).get("Method", "")).lower() == "vep":
+        param_block = (params or {}).get("Parameters", {}) or {}
+        live_channel = int(param_block.get("LivePlotCH", 1) or 1) - 1
+        if live_channel < 0 or live_channel >= total_channels:
+            live_channel = indices[0] if indices else 0
+        indices = [live_channel]
+        trigger_idx = 32 if str((params or {}).get("Device", "")).lower() == "actichamp" else int(param_block.get("TriggerChannel", raw_buffer.shape[1])) - 1
+        if 0 <= trigger_idx < raw_buffer.shape[1]:
+            # Keep the trigger raw and append it only to the display view. It must not be
+            # software-referenced or included in the EEG channel average below.
+            buffer = np.column_stack([buffer, raw_buffer[:, trigger_idx]])
+            ch_labels = [*ch_labels, "Trigger"]
+            indices = [*indices, buffer.shape[1] - 1]
+            total_channels = buffer.shape[1]
+    display_buffer, display_time_axis = _decimate_for_display(buffer, time_axis, fs)
     if interactive and go is not None:
         palette = list(getattr(plt.cm, "tab10").colors) if hasattr(plt.cm, "tab10") else []
         traces = []
@@ -345,8 +499,8 @@ def _plot_live_buffer(
             rgb = tuple(int(max(0, min(255, round(float(val) * 255)))) for val in (list(color) + [0, 0, 0])[:3])
             traces.append(
                 go.Scatter(
-                    x=time_axis,
-                    y=buffer[:, ch],
+                    x=display_time_axis,
+                    y=display_buffer[:, ch],
                     mode="lines",
                     line=dict(color=f"rgb({rgb[0]},{rgb[1]},{rgb[2]})", width=1.5),
                     name=_ch_label(ch_labels, ch),
@@ -380,8 +534,8 @@ def _plot_live_buffer(
         # Draw the plot the operator chose (stacked / overlaid / FFT / single channel).
         fig = build_live_figure(
             plot_type,
-            buffer,
-            time_axis,
+            display_buffer,
+            display_time_axis,
             (time_axis_min, time_axis_max),
             indices,
             ch_labels,
@@ -406,6 +560,18 @@ def _plot_live_buffer(
             )
             _open_plot_window_once(path, "live_preview_signal")
             _plot_window_status(placeholder, title, path)
+        plt.close(fig)
+
+    if (
+        str((params or {}).get("Method", "")).lower() == "vep"
+        and vep_placeholder is not None
+        and render_vep
+    ):
+        average_signal, average_label, status = _live_vep_average(
+            raw_buffer if vep_buffer is None else vep_buffer, fs, params
+        )
+        fig = _vep_average_figure(average_signal, fs, average_label, status)
+        vep_placeholder.pyplot(fig, clear_figure=False)
         plt.close(fig)
 
 
@@ -693,6 +859,7 @@ class LiveViewService:
         window_seconds: float = LIVE_WINDOW_SECONDS,
         channel_indices: Optional[List[int]] = None,
         fft_placeholder: Optional["st.delta_generator.DeltaGenerator"] = None,
+        vep_placeholder: Optional["st.delta_generator.DeltaGenerator"] = None,
         progress_placeholder: Optional["st.delta_generator.DeltaGenerator"] = None,
         total_seconds: Optional[float] = None,
         max_update_seconds: float = 0.5,
@@ -701,17 +868,21 @@ class LiveViewService:
     ) -> None:
         self.placeholder = placeholder
         self.fft_placeholder = fft_placeholder
+        self.vep_placeholder = vep_placeholder
         self.progress_placeholder = progress_placeholder
         self.window_seconds = max(1.0, float(window_seconds))
         self.channel_indices = channel_indices or []
         self.total_seconds = float(total_seconds or 0.0)
         self.max_update_seconds = max(0.1, float(max_update_seconds))
         self.buffer: np.ndarray = np.empty((0, 0))
+        self.vep_buffer: np.ndarray = np.empty((0, 0))
         self.samples_seen = 0
         self.fs = 0.0
+        self._last_vep_render_samples = -1
         self.params: Dict[str, Any] = {}
         self.scale: Optional[float] = scale
         self.plot_type: str = plot_type or DEFAULT_LIVE_PLOT
+        self._last_signal_render = 0.0
 
     def wrap_device(self, device: DeviceInterface, params: Dict[str, Any]) -> LiveViewDevice:
         fs_value = coerce_number(params.get("Parameters", {}).get("fs"))
@@ -723,7 +894,10 @@ class LiveViewService:
 
     def reset(self, *, clear_progress: bool = True) -> None:
         self.buffer = np.empty((0, 0))
+        self.vep_buffer = np.empty((0, 0))
         self.samples_seen = 0
+        self._last_vep_render_samples = -1
+        self._last_signal_render = 0.0
         if self.placeholder is not None:
             self.placeholder.empty()
         if self.progress_placeholder is not None:
@@ -750,6 +924,9 @@ class LiveViewService:
                 scale=self.scale,
                 plot_type=self.plot_type,
                 render_inline=True,
+                vep_placeholder=self.vep_placeholder,
+                vep_buffer=self.vep_buffer,
+                render_vep=True,
             )
 
     def _update_progress(self, fs: float) -> None:
@@ -776,9 +953,25 @@ class LiveViewService:
             self.buffer = array
         else:
             self.buffer = np.vstack([self.buffer, array])
+        if self.vep_buffer.size == 0:
+            self.vep_buffer = array.copy()
+        else:
+            self.vep_buffer = np.vstack([self.vep_buffer, array])
         max_window = int(fs * self.window_seconds) if fs > 0 else self.buffer.shape[0]
         if max_window > 0 and self.buffer.shape[0] > max_window:
             self.buffer = self.buffer[-max_window:]
+        now = time.monotonic()
+        render_vep = (
+            self._last_vep_render_samples < 0
+            or self.samples_seen - self._last_vep_render_samples
+            >= int(round(VEP_REFRESH_SECONDS * fs))
+        )
+        if (
+            self._last_signal_render
+            and now - self._last_signal_render < self.max_update_seconds
+            and not render_vep
+        ):
+            return
         indices = _normalize_channel_indices(self.channel_indices, self._eeg_width())
         offset = max(0, self.samples_seen - self.buffer.shape[0])
         # Render the single plot the operator chose, inline in the page (no dependency on a
@@ -795,7 +988,13 @@ class LiveViewService:
             scale=self.scale,
             plot_type=self.plot_type,
             render_inline=True,
+            vep_placeholder=self.vep_placeholder,
+            vep_buffer=self.vep_buffer,
+            render_vep=render_vep,
         )
+        if render_vep:
+            self._last_vep_render_samples = self.samples_seen
+        self._last_signal_render = now
 
     def _eeg_width(self) -> int:
         """Number of EEG columns the plots will actually see (non-EEG columns are dropped)."""
@@ -818,6 +1017,7 @@ def run_live_preview(
     final_interactive: bool = True,
     scale: Optional[float] = None,
     plot_type: str = DEFAULT_LIVE_PLOT,
+    vep_placeholder=None,
 ) -> np.ndarray:
     params = dict(params)
     params.pop("data", None)
@@ -841,10 +1041,11 @@ def run_live_preview(
     device.connect()
 
     try:
-        buffer = np.asarray(initial_buffer, dtype=float) if initial_buffer is not None else np.empty((0, 0))
-        if buffer.size and buffer.ndim == 1:
-            buffer = buffer[:, np.newaxis]
-        samples_seen = int(buffer.shape[0]) if buffer.size else 0
+        analysis_buffer = np.asarray(initial_buffer, dtype=float) if initial_buffer is not None else np.empty((0, 0))
+        if analysis_buffer.size and analysis_buffer.ndim == 1:
+            analysis_buffer = analysis_buffer[:, np.newaxis]
+        samples_seen = int(analysis_buffer.shape[0]) if analysis_buffer.size else 0
+        buffer = analysis_buffer.copy()
         max_window = int(math.ceil(fs * window)) if fs > 0 else None
         if buffer.size and max_window:
             buffer = buffer[-max_window:]
@@ -853,15 +1054,34 @@ def run_live_preview(
         if prime_chunk.ndim == 1:
             prime_chunk = prime_chunk[:, np.newaxis]
         samples_seen += int(prime_chunk.shape[0]) if prime_chunk.size else 0
-        if buffer.size == 0:
-            buffer = prime_chunk
+        if analysis_buffer.size == 0:
+            analysis_buffer = prime_chunk
         else:
-            buffer = np.vstack([buffer, prime_chunk])
+            analysis_buffer = np.vstack([analysis_buffer, prime_chunk])
+        buffer = analysis_buffer.copy()
         if max_window and buffer.shape[0] > max_window:
             buffer = buffer[-max_window:]
         sample_offset = max(0, samples_seen - buffer.shape[0])
         # Render the chosen plot inline, refreshed each chunk.
-        def _draw(buf: np.ndarray, offset: int) -> None:
+        last_vep_render_samples = -1
+        last_signal_render = 0.0
+
+        def _draw(buf: np.ndarray, offset: int, *, force_vep: bool = False) -> None:
+            nonlocal last_vep_render_samples, last_signal_render
+            now = time.monotonic()
+            render_vep = (
+                force_vep
+                or last_vep_render_samples < 0
+                or samples_seen - last_vep_render_samples
+                >= int(round(VEP_REFRESH_SECONDS * fs))
+            )
+            if (
+                not force_vep
+                and last_vep_render_samples >= 0
+                and now - last_signal_render < max(0.1, update_interval)
+                and not render_vep
+            ):
+                return
             _plot_live_buffer(
                 buf, fs, placeholder,
                 channel_indices=indices,
@@ -871,9 +1091,15 @@ def run_live_preview(
                 scale=scale,
                 plot_type=plot_type,
                 render_inline=True,
+                vep_placeholder=vep_placeholder,
+                vep_buffer=analysis_buffer,
+                render_vep=render_vep,
             )
+            if render_vep:
+                last_vep_render_samples = samples_seen
+            last_signal_render = now
 
-        _draw(buffer, sample_offset)
+        _draw(buffer, sample_offset, force_vep=True)
         start = time.time()
         while (time.time() - start) < duration:
             remaining = duration - (time.time() - start)
@@ -882,10 +1108,11 @@ def run_live_preview(
                 chunk = chunk[:, np.newaxis]
             if chunk.size > 0:
                 samples_seen += int(chunk.shape[0])
-                if buffer.size == 0:
-                    buffer = chunk
+                if analysis_buffer.size == 0:
+                    analysis_buffer = chunk
                 else:
-                    buffer = np.vstack([buffer, chunk])
+                    analysis_buffer = np.vstack([analysis_buffer, chunk])
+                buffer = analysis_buffer.copy()
                 max_window = int(math.ceil(fs * window)) if fs > 0 else buffer.shape[0]
                 if buffer.shape[0] > max_window:
                     buffer = buffer[-max_window:]
@@ -894,8 +1121,8 @@ def run_live_preview(
             else:
                 time.sleep(update_interval)
         # Final frame of the chosen plot.
-        _draw(buffer, max(0, samples_seen - buffer.shape[0]))
-        return buffer
+        _draw(buffer, max(0, samples_seen - buffer.shape[0]), force_vep=True)
+        return analysis_buffer
     finally:
         device.disconnect()
         LOGGER.info("run_live_preview finished")

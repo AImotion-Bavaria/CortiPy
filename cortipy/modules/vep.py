@@ -48,7 +48,10 @@ class VepModule(ModuleBase):
             data_step = self._ensure_array(device.acquire(duration, aux_ch))
             data = np.vstack([data, data_step])
 
-            self._update_live_plot(params, data, fs)
+            # LiveViewService owns the referenced, cumulative VEP figure in the Streamlit
+            # UI. Avoid also creating the legacy plot_live_avg_vep figure for that path.
+            if context.get_service("live_view") is None:
+                self._update_live_plot(params, data, fs)
             elapsed += duration
 
         info_end_live()

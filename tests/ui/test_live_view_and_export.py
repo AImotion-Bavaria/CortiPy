@@ -180,7 +180,7 @@ class TestLivePlotTypes:
         t = np.arange(fs * secs) / fs
         return np.column_stack([np.sin(2 * np.pi * (5 + i) * t) * 10 for i in range(n_ch)]), t
 
-    def test_all_four_types_are_offered(self):
+    def test_all_live_plot_types_are_offered(self):
         from cortipy.ui_streamlit.live import LIVE_PLOT_TYPES
 
         assert set(LIVE_PLOT_TYPES) == {

@@ -162,15 +162,32 @@ class VepEvaluator(EvaluatorBase):
 
         if render_plots:
             LOGGER.debug("Rendering VEP evaluation plots")
-            _ensure_interactive_backend()
+            # Streamlit renders figures itself; switching to Tk/Qt here starts a GUI
+            # outside the main thread and can fail while the recording result is saved.
+            if not _is_streamlit_runtime():
+                _ensure_interactive_backend()
             plt.rcParams["figure.max_open_warning"] = 0
             plt.rcParams["figure.raise_window"] = True
-            plot_vep(average_signals, params, peak_stats)
-            plot_vep_matrix(evaluation, param_block.get("ReferenceChannel", 1), params.get("Channels"), average_signals)
-            _plot_vep_all_channels(average_signals, evaluation["average_signals"]["time"], params, peak_stats)
-            _plot_vep_trace_overlay(segments, fs, params, plot_channel_label)
-            _plot_vep_erp_channel(average_signals, fs, params, plot_channel_label)
-            _plot_vep_topomap(context, params, t_ms=topomap_latency_ms)
+            selected_idx = _channel_index_from_label(
+                param_block.get("LivePlotCH", plot_channel_label),
+                params.get("Channels"),
+                average_signals.shape[1],
+            )
+            selected_avg = average_signals[:, [selected_idx]]
+            selected_peaks = {
+                name: {
+                    "peak_values": values["peak_values"][[selected_idx]],
+                    "peak_times": values["peak_times"][[selected_idx]],
+                }
+                for name, values in peak_stats.items()
+            }
+            selected_params = dict(params)
+            selected_params["Channels"] = [
+                params.get("Channels", [])[selected_idx]
+            ] if params.get("Channels") and selected_idx < len(params["Channels"]) else params.get("Channels")
+            selected_label = channel_labels(params, average_signals.shape[1])[selected_idx]
+            plot_vep(selected_avg, selected_params, selected_peaks)
+            _plot_vep_trace_overlay(segments, fs, params, selected_label)
             if show_plots and not _is_streamlit_runtime():
                 try:
                     fig_nums = plt.get_fignums()

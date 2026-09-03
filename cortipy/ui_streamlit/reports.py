@@ -34,6 +34,7 @@ def autoevaluate_if_needed(params: Dict[str, Any], data: Optional[np.ndarray]) -
         return params.get("Evaluation") or {}
 
     data_array = np.asarray(data)
+
     if data_array.size == 0 or (data_array.ndim >= 2 and data_array.shape[1] == 0):
         LOGGER.warning("Skipping auto-evaluation: empty data buffer", extra={"shape": data_array.shape})
         return params.get("Evaluation") or {}
@@ -72,7 +73,7 @@ def autoevaluate_if_needed(params: Dict[str, Any], data: Optional[np.ndarray]) -
 
         temp_params = _params_for_evaluation(params)
         temp_params["Parameters"] = dict(params.get("Parameters", {}))
-        temp_params["data"] = data
+        temp_params["data"] = data_array
         ctx = ModuleContext(temp_params)
         EvalCls(show_plots=False).evaluate(ctx)
         evaluation = ctx.params.get("Evaluation") or {}

@@ -53,8 +53,14 @@ class DeviceFactory:
             if fs <= 0:
                 raise ValueError("ActiChamp device requires 'fs' sampling rate in Params.Parameters.")
 
-            channel_count = int(device_params.get("NumberEEGChannels", 32))
+            channel_count = max(32, int(device_params.get("NumberEEGChannels", 32)))
             aux_channels = int(device_params.get("NumberAUXChannels", 0))
+            trigger_channel = int(device_params.get("TriggerChannel", 0) or 0)
+            if str(params.get("Method", "")).lower() == "vep":
+                trigger_channel = 33
+                device_params["TriggerChannel"] = trigger_channel
+            if trigger_channel > channel_count:
+                aux_channels = max(aux_channels, trigger_channel - channel_count)
             install_dir = (
                 params.get("ActiChampPath")
                 or device_params.get("ActiChampPath")

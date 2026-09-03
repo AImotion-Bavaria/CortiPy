@@ -372,9 +372,10 @@ class ActiChampDevice(DeviceInterface):
 
     # ------------------------------------------------------------------
     def _channel_limit(self, aux_channels: int) -> int:
+        # The SDK returns enabled channels in amplifier order: EEG first, then AUX.
+        # The trigger is an AUX channel when selected in the amplifier configuration;
+        # it is not an additional column appended by the shared-memory producer.
         total = self.channel_count + int(aux_channels or self.default_aux)
-        if self.include_triggers:
-            total += 1
         return min(total, MAX_CHANNELS)
 
     def _start_producer(self) -> None:

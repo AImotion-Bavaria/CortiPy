@@ -148,7 +148,7 @@ def render_chart(chart: ChartData) -> None:
 def _chart_from_raw_data(label: str, params: Dict[str, Any], data: np.ndarray, aggregate: bool = False) -> Optional[ChartData]:
     if data is None:
         return None
-    arr = referenced_eeg_view(params, data)
+    arr = np.asarray(data, dtype=float)
     if arr.ndim < 2 or arr.shape[0] == 0:
         return None
 
@@ -187,7 +187,7 @@ def _chart_from_raw_data(label: str, params: Dict[str, Any], data: np.ndarray, a
 def _chart_from_psd(label: str, params: Dict[str, Any], data: np.ndarray, aggregate: bool = False) -> Optional[ChartData]:
     if data is None:
         return None
-    arr = referenced_eeg_view(params, data)
+    arr = np.asarray(data, dtype=float)
     if arr.ndim < 2 or arr.shape[0] == 0:
         return None
 

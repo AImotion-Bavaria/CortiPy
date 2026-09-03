@@ -36,6 +36,22 @@ DEFAULT_EXPORT_CONTAINER = "JSON-LD"
 DEFAULT_EXPORT_RAW_FORMAT = "Parquet"
 
 
+def _selected_raw_recording_data(data: Any, params: Dict[str, Any]) -> np.ndarray:
+    """Select recorded columns without filtering, referencing, or resampling samples."""
+    array = np.asarray(data)
+    if array.ndim != 2:
+        return array
+    parameters = params.get("Parameters", {}) or {}
+    n_eeg = max(0, int(parameters.get("NumberEEGChannels", 0) or 0))
+    n_aux = max(0, int(parameters.get("NumberAUXChannels", 0) or 0))
+    if str(params.get("Device", "")).lower() == "actichamp":
+        # The SDK stream is physical EEG 1..32 followed by AUX 1..N.
+        columns = list(range(min(n_eeg, array.shape[1])))
+        columns.extend(range(32, min(32 + n_aux, array.shape[1])))
+        return array[:, columns]
+    return array[:, : n_eeg + n_aux] if n_eeg + n_aux else array
+
+
 def _selected_export_settings() -> tuple[str, str]:
     container = st.session_state.get("export_container") or DEFAULT_EXPORT_CONTAINER
     raw_format = st.session_state.get("export_raw_format") or DEFAULT_EXPORT_RAW_FORMAT
@@ -69,23 +85,8 @@ def _persist_recording(params_to_run, dataset_folder, active_dataset_dir, run_st
     # UNICORN   -> selected EEG channels only
     # ActiCHamp -> selected EEG + AUX channels
     if data is not None:
-        data = np.asarray(data)
-
-        n_eeg = int(
-            params_to_run.get("Parameters", {}).get("NumberEEGChannels", 0)
-        )
-
-        if params_to_run.get("Device") == "ActiCHamp":
-            n_aux = int(
-                params_to_run.get("Parameters", {}).get("NumberAUXChannels", 0)
-            )
-        else:
-            n_aux = 0
-
-        n_keep = n_eeg + n_aux
-
-        if data.ndim == 2 and n_keep > 0:
-            data = data[:, :n_keep]
+        data = _selected_raw_recording_data(data, params_to_run)
+        if data.ndim == 2:
             params_to_run["data"] = data
 
     stem = ui.dataset_recording_stem(params_to_run)
@@ -172,9 +173,9 @@ def _render_overwrite_dialog() -> None:
 
 
 def main() -> None:
-    st.set_page_config(page_title="cortipy UI", layout="wide")
+    st.set_page_config(page_title="CortiPy UI", layout="wide")
     inject_global_styles(st)
-    st.title("cortipy - EEG Measurement UI")
+    st.title("CortiPy - EEG Measurement")
     ui.ensure_state()
 
     flash = st.session_state.pop("_flash", None)
@@ -357,11 +358,14 @@ def main() -> None:
         st.session_state["_live_view_placeholder"] = None
         with run_region, st.status("Measurement running...", expanded=True) as run_status:
             progress_placeholder = st.empty()
+            live_view_placeholder = ui.get_live_view_placeholder() if live_view_enabled else None
+            vep_placeholder = st.empty() if live_view_enabled and str(params_to_run.get("Method", "")).lower() == "vep" else None
             live_view_service = LiveViewService(
-                ui.get_live_view_placeholder() if live_view_enabled else None,
+                live_view_placeholder,
                 window_seconds=float(live_view_window),
                 channel_indices=selected_indices,
                 fft_placeholder=st.session_state.get("_live_preview_fft_placeholder") if live_view_enabled else None,
+                vep_placeholder=vep_placeholder,
                 progress_placeholder=progress_placeholder,
                 total_seconds=_selected_recording_seconds(params_to_run),
                 max_update_seconds=0.5,
