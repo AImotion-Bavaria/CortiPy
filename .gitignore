@@ -135,6 +135,7 @@ TODO.md
 /experiments/experiment1/results
 /experiments/experiment2/results
 /experiments/experiment3/results
+/tests/*
 
 # Ignore any directory with "rand" in its name (and contents).
 **/*rand*/
