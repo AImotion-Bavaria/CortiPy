@@ -170,6 +170,29 @@ Open `http://localhost:8501` (default Streamlit port) and configure a run:
   `.npz/.mat` files. All are selectable from the Streamlit UI for testing without
   hardware.
 
+### Stimulus and trigger wiring
+
+For event-related recordings, the stimulus computer should provide a trigger signal
+that is recorded together with the EEG. With an ActiCHamp, connect the trigger output
+to one AUX input and configure that input as `TriggerChannel`. Keep the trigger timing
+and sampling rate identical to the EEG recording.
+
+- **Visual VEP and visual oddball**: connect the screen or stimulus presentation
+  trigger output to an ActiCHamp AUX input. CortiPy uses the recorded trigger to align
+  and average the visual responses.
+- **Acoustic oddball**: use the same trigger principle with an acoustic stimulus and
+  record its timing on an AUX input.
+- **ABR/BERA**: use an acoustic trigger. The current ABR acquisition path requires an
+  ActiCHamp; verify the connected AUX input and trigger timing before recording.
+- **Alpha, eyes open/closed**: a trigger is optional when the analysis uses an
+  internally defined timing sequence. If the eyes-open/eyes-closed changes are marked
+  externally, record those events as triggers. The same trigger wiring used for VEP can
+  be used.
+
+Set the relevant trigger configuration in `Params["Parameters"]`, for example
+`TriggerChannel`, `Trigger`, and `TriggerTime`. The exact AUX channel number depends on
+the ActiCHamp wiring and must match the recorded data columns.
+
 ### BIDS import/export
 
 - `cortipy.shared.BIDSLoader` can read/write BIDS datasets. Supported inputs include EDF/BDF, BrainVision (`.vhdr/.eeg`), EEGLAB (`.set`), FIF, Parquet, HDF5, and Zarr.

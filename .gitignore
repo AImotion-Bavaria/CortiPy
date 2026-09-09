@@ -127,6 +127,7 @@ cython_debug/
 results.json
 .plot_windows/
 AGENTS.md
+CLAUDE.md
 TODO.md
 /datasets
 /experiments/synData_binrt
@@ -136,6 +137,8 @@ TODO.md
 /experiments/experiment2/results
 /experiments/experiment3/results
 /tests/*
+git_helper.md
+/.claude/*
 
 # Ignore any directory with "rand" in its name (and contents).
 **/*rand*/

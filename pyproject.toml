@@ -53,6 +53,10 @@ sbids = [
     "pyld>=2.0.4",
 ]
 
+dev = [
+    "ruff",
+]
+
 [project.urls]
 Homepage = "https://github.com/CortiPy/CortiPy"
 
@@ -65,3 +69,11 @@ include-package-data = true
 
 [tool.setuptools.dynamic]
 version = { attr = "cortipy.__version__" }
+
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+ 
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
