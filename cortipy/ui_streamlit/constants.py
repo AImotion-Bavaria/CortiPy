@@ -21,7 +21,9 @@ VIEW_OPTIONS = [
 
 # Views that still exist and still render, but are not offered in the navigation.
 # Nothing is deleted: drop a name from this tuple to bring the tab back.
-HIDDEN_VIEWS = ("Workflow", "Preview")
+# "Electrodes" is hidden because the electrode/impedance table is now rendered inline as a
+# step of "Session configuration" — one page for the whole setup instead of two tabs.
+HIDDEN_VIEWS = ("Workflow", "Preview", "Electrodes")
 DEVICE_CONFIG_SCHEMA: Dict[str, List[Dict[str, Any]]] = {
     "UNICORN": [
         {
@@ -97,6 +99,13 @@ DEVICE_EXTRA_LABELS = {
 # Devices whose adapter implements read_impedances(). Everything else needs the values
 # typed in by hand, and the electrode table says so rather than just showing zeros.
 IMPEDANCE_CAPABLE_DEVICES = ("ActiCHamp",)
+
+# How often the live impedance display re-reads the amplifier, in seconds.
+IMPEDANCE_POLL_SECONDS = 1.0
+
+# The SDK reports ~999.9 kOhm for an electrode it cannot measure (nothing connected), which
+# is a state, not a reading — shown as "--" instead of a misleading number.
+IMPEDANCE_UNAVAILABLE_KOHM = 999.0
 
 # Method-form fields that only exist on some hardware. Asking for them on a device that
 # has no such channel is noise, so they are hidden there (their defaults still apply).

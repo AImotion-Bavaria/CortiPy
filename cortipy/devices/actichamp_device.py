@@ -158,6 +158,10 @@ class ActiChampDevice(DeviceInterface):
         self._buffer_ptr: int | None = None
         self._data_view: np.ndarray | None = None
         self._spawned_producer = False
+        # Continuous impedance monitoring (see start_impedance_mode): the acquisition rate
+        # has to be restored when the mode is left, so it is remembered on entry.
+        self._impedance_mode = False
+        self._impedance_previous_rate = 0.0
 
         # Protect shared-memory access – important with Streamlit reruns / threads.
         self._lock = threading.RLock()
@@ -261,6 +265,7 @@ class ActiChampDevice(DeviceInterface):
             return out[:copied]
 
     def disconnect(self) -> None:
+        self.stop_impedance_mode()
         with self._lock:
             logger.info("Disconnecting ActiChamp device.")
             if self._buffer is not None:
@@ -363,12 +368,87 @@ class ActiChampDevice(DeviceInterface):
 
                 return last_values
             finally:
-                # Leave impedance mode, or the next acquisition would start with the amplifier
-                # still measuring impedance instead of streaming EEG.
+                if self._impedance_mode:
+                    # A live monitor owns the mode; leaving it here would stop its updates.
+                    self._impedance_previous_rate = previous_sampling_rate
+                else:
+                    # Leave impedance mode, or the next acquisition would start with the amplifier
+                    # still measuring impedance instead of streaming EEG.
+                    buf.control.measureImpedance = False
+                    buf.control.showImpedanceLEDs = False
+                    # Restore the acquisition rate so a subsequent recording streams correctly.
+                    buf.control.targetSamplingRate = previous_sampling_rate
+
+    # ------------------------------------------------------------------
+    # Continuous impedance monitoring.
+    #
+    # ``read_impedances`` enters impedance mode, waits for a settled reading and leaves it
+    # again. That is right for a one-shot check but useless as a live display: it takes
+    # seconds per call and flips the amplifier in and out of impedance mode every time.
+    # A monitor instead enters the mode once, lets the caller poll the shared control block
+    # as often as it likes, and leaves the mode when it stops.
+    def start_impedance_mode(self) -> None:
+        """Put the amplifier into impedance mode and keep it there until stopped."""
+        with self._lock:
+            if self._buffer is None:
+                try:
+                    self._map_shared_buffer()
+                except RuntimeError as exc:
+                    logger.info(
+                        "Shared memory unavailable for impedance monitoring; starting producer: %s",
+                        exc,
+                    )
+                    self._start_producer()
+                    self._map_shared_buffer()
+
+            buf = self._buf
+            if not self._impedance_mode:
+                # Impedance mode needs targetSamplingRate=0; the acquisition rate is put back
+                # by stop_impedance_mode, or the next recording streams at a garbled rate.
+                self._impedance_previous_rate = float(buf.control.targetSamplingRate)
+                buf.impSize = 0
+                for idx in range(MAX_CHANNELS + 2):
+                    buf.impedances[idx] = -1.0
+            buf.control.stopRequested = False
+            buf.control.targetSamplingRate = 0.0
+            buf.control.measureImpedance = True
+            buf.control.showImpedanceLEDs = True
+            self._impedance_mode = True
+            logger.info("ActiChamp impedance monitoring started.")
+
+    def poll_impedances(self) -> list[float]:
+        """The values measured so far (ohms), without waiting. Empty until the first sweep."""
+        with self._lock:
+            if self._buffer is None or not self._impedance_mode:
+                return []
+            try:
+                buf = self._buf
+                size = int(buf.impSize)
+                if size <= 0:
+                    return []
+                limit = min(size, MAX_CHANNELS + 2)
+                return [float(buf.impedances[i]) for i in range(limit)]
+            except RuntimeError:
+                # The mapping went away (producer restarted); the caller polls again shortly.
+                logger.warning("Shared memory invalid while polling ActiChamp impedances.")
+                return []
+
+    def stop_impedance_mode(self) -> None:
+        """Leave impedance mode and restore the acquisition rate. Safe to call twice."""
+        with self._lock:
+            if not self._impedance_mode:
+                return
+            self._impedance_mode = False
+            if self._buffer is None:
+                return
+            try:
+                buf = self._buf
                 buf.control.measureImpedance = False
                 buf.control.showImpedanceLEDs = False
-                # Restore the acquisition rate so a subsequent recording streams correctly.
-                buf.control.targetSamplingRate = previous_sampling_rate
+                buf.control.targetSamplingRate = self._impedance_previous_rate
+            except RuntimeError:
+                logger.warning("Shared memory invalid while leaving ActiChamp impedance mode.")
+            logger.info("ActiChamp impedance monitoring stopped.")
 
     # ------------------------------------------------------------------
     def _channel_limit(self, aux_channels: int) -> int:
@@ -522,6 +602,12 @@ class ActiChampDevice(DeviceInterface):
             buf.control.stopRequested = False
             buf.readIndex = buf.writeIndex
 
+        # Acquisition and impedance measurement are mutually exclusive on the amplifier.
+        # Clearing the flags here means a recording can never inherit impedance mode from a
+        # live impedance monitor that was left running.
+        self._impedance_mode = False
+        buf.control.measureImpedance = False
+        buf.control.showImpedanceLEDs = False
         buf.control.targetSamplingRate = self.sampling_rate
         buf.control.useActiveElectrodes = bool(self.use_active_electrodes)
         logger.debug(

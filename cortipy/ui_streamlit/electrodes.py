@@ -10,7 +10,7 @@ from typing import Any, Dict, List, Optional
 
 import streamlit as st
 
-from cortipy.ui_streamlit.constants import DEVICE_EXTRA_LABELS
+from cortipy.ui_streamlit.constants import DEVICE_EXTRA_LABELS, IMPEDANCE_UNAVAILABLE_KOHM
 
 
 def actichamp_channel_count(rows: List[Dict[str, Any]]) -> int:
@@ -45,7 +45,12 @@ def map_impedances_to_channels(rows: List[Dict[str, Any]], values: List[float]) 
         value = mapping.get(_normalize(row.get("Channel")))
         if value is None or value < 0:
             continue
-        row["Impedance"] = round(float(value) / 1000.0, 1)
+        kohm = round(float(value) / 1000.0, 1)
+        # An electrode the amplifier cannot measure comes back as a sentinel: ~999.9 kOhm
+        # from the one-shot read, 2^31 ohms from the impedance producer. They mean the same
+        # thing ("open"), so both are shown as the familiar 999.9 rather than letting a
+        # two-million-kOhm number into the table and into the saved montage.
+        row["Impedance"] = 999.9 if kohm >= IMPEDANCE_UNAVAILABLE_KOHM else kohm
 
     return rows
 

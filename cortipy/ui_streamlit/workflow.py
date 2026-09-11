@@ -127,7 +127,7 @@ def _workflow_next_action(params: Dict[str, Any], validation_issues: List[str]) 
         return (
             "Prepare electrodes",
             "Review active channels, electrode labels, positions, and impedance mapping.",
-            "Electrodes",
+            "Session configuration",  # the electrode table is a step of that page
             "workflow_next_electrodes",
         )
     if not flags["is_valid"]:
@@ -495,7 +495,7 @@ def render_workflow_page(
                 ("Participant code entered", flags["has_participant"]),
                 ("Active electrodes available", flags["has_electrodes"]),
             ],
-            [("Configure", "Session configuration"), ("Electrodes", "Electrodes")],
+            [("Configure", "Session configuration")],
             "workflow_prepare",
             set_active_view,
         )

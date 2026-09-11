@@ -306,6 +306,9 @@ def main() -> None:
                 st.error(f"Comparison charts failed: {exc}")
 
     if start_button:
+        # Acquisition and impedance measurement are mutually exclusive on the amplifier, so
+        # the live impedance readout is switched off before anything is recorded.
+        ui.stop_impedance_monitor()
         if validation_issues:
             issues_md = " - " + "\n - ".join(validation_issues)
             st.error(f"Please fix these configuration issues before starting a run:\n{issues_md}")

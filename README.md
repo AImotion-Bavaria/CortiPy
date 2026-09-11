@@ -22,7 +22,7 @@ cortipy/
 - CortiPy is for research and educational use only; it is not a medical device and must not be used for diagnosis or patient care.
 - Follow institutional approvals and local regulations before any clinical evaluation; validate device interoperability and trigger/latency behavior in your lab.
 - Do not store or share identifiable participant data in repositories or issue trackers. Anonymize runs and keep PHI on secured systems; use synthetic/anonymized data for examples.
-- Questions or incident reports: joh1391@thi.de, Rahul.Mondal@thi.de, Laurens.Kreilinger@thi.de.
+
 
 ## Installation matrix
 
@@ -46,7 +46,7 @@ cortipy/
 
 - Issue/PR templates live in `.github/ISSUE_TEMPLATE` and `.github/pull_request_template.md`; please avoid sharing PHI in tickets.
 - Response target: within 5 business days for new issues and vulnerability reports (use the contacts above).
-- For clinical/academic collaborations, reach out via Rahul.Mondal@thi.de or Laurens.Kreilinger@thi.de.
+
 
 ## Roadmap (abridged)
 

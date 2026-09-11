@@ -227,6 +227,7 @@ from cortipy.ui_streamlit.constants import (  # noqa: E402
     DEVICE_POSITION_DEFAULTS,
     HIDDEN_VIEWS,
     IMPEDANCE_CAPABLE_DEVICES,
+    IMPEDANCE_POLL_SECONDS,
     has_hardware_reference,
     REQUIRED_DEVICE_FIELDS,
     REQUIRED_METHOD_FREQUENCIES,
@@ -249,7 +250,7 @@ VISIBLE_VIEW_OPTIONS = [view for view in APP_VIEW_OPTIONS if view not in HIDDEN_
 DEFAULT_VIEW = VISIBLE_VIEW_OPTIONS[0] if VISIBLE_VIEW_OPTIONS else APP_VIEW_OPTIONS[0]
 
 # Bumped so sessions that had landed on a now-hidden page get moved off it.
-NAVIGATION_STATE_VERSION = "hide_workflow_preview_v1"
+NAVIGATION_STATE_VERSION = "electrodes_in_session_config_v1"
 
 # Shown as the first option of Device/Method so they start genuinely unanswered and the
 # session form can reveal itself one step at a time.
@@ -903,6 +904,111 @@ def _fetch_actichamp_impedances(
     st.session_state["_actichamp_impedance_timestamp"] = time.time()
 
 
+# --- Live impedance monitoring -------------------------------------------------------
+# A one-shot read (above) switches the amplifier into impedance mode, waits for a settled
+# sweep and leaves the mode again — seconds per call. To keep the Impedance column of the
+# electrode table current the device is instead held in impedance mode and polled; the
+# table itself is rendered inside a fragment so that refresh reruns only the table and not
+# the whole page.
+_IMPEDANCE_MONITOR_KEY = "_impedance_monitor"
+
+
+def _impedance_monitor_device(fs_value: Any) -> Optional[Any]:
+    """The device the live readout polls, created once and kept in session state.
+
+    The already-connected device is preferred: a second producer would fight the connected
+    one over the single 'EEG_SharedMemory' block.
+    """
+    connected = st.session_state.get("_connected_device")
+    if connected is not None and callable(getattr(connected, "poll_impedances", None)):
+        return connected
+
+    monitor = st.session_state.get(_IMPEDANCE_MONITOR_KEY)
+    if monitor is not None:
+        return monitor
+
+    fs = coerce_number(fs_value)
+    tables = st.session_state.get("channel_tables", {})
+    rows = ensure_channel_rows("ActiCHamp", tables.get("ActiCHamp"))
+    params = {
+        "Device": "ActiCHamp",
+        "Parameters": {
+            "fs": float(fs) if fs and fs > 0 else 500.0,
+            "NumberEEGChannels": _actichamp_channel_count(rows),
+        },
+    }
+    try:
+        monitor = DeviceFactory.create(params)
+    except Exception as exc:  # pragma: no cover - hardware/SDK specific
+        LOGGER.exception("Could not create an ActiCHamp impedance monitor")
+        st.session_state["_actichamp_impedance_status"] = f"Live impedance unavailable: {exc}"
+        return None
+    st.session_state[_IMPEDANCE_MONITOR_KEY] = monitor
+    return monitor
+
+
+def stop_impedance_monitor() -> None:
+    """Leave impedance mode on every device that might still be in it.
+
+    Impedance mode and acquisition are mutually exclusive on the amplifier, so this runs
+    before connecting or starting a run, and whenever the column stops being measured
+    (Simulate run, a device that cannot measure it).
+    """
+    connected = st.session_state.get("_connected_device")
+    monitor = st.session_state.pop(_IMPEDANCE_MONITOR_KEY, None)
+    for device in (connected, monitor):
+        stop = getattr(device, "stop_impedance_mode", None)
+        if callable(stop):
+            try:
+                stop()
+            except Exception:  # pragma: no cover - hardware/SDK specific
+                LOGGER.exception("Leaving ActiCHamp impedance mode failed")
+    if monitor is not None and monitor is not connected:
+        try:
+            monitor.disconnect()
+        except Exception:  # pragma: no cover - hardware/SDK specific
+            LOGGER.debug("Disconnecting the impedance monitor raised", exc_info=True)
+    st.session_state["_impedance_monitor_started"] = False
+    # Connecting or switching device is the natural moment to try again.
+    st.session_state["_impedance_monitor_failed"] = False
+
+
+def _poll_live_impedances(device: str, fs_value: Any) -> Optional[List[float]]:
+    """One non-blocking read, written onto the electrode rows. ``None`` if unavailable."""
+    if st.session_state.get("_impedance_monitor_failed"):
+        # One failure per session is enough: without this the fragment would retry (and log)
+        # every single second for as long as the page is open.
+        return None
+    monitor = _impedance_monitor_device(fs_value)
+    if monitor is None:
+        st.session_state["_impedance_monitor_failed"] = True
+        return None
+    try:
+        if not st.session_state.get("_impedance_monitor_started"):
+            monitor.start_impedance_mode()
+            st.session_state["_impedance_monitor_started"] = True
+        values = list(monitor.poll_impedances() or [])
+    except Exception as exc:  # pragma: no cover - hardware/SDK specific
+        LOGGER.exception("Live impedance poll failed")
+        st.session_state["_actichamp_impedance_status"] = f"Live impedance read failed: {exc}"
+        st.session_state["_impedance_monitor_started"] = False
+        st.session_state["_impedance_monitor_failed"] = True
+        return None
+
+    if not values:
+        return []
+
+    channel_tables = st.session_state.setdefault("channel_tables", {})
+    rows = ensure_channel_rows(device, channel_tables.get(device))
+    # Only the Impedance column is touched, so a position or model being edited in the
+    # table at this very moment is left exactly as the operator typed it.
+    channel_tables[device] = _map_impedances_to_channels(rows, values)
+    st.session_state["_actichamp_impedance_timestamp"] = time.time()
+    if _has_measured_impedance(values):
+        st.session_state["_actichamp_impedance_loaded"] = True
+    return values
+
+
 def _position_angle(label: str, fallback_idx: int) -> float:
     total = len(_STANDARD_POSITION_ORDER) or 1
     key = _normalize_position_label(label)
@@ -1073,7 +1179,6 @@ def _remember_device_selection(device: str) -> None:
         return
     st.session_state["_last_device_selection"] = device
     st.session_state["_actichamp_impedance_loaded"] = False
-    st.session_state["_actichamp_impedance_autofetched"] = False  # let the Electrodes tab auto-read again
     st.session_state["_actichamp_impedance_status"] = None
     st.session_state["_actichamp_impedance_timestamp"] = None
 
@@ -1317,7 +1422,12 @@ def render_session_configuration() -> tuple[Dict[str, Any], Dict[str, Any], Dict
         st.info("**Step 5 — set NumberEEGChannels** so the montage and the reference can be resolved.")
         return dict(general), method_values, device_values, participant_values
 
-    # --- Step 6: session details + participant ------------------------------------
+    # --- Step 6: electrodes -------------------------------------------------------
+    # The montage lives here rather than on its own page: it needs the device and the
+    # channel count, both settled by now, and it is part of preparing the same session.
+    render_channel_editor(device, embedded=True)
+
+    # --- Step 7: session details + participant ------------------------------------
     with st.expander("Session details", expanded=True):
         st.caption("Optional metadata stored alongside the recording.")
         _render_general_fields(st.container(), SESSION_DETAIL_FIELDS, general, device)
@@ -1398,14 +1508,52 @@ def render_method_form(method: str) -> Dict[str, Any]:
     return dict(method_state)
 
 
-def _electrode_model_options(rows: List[Dict[str, Any]]) -> List[str]:
-    """Every known model, plus any unknown ones already on the montage (kept, not dropped)."""
-    options = list(ELECTRODE_MODELS)
-    for row in rows:
-        model = str(row.get("Model") or "").strip()
-        if model and model not in options:
-            options.append(model)
-    return options
+def _electrode_model_options() -> List[str]:
+    """Every model in the library, category by category, in the order electrodes.json lists them.
+
+    One dropdown holds the lot. A data_editor column's options are fixed for the whole
+    column — Streamlit cannot make one column's options depend on another column's value
+    in the same row — so a per-row list filtered to that row's category is not possible.
+    Instead each entry carries its category in its label (see ``_electrode_model_label``),
+    which keeps the categories in blocks you scroll to, and picking one fills the
+    read-only Electrode type column in.
+
+    Models the library lists under more than one category (the "Other / not listed" escape
+    hatch) belong to none in particular, so they are collected once at the end.
+    """
+    grouped: List[str] = []
+    shared: List[str] = []
+    seen: set = set()
+    for rubric in ELECTRODE_RUBRICS:
+        for model in ELECTRODE_LIBRARY.get(rubric, []):
+            if model in seen:
+                continue
+            seen.add(model)
+            (grouped if model in MODEL_TO_RUBRIK else shared).append(model)
+    return grouped + shared
+
+
+def _electrode_model_label(model: str) -> str:
+    """How one model reads in the dropdown: "<category> · <model>" where it has one."""
+    rubric = MODEL_TO_RUBRIK.get(model)
+    return f"{rubric} · {model}" if rubric else str(model)
+
+
+def _sync_rubrik_to_model(row: Dict[str, Any]) -> None:
+    """Set the row's Electrode type from its model, and fill a model in if it has none.
+
+    The type is shown read-only in the table: the operator picks a model and the category
+    follows from electrodes.json. A model the library files under several categories (the
+    "Other / not listed" escape hatch) or one this build has never heard of leaves the
+    type as it stands, rather than guessing.
+    """
+    row["Rubrik"] = _valid_electrode_rubrik(row.get("Rubrik") or row.get("Rubric"))
+    model = str(row.get("Model") or "").strip()
+    if not model:
+        row["Model"] = _model_for_rubrik(row["Rubrik"])
+        return
+    row["Model"] = model
+    row["Rubrik"] = MODEL_TO_RUBRIK.get(model, row["Rubrik"])
 
 
 def _render_apply_all_electrodes(device: str, rows: List[Dict[str, Any]]) -> Optional[tuple[str, str]]:
@@ -1503,19 +1651,18 @@ def ensure_channel_rows(device: str, existing: Optional[List[Dict[str, Any]]] = 
         }
         return row
 
+
     rows: List[Dict[str, Any]] = []
     for label in extras:
         row = existing_map.get(label, base_row(label, True))
         row["Active"] = True
-        row["Rubrik"] = _valid_electrode_rubrik(row.get("Rubrik") or row.get("Rubric"))
-        row["Model"] = _model_for_rubrik(row.get("Rubrik"), row.get("Model"))
+        _sync_rubrik_to_model(row)
         rows.append(row)
 
     for idx in range(base_count):
         label = f"Ch {idx + 1}"
         row = existing_map.get(label, base_row(label, False, idx))
-        row["Rubrik"] = _valid_electrode_rubrik(row.get("Rubrik") or row.get("Rubric"))
-        row["Model"] = _model_for_rubrik(row.get("Rubrik"), row.get("Model"))
+        _sync_rubrik_to_model(row)
         rows.append(row)
 
     return rows
@@ -1539,27 +1686,370 @@ def _apply_channel_count(device: str, method: str) -> None:
     _bump_channel_editor_revision(device)
 
 
-def render_channel_editor(device: str) -> List[Dict[str, Any]]:
+def _visible_channel_rows(
+    rows: List[Dict[str, Any]], device: str, count: int
+) -> List[Dict[str, Any]]:
+    """The rows the electrode table shows: the extras, then the first ``count`` EEG channels."""
+    extras = set(DEVICE_EXTRA_LABELS.get(device, []))
+    extra_rows = [row for row in rows if (row.get("Channel") or row.get("Label")) in extras]
+    eeg_rows = [row for row in rows if (row.get("Channel") or row.get("Label")) not in extras]
+    return extra_rows + eeg_rows[:count]
+
+
+def _persist_channel_edits(device: str, editor_key: str, channel_order: List[str]) -> None:
+    """on_change handler for the electrode table: store every edit immediately.
+
+    Streamlit runs this before the script reruns, which is the whole point. A typed
+    electrode position used to live only in the editor's own widget state until the end of
+    the next run, so anything that rebuilt the table first — an impedance read, a changed
+    channel count, a new editor key — rebuilt it from the *previous* values and the edit
+    was gone a moment after it was made. Writing the edit into ``channel_tables`` here
+    makes the stored table, not the widget, the thing that survives.
+    """
+    state = st.session_state.get(editor_key) or {}
+    deltas = state.get("edited_rows") or {}
+    if not deltas:
+        return
+    rows = st.session_state.get("channel_tables", {}).get(device)
+    if not rows:
+        return
+    by_channel = {str(row.get("Channel")): row for row in rows}
+    for row_index, changes in deltas.items():
+        try:
+            channel = channel_order[int(row_index)]
+        except (TypeError, ValueError, IndexError):
+            continue
+        row = by_channel.get(channel)
+        if row is None:
+            continue
+        for column, value in (changes or {}).items():
+            row[column] = value
+        # Electrode type is not typed in — it is the chosen model's category.
+        _sync_rubrik_to_model(row)
+
+
+def _can_measure_impedance(device: str) -> bool:
+    """True when this amplifier could read impedances for us if asked to.
+
+    Simulate run promises that no hardware is opened and measuring holds the amplifier in
+    impedance mode, so there is nothing to offer there.
+    """
+    return device in IMPEDANCE_CAPABLE_DEVICES and not _is_simulating()
+
+
+def _render_live_impedance_toggle(device: str) -> bool:
+    """Whether to show the impedance table beside the montage, refreshing every second.
+
+    Off by default, and that is the point. A refresh is a round trip that ends in a page
+    rerun, and that rerun is what closes an open dropdown and loses the scroll position in
+    the montage table -- Streamlit cannot refresh one element on its own. With this off
+    nothing refreshes at all, so the table can be worked in undisturbed; with it on the
+    impedance is live, which is what matters while the cap is being fitted rather than
+    while the montage is being written down.
+    """
+    return st.checkbox(
+        "Live impedance",
+        value=False,
+        key=f"live_impedance_{device}",
+        help=(
+            f"Show measured impedance beside the table, re-read every "
+            f"{IMPEDANCE_POLL_SECONDS:.0f} s. While it is off nothing on this page "
+            "refreshes, so the table can be scrolled and edited without interruption."
+        ),
+    )
+
+
+def _render_edit_coords_toggle(device: str) -> bool:
+    """The coordinates toggle, rendered above the table(s) rather than inside a column.
+
+    Inside the left column it pushed that table one row down, so its rows no longer lined
+    up with the impedance table beside it.
+    """
+    return st.checkbox(
+        "Edit coordinates",
+        value=False,
+        key=f"edit_coords_{device}",
+        help="Show the PosX/PosY columns used to place the electrode on scalp plots.",
+    )
+
+
+def _electrode_columns_setup(edit_coords: bool) -> tuple[List[str], List[str]]:
+    """The Model options and the column order every electrode table shares
+    (Channel/Position/[PosX/PosY]/Model).
+
+    The electrode category is not a column: it is the chosen model's category, it is
+    already written into every label in the Model dropdown, and it is still recorded with
+    the montage — so a column of its own only repeated what the model already said.
+    """
+    columns = ["Channel", "Position"]
+    if edit_coords:
+        columns += ["PosX", "PosY"]
+    columns += ["Model"]
+    return _electrode_model_options(), columns
+
+
+def _electrode_column_config(model_options: List[str]) -> Dict[str, Any]:
+    """The column_config shared by every electrode table (Impedance is added by the
+    caller, since only the combined single table shows it as an editable column)."""
+    return {
+        "Channel": st.column_config.TextColumn("Channel", disabled=True, width=80),
+        "Position": st.column_config.TextColumn(
+            "Electrode / Position",
+            help="10-20 label or custom montage description",
+            width=200,
+        ),
+        "Model": st.column_config.SelectboxColumn(
+            "Electrode model",
+            help=(
+                "Every electrode in electrodes.json, listed category by category — pick "
+                "the one on this channel and the Electrode type fills itself in."
+            ),
+            width=380,
+            options=model_options,
+            format_func=_electrode_model_label,
+            required=False,
+        ),
+        "PosX": st.column_config.NumberColumn(
+            "Pos X",
+            help="Custom X coordinate for scalp plot (-1.5 to 1.5). Leave blank to use defaults.",
+            min_value=-1.5,
+            max_value=1.5,
+            step=0.05,
+            format="%.2f",
+        ),
+        "PosY": st.column_config.NumberColumn(
+            "Pos Y",
+            help="Custom Y coordinate for scalp plot (-1.5 to 1.5). Leave blank to use defaults.",
+            min_value=-1.5,
+            max_value=1.5,
+            step=0.05,
+            format="%.2f",
+        ),
+    }
+
+
+def _apply_electrode_edits(
+    edited: List[Dict[str, Any]], *, edit_coords: bool, saved_coords: Dict[Any, tuple]
+) -> None:
+    """Normalize Active/Electrode type/Position/PosX/PosY after an edit to any table.
+
+    Electrode type is derived from the chosen model here as everywhere else, which is safe
+    because the type is read-only in the table: there is no operator choice to overwrite.
+    """
+    for row_idx, row in enumerate(edited):
+        # Every row on screen is a channel being recorded, so it is active by
+        # definition; the count is what decides, not a per-row toggle.
+        row["Active"] = True
+        _sync_rubrik_to_model(row)
+        if not row.get("Position"):
+            row["Position"] = row["Channel"].replace(" ", "")
+        pos_x = coerce_number(row.get("PosX"))
+        pos_y = coerce_number(row.get("PosY"))
+        if (pos_x is None or pos_y is None) and not edit_coords:
+            # Not shown => not returned. Restore rather than regenerate, or a hidden
+            # column would wipe coordinates that were already set.
+            prev_x, prev_y = saved_coords.get(row["Channel"], (None, None))
+            pos_x = coerce_number(prev_x) if pos_x is None else pos_x
+            pos_y = coerce_number(prev_y) if pos_y is None else pos_y
+        if pos_x is None or pos_y is None:
+            pos_x, pos_y = _safe_channel_coords(row["Position"], row_idx)
+        row["PosX"] = float(pos_x)
+        row["PosY"] = float(pos_y)
+
+
+def _render_electrode_table(device: str, edit_coords: bool) -> List[Dict[str, Any]]:
+    """The single combined table: Position, category, model and Impedance together.
+
+    Used whenever nothing on the page is refreshing on a timer -- either this device does
+    not measure impedance, or Simulate run means nothing is being read from it -- so there
+    is no reason to keep Impedance apart from the columns the operator edits by hand.
+    """
+    channel_state = st.session_state["channel_tables"]
+    all_rows = ensure_channel_rows(device, channel_state.get(device))
+    revisions = st.session_state.setdefault("_channel_editor_revision", {})
+    editor_revision = int(revisions.get(device, 0))
+    count = _requested_eeg_channel_count(device)
+    rows = _visible_channel_rows(all_rows, device, count)
+
+    _render_impedance_status_caption(device)
+
+    model_options, columns = _electrode_columns_setup(edit_coords)
+    columns = columns + ["Impedance"]
+
+    # The editor drops columns it is not showing, so remember the coordinates and
+    # put them back afterwards -- otherwise hiding them would silently reset them.
+    saved_coords = {
+        row.get("Channel"): (row.get("PosX"), row.get("PosY")) for row in rows
+    }
+
+    editor_key = f"channels_{device}_{editor_revision}_{int(edit_coords)}"
+    edited = st.data_editor(
+        rows,
+        num_rows="fixed",
+        hide_index=True,
+        key=editor_key,
+        on_change=_persist_channel_edits,
+        args=(device, editor_key, [str(row.get("Channel")) for row in rows]),
+        column_order=columns,
+        column_config={
+            **_electrode_column_config(model_options),
+            "Impedance": st.column_config.NumberColumn(
+                "Impedance (kOhm)",
+                width=160,
+                min_value=0.0,
+                step=0.5,
+                format="%.1f",
+                help="Measured impedance for this electrode.",
+            ),
+        },
+    )
+    _apply_electrode_edits(edited, edit_coords=edit_coords, saved_coords=saved_coords)
+
+    # Merge the edited rows back into the full montage. Channels beyond the recorded
+    # count are not on screen but keep their positions and impedances, so raising the
+    # count again restores what was already set for them. The cap-wide electrode
+    # type/model applies to every channel, on screen or not.
+    extras = set(DEVICE_EXTRA_LABELS.get(device, []))
+    shown = {str(row["Channel"]) for row in edited}
+    merged = {str(r.get("Channel")): dict(r) for r in all_rows}
+    for row in edited:
+        merged[str(row["Channel"])] = row
+    # Edited rows already carry their own per-channel electrode; off-screen rows keep
+    # theirs. Only the recorded/extra distinction is applied here.
+    for name, entry in merged.items():
+        if name not in extras and name not in shown:
+            entry["Active"] = False  # beyond the recorded count
+    channel_state[device] = list(merged.values())
+    return edited
+
+
+def _render_editable_electrode_columns(device: str, edit_coords: bool) -> List[Dict[str, Any]]:
+    """Position, category and model -- the columns that stay put while impedance streams in.
+
+    Rendered plainly, never inside the impedance fragment, so nothing here is redrawn on
+    the 1-second refresh: a dropdown left open or a half-typed Position survives it
+    untouched, and only the operator's own edits change what is on screen.
+    """
+    channel_state = st.session_state["channel_tables"]
+    all_rows = ensure_channel_rows(device, channel_state.get(device))
+    revisions = st.session_state.setdefault("_channel_editor_revision", {})
+    editor_revision = int(revisions.get(device, 0))
+    count = _requested_eeg_channel_count(device)
+    rows = _visible_channel_rows(all_rows, device, count)
+
+    model_options, columns = _electrode_columns_setup(edit_coords)
+
+    saved_coords = {
+        row.get("Channel"): (row.get("PosX"), row.get("PosY")) for row in rows
+    }
+
+    editor_key = f"channels_{device}_{editor_revision}_{int(edit_coords)}_pos"
+    edited = st.data_editor(
+        rows,
+        num_rows="fixed",
+        hide_index=True,
+        key=editor_key,
+        on_change=_persist_channel_edits,
+        args=(device, editor_key, [str(row.get("Channel")) for row in rows]),
+        column_order=columns,
+        column_config=_electrode_column_config(model_options),
+    )
+    _apply_electrode_edits(edited, edit_coords=edit_coords, saved_coords=saved_coords)
+
+    # Only the fields this table owns are written back. Impedance is left exactly as the
+    # shared montage already has it, so this can never clobber a value the impedance side
+    # -- refreshing independently, once a second, in the column next to this one -- just wrote.
+    extras = set(DEVICE_EXTRA_LABELS.get(device, []))
+    shown = {str(row["Channel"]) for row in edited}
+    owned_fields = ("Position", "PosX", "PosY", "Rubrik", "Model", "Active")
+    merged = {str(r.get("Channel")): dict(r) for r in all_rows}
+    for row in edited:
+        channel = str(row["Channel"])
+        target = merged.setdefault(channel, dict(row))
+        for field in owned_fields:
+            target[field] = row[field]
+    for name, entry in merged.items():
+        if name not in extras and name not in shown:
+            entry["Active"] = False  # beyond the recorded count
+    channel_state[device] = list(merged.values())
+    return edited
+
+
+def _render_impedance_status_caption(device: str) -> None:
+    """Explain why Impedance is hand-typed, for a device that cannot measure it.
+
+    Nothing is shown for a device that does measure it — the read status and last-read
+    timestamp used to be printed here, but the readout itself (the Impedance values moving
+    off 0.0) already says whether it is working, so the extra line was just noise.
+    """
+    if device not in IMPEDANCE_CAPABLE_DEVICES:
+        st.caption(
+            f"Continuous impedance polling is not available for {device}; "
+            "enter measured impedance values manually when needed."
+        )
+
+
+def _impedance_only_rows(device: str) -> List[Dict[str, Any]]:
+    """Channel + Impedance for the currently visible rows, freshly read from state."""
+    all_rows = ensure_channel_rows(device, st.session_state["channel_tables"].get(device))
+    count = _requested_eeg_channel_count(device)
+    rows = _visible_channel_rows(all_rows, device, count)
+    return [
+        {
+            "Channel": row.get("Channel"),
+            "Impedance": coerce_number(row.get("Impedance")) or 0.0,
+        }
+        for row in rows
+    ]
+
+
+@st.fragment(run_every=IMPEDANCE_POLL_SECONDS)
+def _render_live_impedance_table(device: str, fs_value: Any) -> None:
+    """The Impedance side of the split view: polled and redrawn every second, on its own.
+
+    It never touches Position/Rubrik/Model, so it cannot interrupt an edit being made in
+    the table next to it -- that table is not part of this fragment and does not rerun
+    with it (only this one does, on the ``run_every`` timer).
+    """
+    _poll_live_impedances(device, fs_value)
+    st.dataframe(
+        _impedance_only_rows(device),
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "Channel": st.column_config.TextColumn("Channel", width=80),
+            "Impedance": st.column_config.NumberColumn(
+                "Impedance (kOhm)", width=110, format="%.1f"
+            ),
+        },
+    )
+
+
+def render_channel_editor(device: str, embedded: bool = False) -> List[Dict[str, Any]]:
+    """The electrode / impedance table.
+
+    ``embedded=True`` renders it as a step of the Session configuration page: the controls
+    that only mirror method-form fields (channel count, reference channel) are left out,
+    because that form is already on screen right above the table. The standalone page keeps
+    them, so calling this with the default is unchanged.
+    """
     if not device:
         # Without a device there is no montage, no channel count and no impedance support,
         # so the editor rendered an "Electrodes ()" table of meaningless Ch1..Ch8 rows.
         st.info(
-            "**Pick a device first.** Open *Session configuration* and choose one — the "
+            "**Pick a device first.** Open *Session configuration* and choose one -- the "
             "electrode table is built from the device's montage."
         )
         return []
 
-    channel_state = st.session_state["channel_tables"]
-    all_rows = ensure_channel_rows(device, channel_state.get(device))
-    editor_revision = int(st.session_state.setdefault("_channel_editor_revision", {}).get(device, 0))
+    all_rows = ensure_channel_rows(device, st.session_state["channel_tables"].get(device))
 
-    # The amplifier hands back its FIRST N channels — Ch 30 cannot be read without reading
-    # Ch 1..29 — so the recorded set is always a prefix. NumberEEGChannels decides N, and
+    # The amplifier hands back its FIRST N channels -- Ch 30 cannot be read without reading
+    # Ch 1..29 -- so the recorded set is always a prefix. NumberEEGChannels decides N, and
     # the table shows exactly those channels. It used to list all 32 ActiCHamp rows with a
     # "Use channel" box that build_channels silently reset to the first N on the next rerun.
     extras_set = set(DEVICE_EXTRA_LABELS.get(device, []))
     eeg_rows = [r for r in all_rows if (r.get("Channel") or r.get("Label")) not in extras_set]
-    extra_rows = [r for r in all_rows if (r.get("Channel") or r.get("Label")) in extras_set]
 
     method = str(st.session_state.get("general_form", {}).get("Method") or "")
     method_state = st.session_state.setdefault("method_forms", {}).setdefault(method, {}) if method else {}
@@ -1567,23 +2057,24 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
     count = int(requested) if requested and requested > 0 else len(eeg_rows)
     count = max(1, min(count, len(eeg_rows)))
 
-    rows = extra_rows + eeg_rows[:count]
+    rows = _visible_channel_rows(all_rows, device, count)
 
     with st.expander(f"Electrodes ({device})", expanded=True):
         head_l, head_r = st.columns([3, 1], vertical_alignment="bottom")
         head_l.caption(
             f"Recording the first **{count}** of {len(eeg_rows)} {device} channels. Name each one "
-            "(Position), record its impedance, and pick the electrode hardware. "
-            "Ground/Reference are always included."
+            "(Position) and pick the electrode hardware. Ground/Reference are always included."
         )
-        if method and any(f.name == "NumberEEGChannels" for f in METHOD_SCHEMAS.get(method, [])):
+        if not embedded and method and any(
+            f.name == "NumberEEGChannels" for f in METHOD_SCHEMAS.get(method, [])
+        ):
             # A STABLE key (not tied to `count`) plus an on_change callback: rapid +/- clicks
             # accumulate instead of snapping back, and there is no extra rerun/flash. The old
             # `..._{count}` key rebuilt the widget on every change, which caused exactly that.
             count_key = f"electrodes_count_{device}"
             # Seed/reconcile the stored value so an external NumberEEGChannels change (method
             # form / loaded session) is reflected. After a user edit the two already agree, so
-            # this only ever corrects external changes — it never fights the stepper.
+            # this only ever corrects external changes -- it never fights the stepper.
             if int(st.session_state.get(count_key, count) or count) != count:
                 st.session_state[count_key] = count
             st.session_state.setdefault(count_key, count)
@@ -1597,47 +2088,22 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 args=(device, method),
                 help="Same setting as NumberEEGChannels in Session configuration.",
             )
-        if device in IMPEDANCE_CAPABLE_DEVICES:
-            fs_value = st.session_state.get("general_form", {}).get("fs")
-            device_connected = st.session_state.get("_connected_device") is not None
-            # Impedances load automatically when the Electrodes tab is opened (no button). It is
-            # done once per device selection / connection, reusing the connected device when one
-            # is present (reliable, no producer contention). It fills the Impedance column below.
-            if not st.session_state.get("_actichamp_impedance_loaded") and not st.session_state.get(
-                "_actichamp_impedance_autofetched"
-            ):
-                st.session_state["_actichamp_impedance_autofetched"] = True
-                with st.spinner("Reading ActiCHamp impedances..."):
-                    _fetch_actichamp_impedances(fs_value, force=True, quiet=True)
-                rows = st.session_state["channel_tables"].get("ActiCHamp", rows)
-                editor_revision = int(st.session_state["_channel_editor_revision"].get(device, 0))
-            status = st.session_state.get("_actichamp_impedance_status")
-            last_ts = st.session_state.get("_actichamp_impedance_timestamp")
-            caption_bits = []
-            if status:
-                caption_bits.append(status)
-            if last_ts:
-                caption_bits.append(f"last read {time.strftime('%H:%M:%S', time.localtime(last_ts))}")
-            if not device_connected:
-                caption_bits.append("Connect the device for a reliable read; impedances then fill automatically.")
-            if caption_bits:
-                st.caption(" · ".join(caption_bits))
-        else:
-            st.caption(
-                f"Continuous impedance polling is not available for {device}; "
-                "enter measured impedance values manually when needed."
-            )
+        fs_value = st.session_state.get("general_form", {}).get("fs")
 
         extras_set = set(DEVICE_EXTRA_LABELS.get(device, []))
 
         # ReferenceChannel is a 1-based index over EEG channels. Analysis subtracts the
         # selected channel from every EEG channel; Ground/Reference extras are not EEG columns.
+        # Embedded, the method form above already owns this field: showing a second selector
+        # for it on the same page would mean two widgets writing one value.
         method = st.session_state.get("general_form", {}).get("Method")
         method_has_ref = any(f.name == "ReferenceChannel" for f in METHOD_SCHEMAS.get(method, []))
         # Only the recorded channels can be a reference, so cap to NumberEEGChannels.
         eeg_rows = [row for row in rows if row["Channel"] not in extras_set][:_requested_eeg_channel_count(device)]
-        if has_hardware_reference(device):
-            st.caption(f"Reference is fixed in hardware for {device} — nothing to choose.")
+        if embedded:
+            pass  # handled by the method form above
+        elif has_hardware_reference(device):
+            st.caption(f"Reference is fixed in hardware for {device} -- nothing to choose.")
         elif method and method_has_ref and eeg_rows:
             ref_labels = [f"{i + 1}: {row.get('Position') or row['Channel']}" for i, row in enumerate(eeg_rows)]
             current_ref = st.session_state.get("method_forms", {}).get(method, {}).get("ReferenceChannel")
@@ -1659,127 +2125,34 @@ def render_channel_editor(device: str) -> List[Dict[str, Any]]:
                 st.session_state.setdefault("method_forms", {}).setdefault(method, {})["ReferenceChannel"] = new_ref
                 st.session_state.pop(f"{method}_ReferenceChannel", None)  # keep the method form in sync
 
-        # Each channel carries its own electrode: pick the model per row in the table below
-        # (the type is derived from it).
-        model_options = _electrode_model_options(rows)
+        # Both toggles sit on one row above the split, so the two tables below start at
+        # the same height and their rows line up.
+        toggles = st.columns(3)
+        with toggles[0]:
+            edit_coords = _render_edit_coords_toggle(device)
+        live_impedance = False
+        if _can_measure_impedance(device):
+            with toggles[1]:
+                live_impedance = _render_live_impedance_toggle(device)
+        if not live_impedance:
+            # Nothing is polled and nothing reruns on a timer: the amplifier is left out of
+            # impedance mode and the montage table is the only thing on the page.
+            stop_impedance_monitor()
 
-        # The table spans the full width and the scalp map sits underneath it.
-        table_col = st.container()
-        map_col = st.container()
-        with table_col:
-            # Impedance used to be pushed off screen entirely, which is why it looked like it
-            # had stopped being filled. Coordinates are rarely typed by hand (that is what the
-            # scalp map is for), so they hide behind a toggle.
-            edit_coords = st.checkbox(
-                "Edit coordinates",
-                value=False,
-                key=f"edit_coords_{device}",
-                help="Show the PosX/PosY columns. Normally you place electrodes on the scalp map instead.",
-            )
-            if edit_coords:
-                column_order = ["Channel", "Position", "PosX", "PosY", "Model", "Impedance"]
-            else:
-                column_order = ["Channel", "Position", "Model", "Impedance"]
+        if live_impedance:
+            # Two tables: Impedance refreshes on its own beside the montage, which is not
+            # part of that fragment. The page still ticks once a second though, so this is
+            # the view for fitting electrodes rather than for editing the montage.
+            main_col, imp_col = st.columns([4, 1])
+            with main_col:
+                _render_editable_electrode_columns(device, edit_coords)
+            with imp_col:
+                _render_live_impedance_table(device, fs_value)
+        else:
+            _render_electrode_table(device, edit_coords)
 
-            # The editor drops columns it is not showing, so remember the coordinates and
-            # put them back afterwards — otherwise hiding them would silently reset them.
-            saved_coords = {
-                row.get("Channel"): (row.get("PosX"), row.get("PosY")) for row in rows
-            }
-
-            edited = st.data_editor(
-                rows,
-                num_rows="fixed",
-                hide_index=True,
-                key=f"channels_{device}_{editor_revision}_{int(edit_coords)}",
-                column_order=column_order,
-                column_config={
-                    "Channel": st.column_config.TextColumn("Channel", disabled=True, width=80),
-                    "Position": st.column_config.TextColumn(
-                        "Electrode / Position",
-                        help="10-20 label or custom montage description",
-                        width=200,
-                    ),
-                    "Model": st.column_config.SelectboxColumn(
-                        "Electrode model",
-                        help="The electrode used on this channel; the type is derived from it.",
-                        width=300,
-                        options=model_options,
-                        required=False,
-                    ),
-                    "Impedance": st.column_config.NumberColumn(
-                        "Impedance (kOhm)",
-                        width=160,
-                        min_value=0.0,
-                        step=0.5,
-                        format="%.1f",
-                    ),
-                    "PosX": st.column_config.NumberColumn(
-                        "Pos X",
-                        help="Custom X coordinate for scalp plot (-1.5 to 1.5). Leave blank to use defaults.",
-                        min_value=-1.5,
-                        max_value=1.5,
-                        step=0.05,
-                        format="%.2f",
-                    ),
-                    "PosY": st.column_config.NumberColumn(
-                        "Pos Y",
-                        help="Custom Y coordinate for scalp plot (-1.5 to 1.5). Leave blank to use defaults.",
-                        min_value=-1.5,
-                        max_value=1.5,
-                        step=0.05,
-                        format="%.2f",
-                    ),
-                },
-            )
-            extras = set(DEVICE_EXTRA_LABELS.get(device, []))
-            for row_idx, row in enumerate(edited):
-                # Every row on screen is a channel being recorded, so it is active by
-                # definition; the count is what decides, not a per-row toggle.
-                row["Active"] = True
-                # Each channel keeps its own electrode; the type follows the chosen model.
-                model = str(row.get("Model") or "").strip()
-                if model:
-                    row["Model"] = model
-                    # A known model fixes the type; an unknown one keeps the row's type.
-                    row["Rubrik"] = MODEL_TO_RUBRIK.get(model) or _valid_electrode_rubrik(row.get("Rubrik"))
-                else:
-                    row["Rubrik"] = _valid_electrode_rubrik(row.get("Rubrik"))
-                    row["Model"] = _model_for_rubrik(row["Rubrik"], row.get("Model"))
-                if not row.get("Position"):
-                    row["Position"] = row["Channel"].replace(" ", "")
-                pos_x = coerce_number(row.get("PosX"))
-                pos_y = coerce_number(row.get("PosY"))
-                if (pos_x is None or pos_y is None) and not edit_coords:
-                    # Not shown => not returned. Restore rather than regenerate, or a hidden
-                    # column would wipe coordinates the user had placed on the scalp map.
-                    prev_x, prev_y = saved_coords.get(row["Channel"], (None, None))
-                    pos_x = coerce_number(prev_x) if pos_x is None else pos_x
-                    pos_y = coerce_number(prev_y) if pos_y is None else pos_y
-                if pos_x is None or pos_y is None:
-                    pos_x, pos_y = _safe_channel_coords(row["Position"], row_idx)
-                row["PosX"] = float(pos_x)
-                row["PosY"] = float(pos_y)
-
-            # Merge the edited rows back into the full montage. Channels beyond the recorded
-            # count are not on screen but keep their positions and impedances, so raising the
-            # count again restores what was already set for them. The cap-wide electrode
-            # type/model applies to every channel, on screen or not.
-            shown = {str(row["Channel"]) for row in edited}
-            merged = {str(r.get("Channel")): dict(r) for r in all_rows}
-            for row in edited:
-                merged[str(row["Channel"])] = row
-            # Edited rows already carry their own per-channel electrode; off-screen rows keep
-            # theirs. Only the recorded/extra distinction is applied here.
-            for name, entry in merged.items():
-                if name not in extras and name not in shown:
-                    entry["Active"] = False  # beyond the recorded count
-            channel_state[device] = list(merged.values())
-
-        with map_col:
-            st.caption("Scalp map")
-            _plot_topography(edited, st.empty())
-    return edited
+    all_rows = ensure_channel_rows(device, st.session_state["channel_tables"].get(device))
+    return _visible_channel_rows(all_rows, device, count)
 
 
 def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]) -> None:
@@ -2004,7 +2377,9 @@ def _channel_entry(row: Dict[str, Any], *, active: bool) -> Dict[str, Any]:
         "Channel": channel_name,
         "Position": row.get("Position") or str(channel_name).replace(" ", ""),
         "Rubrik": rubric,
-        "Model": _model_for_rubrik(rubric, row.get("Model")),
+        # What the table shows is what gets recorded: a model outside the row's category
+        # is the operator's answer, not something to correct on the way to the metadata.
+        "Model": str(row.get("Model") or "").strip() or _model_for_rubrik(rubric),
         "Impedance": coerce_number(row.get("Impedance")),
         "Active": bool(active),
     }
@@ -2279,6 +2654,9 @@ def _connection_signature(params: Dict[str, Any]) -> str:
 
 
 def _disconnect_session_device() -> None:
+    # Impedance mode is left first: it may be running on the very device being released,
+    # and the amplifier must not be handed on still measuring impedance.
+    stop_impedance_monitor()
     device = st.session_state.pop("_connected_device", None)
     st.session_state.pop("_connected_device_signature", None)
     if device is not None:
@@ -3322,7 +3700,6 @@ def render_sidebar_controls() -> SidebarControls:
                         # (reuses its producer) and fill the electrode table — no extra click.
                         if (snap.get("Device") or "") in IMPEDANCE_CAPABLE_DEVICES:
                             st.session_state["_actichamp_impedance_loaded"] = False
-                            st.session_state["_actichamp_impedance_autofetched"] = False
                             _fetch_actichamp_impedances(
                                 snap.get("Parameters", {}).get("fs"), force=True, quiet=True
                             )
