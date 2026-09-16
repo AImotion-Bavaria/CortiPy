@@ -69,6 +69,8 @@ HP_CUTOFF = 0.5
 SNR_SIGNAL_WINDOW = (0.08, 0.125)  # seconds
 SNR_NOISE_WINDOW = (0.46, 0.50)
 RN_ANALYSIS_WINDOW = (0.020, 0.250)
+FSP_SP_TIME = 0.1  # seconds
+FSP_ANALYSIS_WINDOW = (0.05, 0.15)
 
 
 class VepEvaluator(EvaluatorBase):
@@ -154,6 +156,17 @@ class VepEvaluator(EvaluatorBase):
         snr_peak, rn_values = snr_peak_metrics(segments, average_signals, fs)
         evaluation["SNR_Peak"] = snr_peak
         evaluation["RN_micV"] = rn_values
+        fsp_values = np.full(segments.shape[2], np.nan)
+        p_sp_values = np.full(segments.shape[2], np.nan)
+        for ch in range(segments.shape[2]):
+            try:
+                fsp_result = calculate_fsp(segments[:, :, ch], average_signals[:, ch], fs)
+            except ValueError:
+                continue
+            fsp_values[ch] = fsp_result["Fsp"]
+            p_sp_values[ch] = fsp_result["p_sp"]
+        evaluation["Fsp"] = fsp_values
+        evaluation["p_sp"] = p_sp_values
 
         params["Evaluation"] = evaluation
 
@@ -383,6 +396,39 @@ def residual_noise_eclipse(sweeps: np.ndarray, fs: float, analysis_window: Tuple
     diff_wave = (avg_odd - avg_even) / 2.0
     rn = float(np.std(diff_wave))
     return rn, diff_wave
+
+
+def calculate_fsp(
+    segments: np.ndarray, average_signal: np.ndarray, fs: float, sp_time_s: float = FSP_SP_TIME,
+    analysis_window_s: tuple[float, float] = FSP_ANALYSIS_WINDOW,
+) -> dict[str, float]:
+    """Translate MATLAB getFspFmp: Fsp, p_sp, Fmp, and p_mp.
+
+    Fsp comes from ABR testing (Elberling & Don); here it is applied to VEP with a
+    single point at 100 ms and a 50-150 ms window. ``segments`` is epochs x samples
+    and ``average_signal`` is samples. MATLAB's 1-based indices are converted to
+    clipped zero-based indices here.
+    """
+    sweeps = np.asarray(segments, dtype=float)
+    average = np.asarray(average_signal, dtype=float).reshape(-1)
+    if sweeps.ndim != 2 or sweeps.shape[1] != average.size:
+        raise ValueError("segments must be epochs x samples matching average_signal.")
+    n_sweeps = sweeps.shape[0]
+    if n_sweeps < 2:
+        raise ValueError("Fsp requires at least two sweeps.")
+    sp_index = int(round(sp_time_s * fs)) - 1
+    sp_index = min(max(sp_index, 0), sweeps.shape[1] - 1)
+    start = max(0, int(round(analysis_window_s[0] * fs)) - 1)
+    stop = min(sweeps.shape[1], int(round(analysis_window_s[1] * fs)))
+    if start >= stop:
+        raise ValueError("analysis_window_s is invalid or too narrow.")
+    signal_variance = float(np.var(average[start:stop], ddof=1))
+    single_variance = float(np.var(sweeps[:, sp_index], ddof=1))
+    multi_variance = float(np.mean(np.var(sweeps[:, start:stop], axis=0, ddof=1)))
+    df1, df2 = 5, n_sweeps - 1
+    fsp = float(n_sweeps * signal_variance / single_variance) if single_variance else float("nan")
+    fmp = float(n_sweeps * signal_variance / multi_variance) if multi_variance else float("nan")
+    return {"Fsp": fsp, "p_sp": float(stats.f.cdf(fsp, df1, df2)), "Fmp": fmp, "p_mp": float(stats.f.cdf(fmp, df1, df2))}
 
 
 def plot_vep(avg_signal: np.ndarray, params: dict, peaks: Dict[str, Dict[str, np.ndarray]]) -> None:

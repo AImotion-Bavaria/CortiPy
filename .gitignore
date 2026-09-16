@@ -139,6 +139,6 @@ TODO.md
 /tests/*
 git_helper.md
 /.claude/*
-
+/docs/*
 # Ignore any directory with "rand" in its name (and contents).
 **/*rand*/

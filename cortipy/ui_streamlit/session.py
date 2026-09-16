@@ -2864,6 +2864,7 @@ def save_recording_to_dataset(
     exporter.add_recording_from_cortipy_json(
         meta_json=meta, raw_file=str(dest_path),
         subject_id=participant.get("Code"), file_size_bytes=file_size, content_url=content_url,
+        start_time_iso=params.get("Timestamp") or None,
     )
     temporary_jsonld = jsonld.with_suffix(".jsonld.tmp")
     exporter.save(str(temporary_jsonld))

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -378,6 +379,12 @@ def main() -> None:
             if live_view_enabled:
                 st.session_state["_live_view_active"] = True
                 st.session_state["_live_view_banner"] = "Measurement running: live EEG and FFT updating below."
+            # Local date and time with UTC offset (ISO 8601), written to the JSON-LD as
+            # schema:startTime. Taken here, right before acquisition starts.
+            params_to_run["Timestamp"] = datetime.now().astimezone().isoformat(timespec="seconds")
+            # The evaluators skip their result plots when ReportAnalyzer is set, so nothing is
+            # drawn under the measurement. The evaluation values are still computed.
+            params_to_run["ReportAnalyzer"] = True
             try:
                 if simulate:
                     params_to_run["data"] = ui.simulated_recording_data(params_to_run)

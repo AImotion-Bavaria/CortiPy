@@ -626,6 +626,13 @@ def _meta_from_result(result: BIDSLoadResult, source_rel: str) -> dict[str, Any]
     montage = params.get("Channels") if isinstance(params, dict) else None
     if isinstance(montage, list) and len(montage) == len(result.raw.ch_names):
         channels = [dict(entry) for entry in montage]
+    elif isinstance(montage, list) and montage and len(montage) < len(result.raw.ch_names):
+        # ActiCHamp saves AUX/trigger columns after the EEG block, and Channels describes only
+        # the EEG block. Keep the montage for those leading columns; the trailing ones get names.
+        channels = [dict(entry) for entry in montage] + [
+            {"Channel": name, "Position": name, "Active": True}
+            for name in result.raw.ch_names[len(montage):]
+        ]
     else:
         channels = [{"Channel": name, "Position": name, "Active": True} for name in result.raw.ch_names]
 

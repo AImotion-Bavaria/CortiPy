@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 pytest.importorskip("streamlit")
@@ -31,8 +33,14 @@ class TestHiddenViews:
         assert session.DEFAULT_VIEW in session.VISIBLE_VIEW_OPTIONS
 
     def test_the_rest_stay_navigable(self):
-        for view in ("Session configuration", "Electrodes", "Live preview", "Charts", "Saved sessions"):
+        for view in ("Session configuration", "Live preview", "Charts", "Saved sessions"):
             assert view in session.VISIBLE_VIEW_OPTIONS
+
+    def test_electrodes_moved_into_session_configuration(self):
+        # The electrode/impedance table is a step of the Session configuration page rather
+        # than a tab of its own, so it must not be offered separately in the navigation.
+        assert "Electrodes" not in session.VISIBLE_VIEW_OPTIONS
+        assert "embedded" in inspect.signature(session.render_channel_editor).parameters
 
 
 class TestDeviceFieldGating:
@@ -78,6 +86,14 @@ class TestImpedanceMapping:
     def test_too_few_values_are_ignored(self):
         rows = [{"Channel": "GND", "Impedance": 1.0}]
         assert map_impedances_to_channels(rows, [1.0, 2.0])[0]["Impedance"] == 1.0
+
+    def test_an_unmeasurable_electrode_reads_as_open(self):
+        # The producer reports 2^31 ohms for an electrode it cannot measure, where the
+        # one-shot read reports ~999.9 kOhm. Both mean "open", and a two-million-kOhm
+        # number has no business in the table or in the saved montage.
+        rows = [{"Channel": "GND"}, {"Channel": "Ch 1"}, {"Channel": "Ch 2"}]
+        out = map_impedances_to_channels(rows, [5000.0, 4000.0, 2147483648.0, 999900.0])
+        assert [r["Impedance"] for r in out] == [5.0, 999.9, 999.9]
 
 
 class TestStagedConfiguration:
@@ -257,6 +273,41 @@ class TestElectrodeLibrary:
         got = session._model_for_rubrik("Wet Electrodes", "OpenBCI, Dry Comb Electrode")
         assert got in session.ELECTRODE_LIBRARY["Wet Electrodes"]
         assert session.MODEL_TO_RUBRIK["OpenBCI, Dry Comb Electrode"] == "Dry Electrodes"
+
+    def test_the_dropdown_offers_every_model_in_the_library(self):
+        # One list holds the lot: a data_editor column's options are fixed for the whole
+        # column, so a per-row list filtered to that row's category is not possible.
+        options = session._electrode_model_options()
+        every_model = {m for models in session.ELECTRODE_LIBRARY.values() for m in models}
+        assert set(options) == every_model
+        assert len(options) == len(set(options))  # listed once each, not per category
+
+    def test_models_are_ordered_category_by_category(self):
+        # The categories stay in the order electrodes.json lists them, so they form blocks
+        # the operator scrolls to instead of being scattered alphabetically.
+        options = session._electrode_model_options()
+        first, second = session.ELECTRODE_RUBRICS[0], session.ELECTRODE_RUBRICS[1]
+        owned = lambda rubric: [  # noqa: E731 - models this category alone owns
+            m for m in session.ELECTRODE_LIBRARY[rubric]
+            if session.MODEL_TO_RUBRIK.get(m) == rubric
+        ]
+        assert max(options.index(m) for m in owned(first)) < min(
+            options.index(m) for m in owned(second)
+        )
+
+    def test_a_model_shared_by_every_category_is_listed_last(self):
+        # "Other / not listed" belongs to no category in particular, so it cannot sit in
+        # one category's block without claiming it.
+        options = session._electrode_model_options()
+        assert options[-1] == "Other / not listed"
+        assert "Other / not listed" not in session.MODEL_TO_RUBRIK
+
+    def test_each_option_reads_with_its_category(self):
+        assert session._electrode_model_label("Grass, Gold Cup E5GH") == (
+            "Wet Electrodes · Grass, Gold Cup E5GH"
+        )
+        # ... except the ones that have no single category to name.
+        assert session._electrode_model_label("Other / not listed") == "Other / not listed"
 
 
 class TestRecordedChannelPrefix:

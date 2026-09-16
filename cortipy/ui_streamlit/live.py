@@ -22,6 +22,7 @@ except Exception:  # pragma: no cover
     go = None
 
 from cortipy.devices import DeviceFactory, DeviceInterface
+from cortipy.evaluation.vep import RN_ANALYSIS_WINDOW, calculate_fsp, residual_noise_eclipse
 from cortipy.shared.channels import channel_labels
 from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
 from cortipy.ui_streamlit.fields import coerce_number
@@ -357,7 +358,7 @@ def _live_vep_average(
     trigger_rate = trigger_positions.size / elapsed_seconds if elapsed_seconds > 0 else 0.0
     if not epochs:
         return None, "VEP channel", (
-            f"Triggers: {trigger_positions.size} total ({trigger_rate:.2f} Hz); "
+            f"Triggers: {trigger_positions.size} total ({trigger_rate:.2f} rps); "
             "complete epochs: 0"
         )
     segments = np.stack(epochs, axis=0)
@@ -372,9 +373,16 @@ def _live_vep_average(
     if trigger_idx < label_index:
         label_index -= 1
     label_index = max(0, min(label_index, len(labels) - 1)) if labels else 0
+    live_segments = segments[:, :, live_channel]
+    try:
+        fsp_result = calculate_fsp(live_segments, average_signal, fs)
+        fsp_text = f"Fsp: {fsp_result['Fsp']:.2f} (p_sp {fsp_result['p_sp']:.3f})"
+    except ValueError:
+        fsp_text = "Fsp: -"
+    rn_value, _ = residual_noise_eclipse(live_segments, fs, RN_ANALYSIS_WINDOW)
     return average_signal, _ch_label(labels, label_index), (
-        f"Triggers: {trigger_positions.size} total ({trigger_rate:.2f} Hz); "
-        f"averaged epochs: {segments.shape[0]}"
+        f"Triggers: {trigger_positions.size} total ({trigger_rate:.2f} rps); "
+        f"averaged epochs: {segments.shape[0]}; {fsp_text}; RN: {rn_value:.2f} µV"
     )
 
 
