@@ -155,7 +155,6 @@ INT_FIELD_NAMES = {
     "LivePlotCH",
     "ChannelIpsi",
     "ChannelContra",
-    "TestSubjectNo",
     "RecordingTime",
     "TriggerTime",
     "RepeatMeasCount",

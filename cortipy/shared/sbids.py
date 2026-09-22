@@ -50,6 +50,27 @@ RECORDING_PROPERTIES: Tuple[Tuple[str, str, Optional[str]], ...] = (
     ("Environment", "Environment", None),
 )
 
+# Participant attributes carried on the schema:Patient node, as
+# (Participant key, schema:PropertyValue name, schema:unitCode or None).
+#
+# schema.org gives Person no age property, so age travels as a schema:additionalProperty
+# with "ANN", the UN/CEFACT common code for "year" that schema:unitCode is defined against.
+# Anything absent here is LOST on round-trip: age and initials used to be, so a session
+# reloaded from its JSON-LD came back with an empty participant form.
+PARTICIPANT_PROPERTIES: Tuple[Tuple[str, str, Optional[str]], ...] = (
+    ("Age", "Age", "ANN"),
+    ("Initials", "Initials", None),
+)
+
+# schema:gender is typed as GenderType, whose members are schema:Male and schema:Female.
+# Anything else stays a plain string, which schema.org explicitly allows for people who do
+# not identify as a binary gender.
+GENDER_TYPE_IDS = {"male": "schema:Male", "female": "schema:Female"}
+
+# Values the participant form emits for "not stated"; writing them would assert a gender
+# the operator never entered.
+_UNSET_GENDER_VALUES = {"", "unspecified", "unknown", "n/a", "none"}
+
 
 def sha256_file(path: str | os.PathLike, *, chunk_size: int = 1 << 20) -> str:
     """SHA-256 of a file's bytes, streamed so large recordings do not load into memory."""
@@ -154,16 +175,16 @@ class SbidsExporter:
         # Keep the identifier bare. It used to fall back to f"{device}_sub_{n}", which put a
         # "sub" token inside schema:identifier and re-emerged as sub-Simulated_sub_1 on a
         # later BIDS export.
+        #
+        # The participant code is the only subject identifier the UI collects. TestSubjectNo
+        # is read for params.json files written before it was removed from the form, so their
+        # subject numbers survive re-export; nothing writes it any more.
         subj_id = str(
             subject_id
             or participant.get("Code")
             or params.get("TestSubjectNo", "1")
         )
-        self._add_subject(
-            subj_id=subj_id,
-            gender=participant.get("Gender"),
-            dominant_hand=participant.get("DominantHand"),
-        )
+        self._add_subject(subj_id=subj_id, participant=participant)
         self._add_device(name=device)
         rec_time = params.get("RecordingTime")
         filename_stem = params.get("Filename") or os.path.splitext(os.path.basename(raw_file))[0]
@@ -292,18 +313,48 @@ class SbidsExporter:
         with open(path, "w", encoding="utf-8") as f:
             f.write(self.to_json(indent=indent))
 
-    def _add_subject(self, subj_id: str, gender: str | None, dominant_hand: str | None) -> None:
-        if subj_id in self._known_subjects:
-            return
+    def _add_subject(self, subj_id: str, participant: dict | None = None) -> None:
+        """Write (or complete) the schema:Patient node for a participant.
+
+        A known subject is merged, not skipped: reopening a dataset whose first recording was
+        saved before the operator filled in age/sex would otherwise leave that node forever
+        incomplete. Only keys the new block carries are overwritten, so appending a recording
+        with no participant metadata cannot blank out what an earlier one recorded.
+        """
+        participant = participant or {}
         node = {
             "@id": f"urn:subject:{subj_id}",
             "@type": "schema:Patient",
+            # The pseudonymous participant code IS the identifier; no name is ever written.
             "schema:identifier": str(subj_id),
         }
-        if gender:
-            node["schema:gender"] = gender
-        if dominant_hand:
-            node["schema:description"] = f"DominantHand: {dominant_hand}"
+        gender = str(participant.get("Gender") or "").strip()
+        if gender.lower() not in _UNSET_GENDER_VALUES:
+            gender_id = GENDER_TYPE_IDS.get(gender.lower())
+            node["schema:gender"] = {"@id": gender_id} if gender_id else gender
+        notes = participant.get("Notes")
+        if notes:
+            node["schema:description"] = str(notes)
+        properties = []
+        for key, prop_name, unit_code in PARTICIPANT_PROPERTIES:
+            value = participant.get(key)
+            if value in (None, "", []):
+                continue
+            prop_node = {
+                "@type": "schema:PropertyValue",
+                "schema:name": prop_name,
+                "schema:value": value,
+            }
+            if unit_code:
+                prop_node["schema:unitCode"] = unit_code
+            properties.append(prop_node)
+        if properties:
+            node["schema:additionalProperty"] = properties
+        if subj_id in self._known_subjects:
+            existing = next((n for n in self._graph if n.get("@id") == node["@id"]), None)
+            if existing is not None:
+                existing.update(node)
+                return
         self._graph.append(node)
         self._known_subjects.add(subj_id)
 

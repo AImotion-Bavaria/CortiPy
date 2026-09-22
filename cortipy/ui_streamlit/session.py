@@ -438,11 +438,9 @@ PARTICIPANT_DEFAULT = {
     "Initials": "",
     "Age": None,
     "Gender": "Unspecified",
-    "DominantHand": "Right",
     "Notes": "",
 }
 GENDER_OPTIONS = ["Unspecified", "Female", "Male", "Diverse"]
-HANDEDNESS_OPTIONS = ["Right", "Left", "Ambidextrous"]
 
 
 def render_numeric_input(target, field: FieldSchema, current: Any, key: str):
@@ -748,7 +746,6 @@ def load_params_into_state(
         "participant_Initials",
         "participant_Age",
         "participant_Gender",
-        "participant_DominantHand",
         "participant_Notes",
     ):
         st.session_state.pop(key, None)
@@ -1154,7 +1151,6 @@ def _render_participant_card(participant: Dict[str, Any]) -> None:
         ("Initials", participant.get("Initials") or "N/A"),
         ("Age", participant.get("Age") or "N/A"),
         ("Gender", participant.get("Gender") or "N/A"),
-        ("Dominant hand", participant.get("DominantHand") or "N/A"),
     ]
     info_html = "".join(
         f"<div class='field'><div><div class='label'>{label}</div>"
@@ -1254,7 +1250,9 @@ def _render_general_fields(container, names: Sequence[str], general: Dict[str, A
 # ----------------------------------------------------------------------------------
 # Which GeneralParams fields belong to which step.
 ACQUISITION_FIELDS = ("fs", "RecordingTime")
-SESSION_DETAIL_FIELDS = ("Filename", "TestSubjectNo", "Environment", "AddInfos", "RepeatMeas")
+# The subject is identified once, by the participant code on the participant form — a
+# second numeric TestSubjectNo here only invited the two to disagree.
+SESSION_DETAIL_FIELDS = ("Filename", "Environment", "AddInfos", "RepeatMeas")
 
 CONFIG_STEPS = (
     "Device",
@@ -2308,7 +2306,7 @@ def render_participant_form() -> Dict[str, Any]:
     with st.expander("Participant / proband information", expanded=True):
         form_col, viz_col = st.columns((2.2, 0.9))
         with form_col:
-            cols = form_col.columns([1.25, 1.0, 0.65, 1.0, 1.0])
+            cols = form_col.columns([1.25, 1.0, 0.65, 1.0])
             participant["Code"] = cols[0].text_input(
                 "Participant code",
                 value=participant.get("Code", ""),
@@ -2334,18 +2332,11 @@ def render_participant_form() -> Dict[str, Any]:
                 key="participant_Age",
             )
             gender_value = resolve_choice(GENDER_OPTIONS, participant.get("Gender"))
-            hand_value = resolve_choice(HANDEDNESS_OPTIONS, participant.get("DominantHand"))
             participant["Gender"] = cols[3].selectbox(
                 "Gender",
                 options=GENDER_OPTIONS,
                 index=GENDER_OPTIONS.index(gender_value),
                 key="participant_Gender",
-            )
-            participant["DominantHand"] = cols[4].selectbox(
-                "Dominant hand",
-                options=HANDEDNESS_OPTIONS,
-                index=HANDEDNESS_OPTIONS.index(hand_value),
-                key="participant_DominantHand",
             )
             notes_col, _ = form_col.columns([3, 1])
             participant["Notes"] = notes_col.text_area(

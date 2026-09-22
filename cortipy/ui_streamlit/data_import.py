@@ -13,7 +13,7 @@ import pandas as pd
 import streamlit as st
 
 from cortipy.shared.bids import raw_to_microvolts
-from cortipy.shared.sbids import RECORDING_PROPERTIES
+from cortipy.shared.sbids import PARTICIPANT_PROPERTIES, RECORDING_PROPERTIES
 from cortipy.ui_streamlit.fields import coerce_number, resolve_choice
 
 
@@ -201,6 +201,32 @@ def _is_aux_channel_node(node: Mapping[str, Any], position: str) -> bool:
     return str(position or "").strip().upper() in {"GND", "REF"}
 
 
+def _participant_from_subject_node(subject_node: Mapping[str, Any]) -> Dict[str, Any]:
+    """Rebuild the participant form block from a schema:Patient node.
+
+    The mirror image of ``SbidsExporter._add_subject``: sex/age/initials/notes were written
+    into the graph but never read back, so loading a dataset reset the participant form to
+    its defaults.
+    """
+    participant: Dict[str, Any] = {}
+    gender = jsonld_value(subject_node.get("schema:gender") or subject_node.get("gender"))
+    if gender:
+        # A GenderType member arrives as {"@id": "schema:Female"}; the form wants "Female".
+        participant["Gender"] = str(gender).rsplit(":", 1)[-1]
+    notes = jsonld_value(subject_node.get("schema:description") or subject_node.get("description"))
+    # Older documents parked handedness in the description as "DominantHand: Right". The
+    # field is gone from the form, so that text is dropped rather than resurrected.
+    if notes and not re.match(r"^\s*DominantHand:", str(notes)):
+        participant["Notes"] = str(notes)
+    lookup = additional_property_lookup(dict(subject_node))
+    for _key, prop_name, _unit in PARTICIPANT_PROPERTIES:
+        value = lookup.get(prop_name)
+        if value in (None, "", []):
+            continue
+        participant[prop_name] = coerce_number(value) if prop_name == "Age" else value
+    return participant
+
+
 def _device_from_graph(recording: Mapping[str, Any], id_map: Mapping[str, Any]) -> str:
     """Resolve schema:instrument to the device name the exporter recorded."""
     ref = jsonld_value(recording.get("schema:instrument") or recording.get("instrument"))
@@ -304,6 +330,7 @@ def params_from_jsonld_doc(
 
     subject_ref = jsonld_value(recording.get("schema:object") or recording.get("object"))
     subject_code = ""
+    participant: Dict[str, Any] = {}
     if subject_ref:
         subject_node = id_map.get(str(subject_ref), {})
         subject_code = str(
@@ -313,6 +340,9 @@ def params_from_jsonld_doc(
             or str(subject_ref).rsplit(":", 1)[-1]
         )
         subject_code = _strip_bids_prefixes(subject_code)
+        participant = _participant_from_subject_node(subject_node)
+    if subject_code:
+        participant["Code"] = subject_code
 
     raw_file = jsonld_value(file_node.get("schema:contentUrl") or file_node.get("contentUrl") or file_node.get("schema:name") or file_node.get("name"))
     method_options = list(method_names)
@@ -357,6 +387,6 @@ def params_from_jsonld_doc(
         "Parameters": parameters,
         "Channels": channels,
         "ReferenceElectrodes": aux_electrodes,
-        "Metadata": {"Participant": {"Code": subject_code}} if subject_code else {},
+        "Metadata": {"Participant": participant} if participant else {},
         "DataFile": raw_file,
     }

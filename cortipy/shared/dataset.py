@@ -618,7 +618,8 @@ def _meta_from_result(result: BIDSLoadResult, source_rel: str) -> dict[str, Any]
     if isinstance(result.metadata, dict) and "params" in result.metadata:
         params = result.metadata["params"]
     participant = params.get("Metadata", {}).get("Participant", {}) if isinstance(params, dict) else {}
-    subject = participant.get("Code") if isinstance(participant, dict) else None
+    participant = dict(participant) if isinstance(participant, dict) else {}
+    subject = participant.get("Code")
 
     # Keep the real montage when it lines up with the raw channels: it carries Position,
     # Impedance, Rubrik and Model. Flattening it to bare names threw all of that away, so
@@ -649,7 +650,9 @@ def _meta_from_result(result: BIDSLoadResult, source_rel: str) -> dict[str, Any]
         "Device": params.get("Device", "Unknown") if isinstance(params, dict) else "Unknown",
         "Parameters": parameters_block,
         "Channels": channels,
-        "Metadata": {"Participant": {"Code": subject}} if subject else {},
+        # The whole block, not just the code: re-exporting a loaded recording used to strip
+        # age/sex/initials back off the subject node.
+        "Metadata": {"Participant": participant} if participant else {},
         "DataFile": source_rel,
     }
     # GND/Ref hold no data column, so they are not in `Channels` — but they are real
