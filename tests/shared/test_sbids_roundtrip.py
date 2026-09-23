@@ -81,6 +81,22 @@ class TestGraph:
         ]
         assert urls and all("\\" not in u for u in urls)
 
+    def test_recording_records_the_code_that_produced_it(self, exported):
+        # A saved recording must name the build that wrote it; this cannot be
+        # reconstructed after the fact, so it has to be in the document itself.
+        out, _raw, _params = exported
+        doc = json.loads(out.read_text())
+        rec = next(n for n in doc["@graph"] if "schema:CreateAction" in (n.get("@type") or []))
+        props = {p["schema:name"]: p["schema:value"] for p in rec["schema:additionalProperty"]}
+
+        from cortipy import __version__
+
+        assert props["CortiPyVersion"] == __version__
+        # The revision is absent only when running from an installed copy with no
+        # repository, so assert on its shape rather than its presence.
+        if "CortiPySourceRevision" in props:
+            assert props["CortiPySourceRevision"]
+
     def test_gnd_is_typed_as_aux_not_eeg(self, exported):
         out, _raw, _params = exported
         doc = json.loads(out.read_text())

@@ -6,8 +6,10 @@ import hashlib
 import json
 import os
 import re
+import subprocess
 from copy import deepcopy
 from datetime import datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence, Tuple
 
@@ -22,6 +24,43 @@ from .bids import (
     _coerce_to_raw_array,
     raw_to_microvolts,
 )
+
+def _cortipy_version() -> str:
+    """CortiPy's release version, imported late to avoid the core circular import."""
+    from .. import __version__
+
+    return str(__version__)
+
+
+@lru_cache(maxsize=1)
+def _source_revision() -> Optional[str]:
+    """Describe the checkout CortiPy is running from, e.g. "v0.2.1" or "v0.2.1-3-g2a64dbe-dirty".
+
+    A release tag alone cannot tell you whether a recording was made from that exact
+    code: running from a checkout that is a few commits ahead, or with uncommitted
+    edits, still reports the same __version__. git describe distinguishes those, and
+    the "-dirty" suffix is the part that matters when tracing a participant's data.
+
+    Returns None when CortiPy runs from an installed copy with no repository, or when
+    git is unavailable - the version is then the only provenance we can record.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    if not (repo_root / ".git").exists():
+        return None
+    try:
+        completed = subprocess.run(
+            ["git", "-C", str(repo_root), "describe", "--tags", "--always", "--dirty"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if completed.returncode != 0:
+        return None
+    return completed.stdout.strip() or None
+
 
 # Acquisition parameters carried through the JSON-LD graph, as
 # (Params key, schema:PropertyValue name, schema:unitCode or None).
@@ -209,6 +248,21 @@ class SbidsExporter:
             recording_node["schema:duration"] = f"PT{int(rec_time)}S"
         if method:
             recording_node["schema:measurementTechnique"] = method
+
+        # Which build produced this recording. Without it a saved file cannot be traced
+        # back to the code that wrote it, and that cannot be reconstructed afterwards.
+        recording_node["schema:additionalProperty"].append({
+            "@type": "schema:PropertyValue",
+            "schema:name": "CortiPyVersion",
+            "schema:value": _cortipy_version(),
+        })
+        source_revision = _source_revision()
+        if source_revision:
+            recording_node["schema:additionalProperty"].append({
+                "@type": "schema:PropertyValue",
+                "schema:name": "CortiPySourceRevision",
+                "schema:value": source_revision,
+            })
 
         for param_key, prop_name, unit_code in RECORDING_PROPERTIES:
             value = params.get(param_key)
