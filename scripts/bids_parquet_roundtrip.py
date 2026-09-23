@@ -24,7 +24,7 @@ def _load_bidsloader() -> type:
         module = importlib.util.module_from_spec(spec)
         sys.modules[spec.name] = module  # type: ignore[arg-type]
         spec.loader.exec_module(module)  # type: ignore[arg-type]
-        return getattr(module, "BIDSLoader")
+        return module.BIDSLoader
 
 
 BIDSLoader = _load_bidsloader()

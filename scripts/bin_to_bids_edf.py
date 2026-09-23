@@ -40,9 +40,9 @@ def _load_shared_module() -> ModuleType:
 
 
 shared = _load_shared_module()
-BIDSLoader = getattr(shared, "BIDSLoader")
-ExperimentBinLoader = getattr(shared, "ExperimentBinLoader")
-BIDSLoadResult = getattr(shared, "BIDSLoadResult")
+BIDSLoader = shared.BIDSLoader
+ExperimentBinLoader = shared.ExperimentBinLoader
+BIDSLoadResult = shared.BIDSLoadResult
 _ModuleContext = None
 _EVAL_CLASSES: dict[str, type] = {}
 METHOD_ALIASES = {

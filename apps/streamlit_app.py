@@ -14,7 +14,6 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from cortipy.ui import SaveManager  # noqa: E402
 from cortipy.ui_streamlit import session as ui  # noqa: E402
 from cortipy.ui_streamlit.constants import DEVICE_DEFAULT_CHANNELS  # noqa: E402
 from cortipy.ui_streamlit.fields import default_values  # noqa: E402

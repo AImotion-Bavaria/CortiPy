@@ -89,7 +89,7 @@ from cortipy import MeasurementPipeline  # noqa: E402
 from cortipy.core.pipeline import PipelineHooks  # noqa: E402
 from cortipy.devices import DeviceFactory, DeviceInterface  # noqa: E402
 from cortipy.shared.units import DEFAULT_SIGNAL_UNIT  # noqa: E402
-from cortipy.ui import SaveManager, normalize_params  # noqa: E402
+from cortipy.ui import normalize_params  # noqa: E402
 
 DEFAULT_SAVE_DIR = Path.cwd() / "cortipy_runs"
 SCHEMA_DIR = ROOT / "apps" / "assets" / "ParameterJSON"
@@ -1480,7 +1480,7 @@ def render_method_form(method: str) -> Dict[str, Any]:
                             "Reference: all EEG - selected channel",
                             options=ref_options,
                             index=ref_options.index(resolved_ref),
-                            format_func=lambda option: ref_labels.get(option, str(option)),
+                            format_func=lambda option, labels=ref_labels: labels.get(option, str(option)),
                             help="During analysis, every EEG channel is referenced as EEG channel minus this selected channel.",
                             key=key,
                         )
@@ -2489,8 +2489,6 @@ def assemble_params(
         # GND/Ref have impedances worth keeping but occupy no data column.
         params["ReferenceElectrodes"] = reference_electrodes
 
-    aux_value = coerce_number(params["Parameters"].get("NumberAUXChannels"))
-    aux_count = int(aux_value) if aux_value and aux_value > 0 else 0
     if channels and _device_emits_trigger(params["Device"], params["Parameters"]):
         # ActiCHamp VEP always uses physical AUX1, immediately after the 32 EEG inputs.
         if str(params.get("Method", "")).lower() == "vep":
@@ -3595,7 +3593,6 @@ def render_sidebar_controls() -> SidebarControls:
 
         if active:
             active_path = Path(active)
-            n = _dataset_recording_count(active_path)
             st.caption(f"📁 **{active_path.name}**")
             st.caption(str(active_path))
         else:

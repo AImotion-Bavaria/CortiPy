@@ -31,7 +31,8 @@ jobs:
   test:
     name: Test (${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    needs: lint
+    # Deliberately not "needs: lint": lint and tests are independent signals, and
+    # gating tests on style meant a lint failure hid the test results entirely.
     strategy:
         fail-fast: false
         matrix:

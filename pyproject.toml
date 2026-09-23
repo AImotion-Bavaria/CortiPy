@@ -76,7 +76,30 @@ version = { attr = "cortipy.__version__" }
 
 [tool.ruff]
 line-length = 100
-target-version = "py312"
- 
+# Match requires-python (>=3.9). Targeting py312 made Ruff suggest syntax that
+# cannot run on 3.9, e.g. zip(..., strict=True).
+target-version = "py39"
+# Separate Git repository with its own tooling; not ours to lint or fix from here.
+exclude = ["CortiPy_VEP_Ear_Study"]
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+# Backlog inherited from before Ruff ran in CI (~1800 findings, almost all
+# cosmetic or annotation-modernisation). Real defects (F, and B apart from the
+# cases below) stay enforced so new code is held to them; these are silenced
+# until a dedicated cleanup pass, which should remove them one code at a time.
+ignore = [
+    "B027",   # empty method in an ABC without @abstractmethod: ModuleBase's
+              # documented optional hooks (on_connected, ...) are meant to be
+              # no-ops unless a subclass overrides them
+    "E501",   # line-too-long (726)
+    "I001",   # unsorted-imports; autofix would reorder the deliberate late
+              # imports in core/context.py and core/pipeline.py and reintroduce
+              # the circular-import crash they exist to avoid
+    "UP006",  # non-pep585-annotation (587)
+    "UP007",  # non-pep604-annotation-union
+    "UP015",  # redundant-open-modes
+    "UP035",  # deprecated-import (97)
+    "UP037",  # quoted-annotation
+    "UP045",  # non-pep604-annotation-optional (322)
+]

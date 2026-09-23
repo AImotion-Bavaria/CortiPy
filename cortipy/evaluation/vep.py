@@ -171,7 +171,6 @@ class VepEvaluator(EvaluatorBase):
         params["Evaluation"] = evaluation
 
         plot_channel_label = param_block.setdefault("PlotChannelLabel", "Oz")
-        topomap_latency_ms = float(param_block.get("TopomapLatencyMs", 100.0))
 
         if render_plots:
             LOGGER.debug("Rendering VEP evaluation plots")

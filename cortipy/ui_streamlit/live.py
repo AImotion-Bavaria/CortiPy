@@ -500,7 +500,7 @@ def _plot_live_buffer(
             total_channels = buffer.shape[1]
     display_buffer, display_time_axis = _decimate_for_display(buffer, time_axis, fs)
     if interactive and go is not None:
-        palette = list(getattr(plt.cm, "tab10").colors) if hasattr(plt.cm, "tab10") else []
+        palette = list(plt.cm.tab10.colors) if hasattr(plt.cm, "tab10") else []
         traces = []
         for plot_idx, ch in enumerate(indices):
             color = palette[plot_idx % len(palette)] if palette else (0.2, 0.4, 0.8)
@@ -606,7 +606,7 @@ def _plot_fft_spectrum(
         ("Gamma", 30.0, 50.0, "#9B59B6"),
     ]
     if interactive and go is not None:
-        palette = list(getattr(plt.cm, "tab10").colors) if hasattr(plt.cm, "tab10") else []
+        palette = list(plt.cm.tab10.colors) if hasattr(plt.cm, "tab10") else []
         traces = []
         shapes = []
         max_freq = 60.0
@@ -633,7 +633,7 @@ def _plot_fft_spectrum(
                     name=_ch_label(ch_labels, ch),
                 )
             )
-        for name, low, high, band_color in bands:
+        for _name, low, high, band_color in bands:
             shapes.append(
                 dict(
                     type="rect",
@@ -746,7 +746,7 @@ def _plot_individual_channels(
     else:
         time_axis_min = float(time_axis[0])
         time_axis_max = float(time_axis[-1])
-    palette = list(getattr(plt.cm, "tab10").colors) if hasattr(plt.cm, "tab10") else []
+    palette = list(plt.cm.tab10.colors) if hasattr(plt.cm, "tab10") else []
     default_color = (0.2, 0.4, 0.8)
     for plot_idx, ch in enumerate(indices):
         placeholder = placeholders[plot_idx] if plot_idx < len(placeholders) else None

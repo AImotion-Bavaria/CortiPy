@@ -732,7 +732,7 @@ class SBIDSLoader:
         if column_count is not None:
             if len(frame) < column_count:
                 missing = column_count - len(frame)
-                for idx in range(missing):
+                for _idx in range(missing):
                     frame.loc[len(frame)] = {
                         "name": f"Ch{len(frame)+1}",
                         "type": "EEG",

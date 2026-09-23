@@ -380,7 +380,7 @@ if __name__ == "__main__":  # pragma: no cover - operator diagnostic
         raise SystemExit(1)
 
     if report["platform"] == "nt":
-        print(f"\n--- Bluetooth device query ---")
+        print("\n--- Bluetooth device query ---")
         print(f"powershell: {report.get('powershell_exe')}  (exit {report.get('powershell_returncode')})")
         stderr = (report.get("powershell_stderr") or "").strip()
         if stderr:
@@ -389,7 +389,7 @@ if __name__ == "__main__":  # pragma: no cover - operator diagnostic
         print(f"MAC -> name (registry fallback):              {report.get('registry_names') or '(none)'}")
         print(f"resolved COM -> name: {report.get('resolved_names') or '(none)'}")
 
-    print(f"\n--- pyserial ports ---")
+    print("\n--- pyserial ports ---")
     for port in report.get("pyserial_ports", []):
         print(f"  {port['device']}: mac={port.get('mac_key')} hwid={port['hwid']!r}")
 

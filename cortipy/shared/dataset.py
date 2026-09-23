@@ -619,7 +619,6 @@ def _meta_from_result(result: BIDSLoadResult, source_rel: str) -> dict[str, Any]
         params = result.metadata["params"]
     participant = params.get("Metadata", {}).get("Participant", {}) if isinstance(params, dict) else {}
     participant = dict(participant) if isinstance(participant, dict) else {}
-    subject = participant.get("Code")
 
     # Keep the real montage when it lines up with the raw channels: it carries Position,
     # Impedance, Rubrik and Model. Flattening it to bare names threw all of that away, so
