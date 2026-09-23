@@ -34,6 +34,22 @@ def test_raw_chart_uses_referenced_display_values() -> None:
     np.testing.assert_array_equal(chart.series[1].y, np.array([0.0, 0.0, 0.0]))
 
 
+def test_unicorn_raw_chart_stays_unreferenced() -> None:
+    data = np.array([[1.0, 10.0], [2.0, 20.0], [3.0, 30.0]])
+    params = {
+        "Device": "Unicorn",
+        "Parameters": {"NumberEEGChannels": 2, "ReferenceChannel": 2, "fs": 250},
+    }
+
+    chart = _chart_from_raw_data("run", params, data)
+
+    assert chart is not None
+    assert chart.title == "EEG preview (unreferenced)"
+    np.testing.assert_array_equal(chart.series[0].y, np.array([1.0, 2.0, 3.0]))
+    np.testing.assert_array_equal(chart.series[1].y, np.array([10.0, 20.0, 30.0]))
+    np.testing.assert_array_equal(referenced_eeg_view(params, data), data)
+
+
 def test_autoevaluate_does_not_store_evaluation_on_input_params(monkeypatch) -> None:
     class DummyEvaluator:
         def __init__(self, show_plots=False):

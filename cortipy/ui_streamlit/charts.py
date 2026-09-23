@@ -52,8 +52,26 @@ def downsample_series(x: np.ndarray, y: np.ndarray, max_points: int = 2000) -> t
     return x[::step], y[::step]
 
 
+def reference_applies_to_view(params: Dict[str, Any]) -> bool:
+    """Whether a chart view shows referenced EEG for this device.
+
+    Unicorn recordings are displayed unreferenced; other devices (ActiCHamp and
+    the simulated ones) are referenced when a reference channel is configured.
+    This only governs what is plotted - saved raw data is never referenced.
+    """
+    device = str(params.get("Device", "") if params else "").lower()
+    if device == "unicorn":
+        return False
+    param_block = params.get("Parameters", {}) if params else {}
+    return "ReferenceChannel" in param_block
+
+
 def referenced_eeg_view(params: Dict[str, Any], data: np.ndarray) -> np.ndarray:
-    """Return a copied EEG view with the selected analysis reference applied."""
+    """Return a copied EEG view with the selected analysis reference applied.
+
+    Referencing here is display-only; the caller's array is never mutated and
+    the saved raw data is unaffected.
+    """
     arr = np.asarray(data, dtype=float)
     if arr.ndim == 1:
         arr = arr[:, None]
@@ -61,7 +79,10 @@ def referenced_eeg_view(params: Dict[str, Any], data: np.ndarray) -> np.ndarray:
         return arr
 
     param_block = params.get("Parameters", {}) if params else {}
-    referenced = apply_eeg_reference(arr, param_block) if "ReferenceChannel" in param_block else arr.copy()
+    if reference_applies_to_view(params):
+        referenced = apply_eeg_reference(arr, param_block)
+    else:
+        referenced = arr.copy()
     eeg_count = eeg_channel_count(param_block, referenced.shape[1])
     device = str(params.get("Device", "") if params else "").lower()
     if device == "unicorn":
@@ -153,6 +174,10 @@ def _chart_from_raw_data(label: str, params: Dict[str, Any], data: np.ndarray, a
         return None
 
     param_block = params.get("Parameters", {}) if params else {}
+    referenced = reference_applies_to_view(params)
+    arr = referenced_eeg_view(params, arr)
+    if arr.shape[1] == 0:
+        return None
     fs_value = coerce_number(param_block.get("fs"))
     fs = float(fs_value) if fs_value else 0.0
     n_samples, n_channels = arr.shape[0], arr.shape[1]
@@ -176,7 +201,7 @@ def _chart_from_raw_data(label: str, params: Dict[str, Any], data: np.ndarray, a
 
     return ChartData(
         key="raw",
-        title="EEG preview (reference applied)",
+        title="EEG preview (reference applied)" if referenced else "EEG preview (unreferenced)",
         x_label="Time (s)" if fs > 0 else "Sample",
         y_label="Amplitude (uV)",
         series=series,

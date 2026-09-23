@@ -26,7 +26,7 @@ def test_one_jsonld_named_after_the_folder_plus_a_parquet_per_run(tmp_path):
     assert status == "saved"
     assert out.name == "MyDataset.jsonld"  # named after the folder, not the run
 
-    files = sorted(str(p.relative_to(folder)) for p in folder.rglob("*") if p.is_file())
+    files = sorted(p.relative_to(folder).as_posix() for p in folder.rglob("*") if p.is_file())
     assert files == ["MyDataset.jsonld", "raw_data/run1.parquet"]
     assert not (folder / "params.json").exists() and not (folder / "data.npz").exists()
 
