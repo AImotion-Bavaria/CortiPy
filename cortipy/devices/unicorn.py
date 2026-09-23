@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 from typing import Optional, Sequence
 
 import numpy as np
@@ -61,20 +62,42 @@ class UnicornDevice(DeviceInterface):
         self.sampling_rate = float(sampling_rate)
         self.timeout = float(timeout)
         self._serial: Optional[serial.Serial] = None
+        self._pending = bytearray()
 
     # ------------------------------------------------------------------
     def connect(self) -> None:
         if self._serial is not None:
             return
-        ser = serial.Serial(self.port, self.BAUD_RATE, timeout=self.timeout)
-        ser.reset_input_buffer()
-        ser.write(self.START_ACQ)
-        ack = ser.read(len(self.START_RESPONSE))
-        if ack != self.START_RESPONSE:
-            ser.close()
-            raise RuntimeError(
-                f"UNICORN device '{self.device_name}' did not acknowledge the start command (got {ack!r})."
-            )
+        ser = serial.Serial(
+            port=self.port,
+            baudrate=self.BAUD_RATE,
+            timeout=self.timeout,
+            write_timeout=self.timeout,
+        )
+        try:
+            for attr in ("dtr", "rts"):
+                try:
+                    setattr(ser, attr, True)
+                except Exception:
+                    pass
+            time.sleep(0.15)
+            self._pending.clear()
+            ack = self._send_start_command(ser)
+            if ack != self.START_RESPONSE:
+                # Bluetooth serial stacks can expose stale bytes immediately after opening.
+                # Flush and try once more before reporting the raw ACK for diagnosis.
+                ack = self._send_start_command(ser)
+            if ack != self.START_RESPONSE and not self._sync_to_packet(ser, initial=ack):
+                ser.close()
+                raise RuntimeError(
+                    f"UNICORN device '{self.device_name}' did not acknowledge the start command "
+                    f"on {self.port} (got {ack!r})."
+                )
+        except Exception:
+            if getattr(ser, "is_open", True):
+                ser.close()
+            self._pending.clear()
+            raise
         self._serial = ser
 
     def acquire(self, duration_seconds: float, aux_channels: int = 0) -> np.ndarray:
@@ -106,18 +129,75 @@ class UnicornDevice(DeviceInterface):
                 self._serial.close()
             finally:
                 self._serial = None
+                self._pending.clear()
+
+    def prepare_for_recording(self) -> None:
+        if self._serial is not None:
+            self._serial.reset_input_buffer()
+        # Drop any packet captured during the handshake (the Bluetooth sync-fallback path
+        # stashes one in _pending); otherwise that stale sample becomes recording sample 0.
+        self._pending.clear()
 
     # ------------------------------------------------------------------
     def _read_exact(self, size: int) -> bytes:
         """Read exactly ``size`` bytes from the serial port or raise."""
         assert self._serial is not None
         buffer = bytearray()
+        if self._pending:
+            take = min(size, len(self._pending))
+            buffer.extend(self._pending[:take])
+            del self._pending[:take]
         while len(buffer) < size:
             chunk = self._serial.read(size - len(buffer))
             if not chunk:
                 raise RuntimeError("UNICORN stream ended unexpectedly.")
             buffer.extend(chunk)
         return bytes(buffer)
+
+    def _send_start_command(self, ser: serial.Serial) -> bytes:
+        try:
+            ser.reset_input_buffer()
+        except Exception:
+            pass
+        try:
+            ser.reset_output_buffer()
+        except Exception:
+            pass
+        ser.write(self.START_ACQ)
+        try:
+            ser.flush()
+        except Exception:
+            pass
+        return ser.read(len(self.START_RESPONSE))
+
+    def _sync_to_packet(self, ser: serial.Serial, initial: bytes = b"") -> bool:
+        """Align to a valid packet when a Bluetooth serial stack misses the ACK."""
+        deadline = time.time() + max(0.5, min(self.timeout, 2.0))
+        buffer = bytearray(initial or b"")
+        max_buffer = self.PACKET_BYTES * 4
+        while time.time() < deadline:
+            chunk = ser.read(max(1, self.PACKET_BYTES - len(buffer)))
+            if chunk:
+                buffer.extend(chunk)
+                while len(buffer) >= self.PACKET_BYTES:
+                    start = buffer.find(self.START_SEQUENCE)
+                    if start < 0:
+                        del buffer[:-1]
+                        break
+                    if start > 0:
+                        del buffer[:start]
+                    if len(buffer) < self.PACKET_BYTES:
+                        break
+                    packet = bytes(buffer[: self.PACKET_BYTES])
+                    if packet[-2:] == self.STOP_SEQUENCE:
+                        self._pending.extend(packet)
+                        return True
+                    del buffer[0]
+                if len(buffer) > max_buffer:
+                    del buffer[:-self.PACKET_BYTES]
+            else:
+                time.sleep(0.02)
+        return False
 
     def _decode_packet(self, packet: bytes) -> UnicornPacket:
         if len(packet) != self.PACKET_BYTES:

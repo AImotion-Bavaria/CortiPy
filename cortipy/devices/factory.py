@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any, MutableMapping
 
 from .actichamp_device import ActiChampDevice
@@ -31,6 +32,7 @@ class DeviceFactory:
             )
             if not port:
                 raise ValueError("UNICORN device requires 'UnicornPort' (serial/Bluetooth COM port).")
+            port = normalize_unicorn_port(port)
             device_label = (
                 params.get("UnicornDeviceName")
                 or device_params.get("UNICORNDeviceName")
@@ -51,8 +53,14 @@ class DeviceFactory:
             if fs <= 0:
                 raise ValueError("ActiChamp device requires 'fs' sampling rate in Params.Parameters.")
 
-            channel_count = int(device_params.get("NumberEEGChannels", 32))
+            channel_count = max(32, int(device_params.get("NumberEEGChannels", 32)))
             aux_channels = int(device_params.get("NumberAUXChannels", 0))
+            trigger_channel = int(device_params.get("TriggerChannel", 0) or 0)
+            if str(params.get("Method", "")).lower() == "vep":
+                trigger_channel = 33
+                device_params["TriggerChannel"] = trigger_channel
+            if trigger_channel > channel_count:
+                aux_channels = max(aux_channels, trigger_channel - channel_count)
             install_dir = (
                 params.get("ActiChampPath")
                 or device_params.get("ActiChampPath")
@@ -102,3 +110,12 @@ class DeviceFactory:
             return OfflineDevice(data=data, data_path=data_path, sampling_rate=sampling_rate)
 
         raise ValueError(f"Unknown device '{params.get('Device')}'.")
+
+
+def normalize_unicorn_port(port: Any) -> str:
+    """Return a serial port token suitable for pyserial."""
+    text = str(port or "").strip()
+    match = re.match(r"^(COM\d+)\b", text, flags=re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+    return text

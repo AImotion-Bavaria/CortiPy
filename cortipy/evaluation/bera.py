@@ -25,6 +25,7 @@ from cortipy.shared import (
     trigger_adc,
     wave_amplitude,
 )
+from cortipy.shared.reference import apply_eeg_reference
 
 
 class BeraEvaluator(EvaluatorBase):
@@ -183,16 +184,7 @@ class BeraEvaluator(EvaluatorBase):
 
     # ------------------------------------------------------------------
     def _apply_reference_actichamp(self, param_block: dict, data: np.ndarray) -> np.ndarray:
-        ref_idx = self._safe_channel_idx(param_block.get("ReferenceChannel", 1), default=1, total=data.shape[1]) - 1
-        trig_idx = self._safe_channel_idx(param_block.get("TriggerChannel", data.shape[1]), default=data.shape[1], total=data.shape[1]) - 1
-        referenced = np.array(data, copy=True)
-        mask = np.ones(referenced.shape[1], dtype=bool)
-        if 0 <= trig_idx < mask.size:
-            mask[trig_idx] = False
-        if 0 <= ref_idx < mask.size:
-            mask[ref_idx] = False
-        referenced[:, mask] = referenced[:, mask] - referenced[:, [ref_idx]]
-        return referenced
+        return apply_eeg_reference(data, param_block)
 
     def _safe_channel_idx(self, value, default: int, total: int) -> int:
         """Convert channel selector to 1-based index safely."""
@@ -297,27 +289,6 @@ def _plot_abr_trace(
     except Exception:
         return
 
-
-def _channel_idx_from_label(channels, label) -> Optional[int]:
-    if label is None:
-        return None
-    try:
-        idx = int(label) - 1
-        if idx >= 0:
-            return idx
-    except Exception:
-        pass
-    labels = []
-    for entry in channels or []:
-        if isinstance(entry, dict):
-            lbl = entry.get("Channel") or entry.get("label") or entry.get("name") or entry.get("Position")
-        else:
-            lbl = entry
-        labels.append(str(lbl).lower())
-    try:
-        return labels.index(str(label).lower())
-    except ValueError:
-        return None
 
 
 def _plot_abr_topomap(context, params: dict, t_ms: float = 7.0) -> None:

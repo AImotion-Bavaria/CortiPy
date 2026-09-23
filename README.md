@@ -22,7 +22,7 @@ cortipy/
 - CortiPy is for research and educational use only; it is not a medical device and must not be used for diagnosis or patient care.
 - Follow institutional approvals and local regulations before any clinical evaluation; validate device interoperability and trigger/latency behavior in your lab.
 - Do not store or share identifiable participant data in repositories or issue trackers. Anonymize runs and keep PHI on secured systems; use synthetic/anonymized data for examples.
-- Questions or incident reports: joh1391@thi.de, Rahul.Mondal@thi.de, Laurens.Kreilinger@thi.de.
+
 
 ## Installation matrix
 
@@ -46,7 +46,7 @@ cortipy/
 
 - Issue/PR templates live in `.github/ISSUE_TEMPLATE` and `.github/pull_request_template.md`; please avoid sharing PHI in tickets.
 - Response target: within 5 business days for new issues and vulnerability reports (use the contacts above).
-- For clinical/academic collaborations, reach out via Rahul.Mondal@thi.de or Laurens.Kreilinger@thi.de.
+
 
 ## Roadmap (abridged)
 
@@ -69,10 +69,15 @@ cortipy/
 
 ## Installation
 
-Install in editable mode with optional UI extras:
+Install with Python 3.9-3.12 in editable mode with optional UI extras:
 
 ```bash
+# Windows example with the Python launcher:
+py -3.12 -m venv .venv
+
+# macOS/Linux example:
 python -m venv .venv
+
 source .venv/bin/activate   # PowerShell: .venv\Scripts\Activate.ps1
 pip install --upgrade pip
 pip install -e .            # core toolkit
@@ -121,15 +126,24 @@ MeasurementPipeline(hooks=hooks).run()
   `Params` structure) and executes the pipeline once.
 - `cortipy.ui.SessionOptions` + `SaveManager` reproduce MATLAB’s `saveDatamain`
   behaviour, including timestamped run folders containing `params.json` + `data.npz`.
-- `apps/streamlit_app.py` provides a Streamlit interface for configuring params,
-  naming electrodes, selecting devices, and launching/monitoring measurements with live
-  previews. Saved runs appear in the sidebar so you can browse and reload them.
+- `apps/streamlit_app.py` is the Streamlit entrypoint. It composes focused helpers in
+  `cortipy/ui_streamlit/` for workflow dashboard, session forms, device settings, live
+  preview, charts, imports, and electrode handling.
 
 ### Running the Streamlit UI
 
 ```bash
 pip install -e .[ui]          # once per environment
 streamlit run apps/streamlit_app.py
+```
+
+On **macOS (Apple Silicon)** use the launcher instead — plain `streamlit run` can crash on
+first use because numpy 1.26 runs a subprocess when `numpy.testing` is imported inside a
+Streamlit render thread (a fork-safety issue that does not occur on Windows/Linux):
+
+```bash
+python scripts/run_ui.py            # http://localhost:8501
+python scripts/run_ui.py --port 8600
 ```
 
 Open `http://localhost:8501` (default Streamlit port) and configure a run:
@@ -155,6 +169,29 @@ Open `http://localhost:8501` (default Streamlit port) and configure a run:
   stream, `"Dummy"` (or `"Sim"`) for synthetic data, or `"Offline"` to replay
   `.npz/.mat` files. All are selectable from the Streamlit UI for testing without
   hardware.
+
+### Stimulus and trigger wiring
+
+For event-related recordings, the stimulus computer should provide a trigger signal
+that is recorded together with the EEG. With an ActiCHamp, connect the trigger output
+to one AUX input and configure that input as `TriggerChannel`. Keep the trigger timing
+and sampling rate identical to the EEG recording.
+
+- **Visual VEP and visual oddball**: connect the screen or stimulus presentation
+  trigger output to an ActiCHamp AUX input. CortiPy uses the recorded trigger to align
+  and average the visual responses.
+- **Acoustic oddball**: use the same trigger principle with an acoustic stimulus and
+  record its timing on an AUX input.
+- **ABR/BERA**: use an acoustic trigger. The current ABR acquisition path requires an
+  ActiCHamp; verify the connected AUX input and trigger timing before recording.
+- **Alpha, eyes open/closed**: a trigger is optional when the analysis uses an
+  internally defined timing sequence. If the eyes-open/eyes-closed changes are marked
+  externally, record those events as triggers. The same trigger wiring used for VEP can
+  be used.
+
+Set the relevant trigger configuration in `Params["Parameters"]`, for example
+`TriggerChannel`, `Trigger`, and `TriggerTime`. The exact AUX channel number depends on
+the ActiCHamp wiring and must match the recorded data columns.
 
 ### BIDS import/export
 

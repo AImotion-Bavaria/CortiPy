@@ -38,12 +38,6 @@
             "tooltip": "Sampling frequency in Hz"
         },
         {
-            "name": "TestSubjectNo",
-            "type": "numeric",
-            "options": [],
-            "tooltip": "Each subject has an assigned number. Ask Stefan Zott which number the subject has."
-        },
-        {
             "name": "RecordingTime",
             "type": "numeric",
             "options": [],

@@ -1,0 +1,3801 @@
+"""Streamlit UI for configuring and running cortipy sessions."""
+
+from __future__ import annotations
+
+import hashlib
+import contextlib
+import json
+import re
+import logging
+import sys
+import time
+from dataclasses import dataclass
+import html
+import math
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence, Tuple
+
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Circle, Rectangle, Polygon, FancyBboxPatch
+import streamlit as st
+try:
+    import plotly.graph_objects as go
+except Exception:  # pragma: no cover
+    go = None
+try:
+    from streamlit_plotly_events import plotly_events
+except Exception:  # pragma: no cover
+    plotly_events = None
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib  # type: ignore
+try:
+    import mne  # type: ignore
+except Exception:  # pragma: no cover
+    mne = None
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+LOG_PATH = ROOT / "streamlit_app.log"
+
+
+def _configure_logging() -> logging.Logger:
+    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+
+    file_attached = any(
+        isinstance(handler, logging.FileHandler)
+        and Path(getattr(handler, "baseFilename", "")).resolve() == LOG_PATH
+        for handler in root_logger.handlers
+    )
+    if not file_attached:
+        file_handler = logging.FileHandler(LOG_PATH, encoding="utf-8")
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+
+    stream_attached = any(isinstance(handler, logging.StreamHandler) for handler in root_logger.handlers)
+    if not stream_attached:
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(formatter)
+        root_logger.addHandler(stream_handler)
+
+    logger = logging.getLogger(__name__)
+
+    def _hook(exc_type, exc, tb):
+        logger.error("Unhandled exception in Streamlit app", exc_info=(exc_type, exc, tb))
+        return sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = _hook
+    return logger
+
+
+LOGGER = _configure_logging()
+
+
+def _tail_log(path: Path, n: int = 60) -> List[str]:
+    """Return the last ``n`` lines of the app log (empty list if unreadable)."""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace").splitlines()[-n:]
+    except Exception:
+        return []
+
+from cortipy import MeasurementPipeline  # noqa: E402
+from cortipy.core.pipeline import PipelineHooks  # noqa: E402
+from cortipy.devices import DeviceFactory, DeviceInterface  # noqa: E402
+from cortipy.shared.units import DEFAULT_SIGNAL_UNIT  # noqa: E402
+from cortipy.ui import SaveManager, normalize_params  # noqa: E402
+
+DEFAULT_SAVE_DIR = Path.cwd() / "cortipy_runs"
+SCHEMA_DIR = ROOT / "apps" / "assets" / "ParameterJSON"
+
+
+# Field schema + value coercion live in cortipy.ui_streamlit.fields (modularization).
+from cortipy.ui_streamlit.fields import (  # noqa: E402
+    FieldSchema,
+    default_values,
+    resolve_choice,
+    is_integer_field,
+    coerce_number,
+    convert_value,
+)
+
+
+from cortipy.ui_streamlit.plot_windows import (  # noqa: E402
+    render_matplotlib_window_launcher as _render_matplotlib_window_launcher,
+    render_plotly_window_launcher as _render_plotly_window_launcher,
+)
+from cortipy.ui_streamlit.data_import import (  # noqa: E402
+    load_edf_array as _load_edf_array,
+    load_npz_array as _load_npz_array,
+    load_parquet_array as _load_parquet_array,
+    load_uploaded_data_array as _load_uploaded_data_array,
+    params_from_jsonld_doc as _params_from_jsonld_doc_base,
+)
+from cortipy.ui_streamlit.live import (  # noqa: E402
+    DEFAULT_LIVE_PLOT,
+    DEFAULT_LIVE_SCALE,
+    LIVE_PLOT_TYPES,
+    LIVE_SCALE_OPTIONS,
+    LIVE_WINDOW_SECONDS,
+    LiveViewService,
+    resolve_live_scale,
+    _as_2d_array,
+    _normalize_channel_indices,
+    _plot_live_buffer,
+    _reset_plot_window_open_state,
+    _resolve_aux_channels,
+    _selected_recording_seconds,
+    run_live_preview,
+)
+from cortipy.ui_streamlit.electrodes import (  # noqa: E402
+    actichamp_channel_count as _actichamp_channel_count,
+    bump_channel_editor_revision as _bump_channel_editor_revision,
+    map_impedances_to_channels as _map_impedances_to_channels,
+    has_measured_impedance as _has_measured_impedance,
+    impedance_range_kohm as _impedance_range_kohm,
+)
+from cortipy.ui_streamlit.workflow import (  # noqa: E402
+    has_active_eeg_channels as _has_active_eeg_channels,
+)
+
+
+@dataclass(frozen=True)
+class SidebarControls:
+    default_save: str
+    active_dataset_dir: Optional[str]
+    simulate: bool
+    live_view_enabled: bool
+    live_view_window: int
+    start_button: bool
+
+
+def _load_schema_file(path: Path) -> tuple[str, List[FieldSchema]]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    (root_key, fields_raw), *_ = data.items()
+    fields = [
+        FieldSchema(
+            name=entry["name"],
+            kind=entry["type"],
+            options=[str(opt) for opt in entry.get("options", [])],
+            tooltip=entry.get("tooltip", "").strip(),
+        )
+        for entry in fields_raw
+    ]
+    return root_key, fields
+
+
+GENERAL_SCHEMA = _load_schema_file(SCHEMA_DIR / "GeneralParams.json")[1]
+METHOD_SCHEMAS: Dict[str, List[FieldSchema]] = {}
+for schema_path in SCHEMA_DIR.glob("*.json"):
+    if schema_path.name in {"GeneralParams.json", "electrodes.json"}:
+        continue
+    key, fields = _load_schema_file(schema_path)
+    METHOD_SCHEMAS[key] = fields
+
+ELECTRODE_LIBRARY: Dict[str, List[str]] = json.loads((SCHEMA_DIR / "electrodes.json").read_text(encoding="utf-8"))
+ELECTRODE_RUBRICS = list(ELECTRODE_LIBRARY.keys())
+ELECTRODE_MODELS = sorted({model for models in ELECTRODE_LIBRARY.values() for model in models})
+# Which category a model belongs to, so picking a model can correct the category for you.
+# "Other / not listed" appears under every rubric, so it maps to none of them.
+MODEL_TO_RUBRIK: Dict[str, str] = {}
+for _rubric, _models in ELECTRODE_LIBRARY.items():
+    for _model in _models:
+        MODEL_TO_RUBRIK.setdefault(_model, _rubric)
+for _shared in [m for m, r in list(MODEL_TO_RUBRIK.items())
+                if sum(m in models for models in ELECTRODE_LIBRARY.values()) > 1]:
+    MODEL_TO_RUBRIK.pop(_shared, None)
+
+
+def _valid_electrode_rubrik(value: Any) -> str:
+    rubric = resolve_choice(ELECTRODE_RUBRICS, value)
+    if rubric:
+        return str(rubric)
+    return ELECTRODE_RUBRICS[0] if ELECTRODE_RUBRICS else ""
+
+
+def _model_for_rubrik(rubrik: Any, current: Any = None) -> str:
+    """Resolve the model for a row, without discarding one we simply do not know.
+
+    A model that is not in the library is kept as-is: imported datasets and older exports
+    carry model names this build has never heard of, and silently rewriting them to the
+    first entry of the category would quietly falsify the recording's metadata.
+    """
+    rubric_key = _valid_electrode_rubrik(rubrik)
+    models = ELECTRODE_LIBRARY.get(rubric_key, [])
+    current_text = str(current or "").strip()
+    if current_text in models:
+        return current_text
+    if current_text and current_text not in ELECTRODE_MODELS:
+        return current_text  # unknown to us, but it is the operator's answer
+    if models:
+        return models[0]
+    return current_text or (ELECTRODE_MODELS[0] if ELECTRODE_MODELS else "")
+
+# Device / montage / field configuration lives in cortipy.ui_streamlit.constants (modularization).
+from cortipy.ui_streamlit.constants import (  # noqa: E402
+    DEVICE_CONFIG_SCHEMA,
+    DEVICE_DEFAULT_CHANNELS,
+    DEVICE_FIELD_ALIASES,
+    DEVICE_EXTRA_LABELS,
+    DEVICE_FS_OPTIONS,
+    DEVICE_POSITION_DEFAULTS,
+    HIDDEN_VIEWS,
+    IMPEDANCE_CAPABLE_DEVICES,
+    IMPEDANCE_POLL_SECONDS,
+    has_hardware_reference,
+    REQUIRED_DEVICE_FIELDS,
+    REQUIRED_METHOD_FREQUENCIES,
+    field_applies_to_device as _field_applies_to_device,
+    SUPPORTED_EXTRA_DEVICES,
+    VIEW_OPTIONS,
+    device_default_values,
+    normalize_position_label as _normalize_position_label,
+    STANDARD_POSITION_ORDER as _STANDARD_POSITION_ORDER,
+    POSITION_ANGLE_LOOKUP as _POSITION_ANGLE_LOOKUP,
+)
+
+APP_VIEW_OPTIONS = list(VIEW_OPTIONS)
+if "Workflow" not in APP_VIEW_OPTIONS:
+    APP_VIEW_OPTIONS.insert(0, "Workflow")
+
+# What the navigation actually offers. Hidden views keep their code and their render
+# branches; they are simply unreachable, so nothing can route the user into them.
+VISIBLE_VIEW_OPTIONS = [view for view in APP_VIEW_OPTIONS if view not in HIDDEN_VIEWS]
+DEFAULT_VIEW = VISIBLE_VIEW_OPTIONS[0] if VISIBLE_VIEW_OPTIONS else APP_VIEW_OPTIONS[0]
+
+# Bumped so sessions that had landed on a now-hidden page get moved off it.
+NAVIGATION_STATE_VERSION = "electrodes_in_session_config_v1"
+
+# Shown as the first option of Device/Method so they start genuinely unanswered and the
+# session form can reveal itself one step at a time.
+SELECT_PLACEHOLDER = "— Select —"
+
+
+def set_active_view(page: str) -> None:
+    # Hidden views are not navigable, so in-app links to them (e.g. the Workflow
+    # dashboard's shortcut buttons) become no-ops rather than dead ends.
+    if page not in VISIBLE_VIEW_OPTIONS:
+        return
+    st.session_state["active_view"] = page
+    st.session_state["active_view_selector"] = page
+
+
+def ensure_navigation_state() -> None:
+    if st.session_state.get("_navigation_state_version") != NAVIGATION_STATE_VERSION:
+        set_active_view(DEFAULT_VIEW)
+        st.session_state["_navigation_state_version"] = NAVIGATION_STATE_VERSION
+        return
+
+    selector_page = st.session_state.get("active_view_selector")
+    active_page = st.session_state.get("active_view")
+    if selector_page in VISIBLE_VIEW_OPTIONS:
+        st.session_state["active_view"] = selector_page
+    elif active_page in VISIBLE_VIEW_OPTIONS:
+        st.session_state["active_view_selector"] = active_page
+    else:
+        set_active_view(DEFAULT_VIEW)
+
+# 10-20 scalp coordinates + lookup live in cortipy.ui_streamlit.coords (first modularization step).
+from cortipy.ui_streamlit.coords import (  # noqa: E402
+    TEN_TWENTY_COORDS,
+    channel_default_coords as _channel_default_coords,
+)
+
+METHOD_FULL_NAMES: Dict[str, str] = {
+    "Alpha": "Alpha Relaxation",
+    "ASSR": "Auditory Steady-State Response",
+    "BCI": "SSVEP Brain-Computer Interface",
+    "BERA": "Brainstem Evoked Response Audiometry",
+    "P300": "Visual Oddball P300",
+    "SSVEP": "Steady-State Visual Evoked Potential",
+    "VEP": "Transient Visual Evoked Potential",
+}
+METHOD_DESCRIPTIONS: Dict[str, str] = {
+    "Alpha": "Eyes-closed relaxation run to monitor 8-12 Hz activity.",
+    "ASSR": "Amplitude-modulated tones to probe auditory entrainment.",
+    "BCI": "Frequency-coded checkerboards for real-time BCI control.",
+    "BERA": "Click trains capturing early brainstem responses.",
+    "P300": "Oddball stimuli evoking the P300 component.",
+    "SSVEP": "Continuous flicker to follow steady-state responses.",
+    "VEP": "Transient pattern reversal for latency tracking.",
+}
+
+PARTICIPANT_CARD_STYLE = """
+<style>
+:root {
+    --card-bg: linear-gradient(135deg, #f3f6ff 0%, #fff7f0 100%);
+    --card-border: #dbe2ef;
+    --card-shadow: rgba(15, 23, 42, 0.08);
+    --label-color: #6b7280;
+    --value-color: #111827;
+    --notes-color: #374151;
+    --divider-color: rgba(255, 255, 255, 0.6);
+}
+@media (prefers-color-scheme: dark) {
+    :root {
+        --card-bg: linear-gradient(135deg, #111827 0%, #0b1220 100%);
+        --card-border: #1f2937;
+        --card-shadow: rgba(0, 0, 0, 0.4);
+        --label-color: #9ca3af;
+        --value-color: #e5e7eb;
+        --notes-color: #cbd5e1;
+        --divider-color: rgba(255, 255, 255, 0.15);
+    }
+}
+.snapshot-panel {
+    background: var(--card-bg);
+    color: var(--value-color);
+    border: 1px solid var(--card-border);
+    border-radius: 12px;
+    padding: 0.95rem 1.05rem;
+    box-shadow: 0 3px 10px var(--card-shadow);
+}
+.snapshot-panel .title {
+    font-weight: 700;
+    margin-bottom: 0.35rem;
+}
+.snapshot-panel .desc {
+    color: var(--label-color);
+    margin-bottom: 0.55rem;
+}
+.snapshot-panel .line {
+    margin-bottom: 0.2rem;
+}
+.snapshot-panel .stats {
+    margin-top: 0.55rem;
+    color: var(--label-color);
+}
+.participant-card {
+    background: var(--card-bg);
+    border-radius: 16px;
+    border: 1px solid var(--card-border);
+    padding: 0.95rem 1.05rem;
+    box-shadow: 0 4px 12px var(--card-shadow);
+    margin-bottom: 0.75rem;
+}
+.participant-card .summary-head {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 0.45rem;
+    margin-bottom: 0.75rem;
+    font-weight: 700;
+    color: var(--value-color);
+}
+.participant-card .avatar {
+    font-size: 22px;
+    line-height: 1;
+}
+.participant-card .fields {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 0.9rem;
+    row-gap: 0.55rem;
+}
+.participant-card .field {
+    display: flex;
+    gap: 0.65rem;
+    margin-bottom: 0;
+    align-items: baseline;
+}
+.participant-card .field:last-child {
+    margin-bottom: 0;
+}
+.participant-card .icon {
+    font-size: 1.1rem;
+}
+.participant-card .label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--label-color);
+    margin-bottom: 0.12rem;
+}
+.participant-card .value {
+    font-size: 0.95rem;
+    color: var(--value-color);
+    font-weight: 600;
+}
+.participant-card .notes {
+    margin-top: 0.72rem;
+    font-size: 0.85rem;
+    color: var(--notes-color);
+    padding-top: 0.62rem;
+    border-top: 1px solid var(--divider-color);
+}
+</style>
+"""
+
+
+def _load_standard_xy() -> Dict[str, np.ndarray]:
+    if mne is None:
+        return {}
+    try:
+        montage = mne.channels.make_standard_montage("standard_1020")
+    except Exception:
+        return {}
+    ch_pos = montage.get_positions().get("ch_pos", {})
+    xy: Dict[str, np.ndarray] = {}
+    for name, coords in ch_pos.items():
+        xy[_normalize_position_label(name)] = np.asarray(coords[:2], dtype=float)
+    return xy
+
+
+_STANDARD_1020_XY = _load_standard_xy()
+if _STANDARD_1020_XY:
+    _STANDARD_XY_SCALE = 0.95 / max(float(np.linalg.norm(val)) for val in _STANDARD_1020_XY.values())
+else:
+    _STANDARD_XY_SCALE = 1.0
+
+PARTICIPANT_DEFAULT = {
+    "Code": "",
+    "Initials": "",
+    "Age": None,
+    "Gender": "Unspecified",
+    "Notes": "",
+}
+GENDER_OPTIONS = ["Unspecified", "Female", "Male", "Diverse"]
+
+
+def render_numeric_input(target, field: FieldSchema, current: Any, key: str):
+    as_number = coerce_number(current)
+    integer = is_integer_field(field.name)
+    default = (int(as_number) if as_number is not None else 0) if integer else (
+        float(as_number) if as_number is not None else 0.0
+    )
+    # The field owns its value via session_state instead of a value= default. Passing value=
+    # AND key= made the stepper briefly snap back to the stored default on a slow rerun (the
+    # "+/- jumps back" report). It is seeded once; loading a session / switching device pops
+    # this key (see load_params_into_state), so it re-seeds from the new value then.
+    existing = st.session_state.get(key)
+    if not isinstance(existing, (int, float)) or isinstance(existing, bool):
+        st.session_state[key] = default
+    if integer:
+        value = target.number_input(field.name, step=1, format="%d", help=field.tooltip or None, key=key)
+        return int(value)
+    value = target.number_input(field.name, step=0.1, format="%.3f", help=field.tooltip or None, key=key)
+    return float(value)
+
+
+
+def _params_from_jsonld_doc(doc: Dict[str, Any], file_name: str = "import.jsonld") -> Optional[Dict[str, Any]]:
+    return _params_from_jsonld_doc_base(
+        doc,
+        file_name,
+        method_names=METHOD_SCHEMAS.keys(),
+        electrode_library=ELECTRODE_LIBRARY,
+        default_method="Alpha" if "Alpha" in METHOD_SCHEMAS else next(iter(METHOD_SCHEMAS), ""),
+    )
+
+
+def _plot_topography(rows: List[Dict[str, Any]], placeholder: "st.delta_generator.DeltaGenerator") -> None:
+    if placeholder is None:
+        return
+    if not rows:
+        placeholder.info("No channels configured.")
+        return
+
+    labels = [row.get("Position") or row.get("Channel") or "" for row in rows]
+    impedances = [coerce_number(row.get("Impedance")) for row in rows]
+    total = len(labels)
+    angles = np.linspace(0, 2 * np.pi, max(total, 8), endpoint=False)
+
+    coords: List[tuple[str, float, float, Optional[float]]] = []
+    fallback_idx = 0
+    for idx, label in enumerate(labels):
+        clean = label.replace(" ", "")
+        custom_x = coerce_number(rows[idx].get("PosX"))
+        custom_y = coerce_number(rows[idx].get("PosY"))
+        xy = None
+        if custom_x is not None and custom_y is not None:
+            xy = (float(custom_x), float(custom_y))
+        if xy is None:
+            xy = TEN_TWENTY_COORDS.get(clean)
+        if xy is None:
+            angle = angles[fallback_idx % len(angles)]
+            xy = (0.8 * np.cos(angle), 0.8 * np.sin(angle))
+            fallback_idx += 1
+        coords.append((label or f"Ch {idx+1}", xy[0], xy[1], impedances[idx]))
+
+    fig, ax = plt.subplots(figsize=(5, 5))
+    head = plt.Circle((0, 0), 1.05, edgecolor="black", facecolor="none", linewidth=1.5)
+    ax.add_patch(head)
+    nose = np.array([[0.0, 1.05], [-0.08, 1.15], [0.08, 1.15]])
+    ax.plot(nose[:, 0], nose[:, 1], color="black", linewidth=1.2)
+    ax.plot([-1.05, -1.2, -1.05], [0.15, 0.0, -0.15], color="black", linewidth=1.0)
+    ax.plot([1.05, 1.2, 1.05], [0.15, 0.0, -0.15], color="black", linewidth=1.0)
+
+    impedance_values = [val for val in impedances if val is not None]
+    vmin, vmax = (min(impedance_values), max(impedance_values)) if impedance_values else (0.0, 1.0)
+    if vmax == vmin:
+        vmax = vmin + 1.0
+    cmap = plt.cm.plasma
+
+    for label, x, y, imp in coords:
+        color = "#2d6cdf"
+        if imp is not None:
+            norm = (float(imp) - vmin) / (vmax - vmin)
+            color = cmap(np.clip(norm, 0, 1))
+        ax.scatter(x, y, s=160, color=color, edgecolors="white", linewidth=1.0, zorder=3)
+        ax.text(x, y, label, ha="center", va="center", fontsize=8, color="white", weight="bold", zorder=4)
+
+    if impedance_values:
+        sm = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=vmin, vmax=vmax))
+        sm.set_array([])
+        cbar = fig.colorbar(sm, ax=ax, fraction=0.046, pad=0.02)
+        cbar.set_label("Impedance (kOhm)")
+
+    ax.set_xlim(-1.25, 1.25)
+    ax.set_ylim(-1.25, 1.25)
+    ax.axis("off")
+    ax.set_title("Scalp topography (positions + impedances)")
+    fig.tight_layout()
+    if hasattr(placeholder, "container"):
+        plotly_fig = _plotly_topography(rows)
+        if plotly_fig is not None:
+            _render_plotly_window_launcher(
+                plotly_fig,
+                "Scalp topography",
+                "scalp_topography",
+                target=placeholder,
+                button_label="Open scalp map",
+            )
+        else:
+            _render_matplotlib_window_launcher(
+                fig,
+                "Scalp topography",
+                "scalp_topography",
+                target=placeholder,
+                button_label="Open scalp map",
+            )
+    else:
+        placeholder.pyplot(fig)
+    plt.close(fig)
+
+
+def _plotly_topography(rows: List[Dict[str, Any]]) -> Optional["go.Figure"]:
+    if go is None:
+        return None
+    labels = [row.get("Position") or row.get("Channel") or "" for row in rows]
+    impedances = [coerce_number(row.get("Impedance")) for row in rows]
+    xs: List[float] = []
+    ys: List[float] = []
+    texts: List[str] = []
+    colors: List[float] = []
+    for idx, label in enumerate(labels):
+        clean = label.replace(" ", "")
+        custom_x = coerce_number(rows[idx].get("PosX"))
+        custom_y = coerce_number(rows[idx].get("PosY"))
+        xy = None
+        if custom_x is not None and custom_y is not None:
+            xy = (float(custom_x), float(custom_y))
+        if xy is None:
+            xy = TEN_TWENTY_COORDS.get(clean, (0.0, 0.0))
+        xs.append(xy[0])
+        ys.append(xy[1])
+        texts.append(f"{label}<br>Imp: {impedances[idx] if impedances[idx] is not None else 'N/A'} kOhm")
+        colors.append(impedances[idx] if impedances[idx] is not None else 0.0)
+
+    scatter = go.Scatter(
+        x=xs,
+        y=ys,
+        mode="markers+text",
+        text=[row.get("Channel") or f"Ch {i+1}" for i, row in enumerate(rows)],
+        textposition="middle center",
+        marker=dict(
+            size=18,
+            color=colors,
+            colorscale="Plasma",
+            showscale=True,
+            colorbar=dict(title="Imp (kOhm)"),
+            line=dict(color="white", width=1),
+        ),
+        hoverinfo="text",
+        hovertext=texts,
+    )
+
+    # Invisible dense grid to capture click positions everywhere inside the head.
+    grid_x = []
+    grid_y = []
+    for gx in np.linspace(-1.1, 1.1, 30):
+        for gy in np.linspace(-1.1, 1.1, 30):
+            if gx**2 + gy**2 <= 1.25**2:
+                grid_x.append(gx)
+                grid_y.append(gy)
+    grid = go.Scatter(
+        x=grid_x,
+        y=grid_y,
+        mode="markers",
+        marker=dict(size=16, opacity=0.01, color="rgba(0,0,0,0.05)"),
+        hoverinfo="none",
+        showlegend=False,
+        name="click-target",
+    )
+
+    fig = go.Figure()
+    fig.add_trace(grid)
+    fig.add_trace(scatter)
+    fig.update_layout(
+        width=500,
+        height=500,
+        xaxis=dict(visible=False, range=[-1.3, 1.3]),
+        yaxis=dict(visible=False, range=[-1.3, 1.3]),
+        title="Drag or click to reposition a channel",
+        margin=dict(l=10, r=10, t=40, b=10),
+        clickmode="event+select",
+        dragmode="pan",
+    )
+    fig.update_xaxes(fixedrange=True)
+    fig.update_yaxes(fixedrange=True, scaleanchor="x", scaleratio=1)
+    fig.add_shape(type="circle", x0=-1.05, y0=-1.05, x1=1.05, y1=1.05, line=dict(color="black", width=2))
+    fig.add_shape(type="line", x0=-1.05, y0=0.15, x1=-1.2, y1=0.0, line=dict(color="black"))
+    fig.add_shape(type="line", x0=-1.2, y0=0.0, x1=-1.05, y1=-0.15, line=dict(color="black"))
+    fig.add_shape(type="line", x0=1.05, y0=0.15, x1=1.2, y1=0.0, line=dict(color="black"))
+    fig.add_shape(type="line", x0=1.2, y0=0.0, x1=1.05, y1=-0.15, line=dict(color="black"))
+    fig.add_shape(type="path", path="M -0.08 1.05 L 0 1.15 L 0.08 1.05", line=dict(color="black", width=2))
+    return fig
+
+
+# The sidebar's single run-mode selector; kept as constants so load_params_into_state and
+# render_sidebar_controls agree on the exact labels.
+RUN_MODE_LIVE = "Live device"
+RUN_MODE_SIM = "Simulate (no hardware)"
+RUN_MODE_REPLAY = "Replay imported file"
+
+
+def load_params_into_state(
+    params: Dict[str, Any],
+    data_override: Optional[np.ndarray] = None,
+    *,
+    enable_replay: bool = False,
+) -> None:
+    """Load params into the editor.
+
+    ``enable_replay`` switches the session into offline replay. It defaults to False:
+    loading a recording should let you reuse its settings and record again, which is not
+    possible while replay is on because replay disables the device connection.
+    """
+    general = st.session_state["general_form"]
+    method = params.get("Method") or general.get("Method") or "Alpha"
+    device = params.get("Device") or general.get("Device") or "LSL"
+    general["Method"] = method
+    general["Device"] = device
+
+    parameters = params.get("Parameters", {})
+    for field in GENERAL_SCHEMA:
+        if field.name in {"Method", "Device"}:
+            continue
+        if field.name in parameters:
+            general[field.name] = parameters[field.name]
+    if device.lower() == "unicorn":
+        general["fs"] = "250"
+
+    schema = METHOD_SCHEMAS.get(method, [])
+    method_state = st.session_state["method_forms"].setdefault(method, default_values(schema))
+    for field in schema:
+        if field.name in parameters:
+            method_state[field.name] = parameters[field.name]
+
+    if "device_forms" not in st.session_state:
+        st.session_state["device_forms"] = {name: device_default_values(name) for name in DEVICE_CONFIG_SCHEMA}
+    device_fields = DEVICE_CONFIG_SCHEMA.get(device, [])
+    if device_fields:
+        device_state = st.session_state["device_forms"].setdefault(device, device_default_values(device))
+        for field in device_fields:
+            value = parameters.get(field["name"]) or params.get(field["name"])
+            if value in (None, "", []):
+                for alias in field.get("aliases", []):
+                    alias_value = parameters.get(alias) or params.get(alias)
+                    if alias_value not in (None, "", []):
+                        value = alias_value
+                        break
+            if value not in (None, "", []):
+                device_state[field["name"]] = value
+
+    # GND/Ref are stored outside "Channels" (they hold no data column) but they are rows in
+    # the electrode table and carry impedances. Restore them too, or a loaded session comes
+    # back with the ground/reference impedance blanked out.
+    imported_channels = list(params.get("Channels") or []) + list(params.get("ReferenceElectrodes") or [])
+    if imported_channels:
+        imported_rows = []
+        for ch in imported_channels:
+            channel_name = ch.get("Channel") or ch.get("Label") or ch.get("name")
+            if not channel_name:
+                continue
+            rubric = _valid_electrode_rubrik(ch.get("Rubrik") or ch.get("Rubric"))
+            imported_rows.append(
+                {
+                    "Channel": channel_name,
+                    "Position": ch.get("Position") or channel_name.replace(" ", ""),
+                    "Rubrik": rubric,
+                    "Model": _model_for_rubrik(rubric, ch.get("Model")),
+                    "Impedance": coerce_number(ch.get("Impedance")) or 0.0,
+                    "PosX": coerce_number(ch.get("PosX")),
+                    "PosY": coerce_number(ch.get("PosY")),
+                    "Active": bool(ch.get("Active", True)),
+                }
+            )
+        st.session_state["channel_tables"][device] = ensure_channel_rows(device, imported_rows)
+
+    metadata = params.get("Metadata") or {}
+    participant_meta = metadata.get("Participant")
+    if participant_meta:
+        st.session_state["participant"].update(participant_meta)
+
+    # The loaded values live in the backing dicts above. Clear the stale *widget* state so the
+    # widgets re-initialise from those dicts on the next run: Streamlit ignores value=/index=
+    # once a keyed widget has been instantiated, so without this import/load silently no-ops.
+    for f in GENERAL_SCHEMA:
+        st.session_state.pop(f"general_{f.name}", None)
+    for f in METHOD_SCHEMAS.get(method, []):
+        st.session_state.pop(f"{method}_{f.name}", None)
+    for f in DEVICE_CONFIG_SCHEMA.get(device, []):
+        st.session_state.pop(f"device_{device}_{f['name']}", None)
+        st.session_state.pop(f"device_{device}_{f['name']}_manual", None)
+    # The Electrodes-page reference selector uses a fixed key; without clearing it, a stale
+    # on-screen value would write itself back over the just-loaded ReferenceChannel.
+    st.session_state.pop(f"ref_electrode_{device}", None)
+    for key in (
+        "participant_Code",
+        "participant_Initials",
+        "participant_Age",
+        "participant_Gender",
+        "participant_Notes",
+    ):
+        st.session_state.pop(key, None)
+    _bump_channel_editor_revision(device)
+
+    data_array = data_override
+    if data_array is None and params.get("data") is not None:
+        data_array = np.asarray(params["data"])
+    st.session_state["imported_data"] = data_array
+    # Keep the samples around for the charts, but only switch into offline replay when the
+    # caller asked for it. Auto-enabling it disabled "Connect device", so loading a
+    # recording to reuse its settings made it impossible to record again.
+    st.session_state["use_imported_data"] = bool(enable_replay) and data_array is not None
+    st.session_state["imported_params_raw"] = params
+    # Keep the sidebar's run-mode selector in step with a load, but do NOT write the radio's
+    # own key here: this runs from the uploader too, AFTER the radio is instantiated, and
+    # Streamlit forbids mutating a widget key post-instantiation (it crashed the whole page).
+    # Instead record a pending choice that render_sidebar_controls applies BEFORE the radio.
+    if st.session_state["use_imported_data"]:
+        st.session_state["_pending_run_mode"] = RUN_MODE_REPLAY
+    elif st.session_state.get("run_mode_choice") == RUN_MODE_REPLAY:
+        st.session_state["_pending_run_mode"] = RUN_MODE_LIVE
+
+
+def ensure_state() -> None:
+    if "general_form" not in st.session_state:
+        st.session_state["general_form"] = default_values(GENERAL_SCHEMA)
+        # Start Device and Method genuinely unanswered. default_values() picks each
+        # dropdown's first option, which made the form look already filled in and left no
+        # room to reveal the rest of it step by step.
+        st.session_state["general_form"]["Device"] = ""
+        st.session_state["general_form"]["Method"] = ""
+    if "method_forms" not in st.session_state:
+        st.session_state["method_forms"] = {name: default_values(fields) for name, fields in METHOD_SCHEMAS.items()}
+    if "device_forms" not in st.session_state:
+        st.session_state["device_forms"] = {device: device_default_values(device) for device in DEVICE_CONFIG_SCHEMA}
+    if "participant" not in st.session_state:
+        st.session_state["participant"] = dict(PARTICIPANT_DEFAULT)
+    if "channel_tables" not in st.session_state:
+        st.session_state["channel_tables"] = {}
+    if "imported_data" not in st.session_state:
+        st.session_state["imported_data"] = None
+    if "imported_params_raw" not in st.session_state:
+        st.session_state["imported_params_raw"] = None
+    if "use_imported_data" not in st.session_state:
+        st.session_state["use_imported_data"] = False
+    if "_last_device_selection" not in st.session_state:
+        st.session_state["_last_device_selection"] = None
+    if "_actichamp_impedance_loaded" not in st.session_state:
+        st.session_state["_actichamp_impedance_loaded"] = False
+    if "_actichamp_impedance_timestamp" not in st.session_state:
+        st.session_state["_actichamp_impedance_timestamp"] = None
+    if "_actichamp_impedance_status" not in st.session_state:
+        st.session_state["_actichamp_impedance_status"] = None
+    if "_live_view_active" not in st.session_state:
+        st.session_state["_live_view_active"] = False
+    if "_channel_editor_revision" not in st.session_state:
+        st.session_state["_channel_editor_revision"] = {}
+    if "active_dataset_dir" not in st.session_state:
+        st.session_state["active_dataset_dir"] = ""
+
+
+def get_live_view_placeholder():
+    placeholder = st.session_state.get("_live_view_placeholder")
+    if placeholder is None:
+        placeholder = st.empty()
+        st.session_state["_live_view_placeholder"] = placeholder
+    return placeholder
+
+
+def _fetch_actichamp_impedances(
+    fs_value: Any,
+    *,
+    force: bool = False,
+    quiet: bool = False,
+    wait_seconds: float = 7.0,
+    settle_seconds: float = 1.5,
+) -> None:
+    if st.session_state.get("_actichamp_impedance_loaded") and not force:
+        return
+
+    fs = coerce_number(fs_value)
+    if fs is None or fs <= 0:
+        st.session_state["_actichamp_impedance_status"] = "Set a valid sampling rate (fs) to read ActiCHamp impedances."
+        return
+
+    channel_tables = st.session_state.setdefault("channel_tables", {})
+    rows = ensure_channel_rows("ActiCHamp", channel_tables.get("ActiCHamp"))
+    channel_tables["ActiCHamp"] = rows
+    channel_count = _actichamp_channel_count(rows)
+
+    params = {
+        "Device": "ActiCHamp",
+        "Parameters": {"fs": float(fs), "NumberEEGChannels": channel_count},
+    }
+
+    LOGGER.info("Attempting ActiCHamp impedance read (fs=%s, channels=%s)", fs, channel_count)
+    values: List[float] = []
+
+    # Prefer the already-connected device: reading impedances through it reuses its running
+    # producer and mapped shared memory. Spinning up a throwaway producer here fought the
+    # connected one for the single 'EEG_SharedMemory' block and timed out ("Unable to map ...").
+    connected = st.session_state.get("_connected_device")
+    reuse_connected = connected is not None and callable(getattr(connected, "read_impedances", None))
+
+    try:
+        with (contextlib.nullcontext() if quiet else st.spinner("Checking ActiCHamp impedances...")):
+            if reuse_connected:
+                values = connected.read_impedances(wait_seconds=wait_seconds, settle_seconds=settle_seconds)
+            else:
+                device = DeviceFactory.create(params)
+                try:
+                    reader = getattr(device, "read_impedances", None)
+                    values = (
+                        reader(wait_seconds=wait_seconds, settle_seconds=settle_seconds)
+                        if callable(reader)
+                        else []
+                    )
+                finally:
+                    device.disconnect()
+    except Exception as exc:  # pragma: no cover
+        LOGGER.exception("ActiCHamp impedance read failed")
+        if not quiet:
+            st.warning(f"ActiCHamp impedance read failed: {exc}")
+        st.session_state["_actichamp_impedance_status"] = f"ActiCHamp impedance read failed: {exc}"
+        return
+
+    if not values:
+        LOGGER.warning("ActiCHamp impedance read returned no values.")
+        st.session_state["_actichamp_impedance_status"] = "ActiCHamp impedance read returned no values."
+        return
+
+    if not _has_measured_impedance(values):
+        LOGGER.warning("ActiCHamp impedance read returned only zero or unavailable values: %s", values)
+        st.session_state["_actichamp_impedance_status"] = (
+            "ActiCHamp impedance read returned only zero/unavailable values. "
+            "Check that the producer is in impedance mode and electrodes are connected."
+        )
+        return
+
+    LOGGER.info("Loaded %d ActiCHamp impedance values", len(values))
+    channel_tables["ActiCHamp"] = _map_impedances_to_channels(rows, values)
+    _bump_channel_editor_revision("ActiCHamp")
+    st.session_state["_actichamp_impedance_loaded"] = True
+    range_kohm = _impedance_range_kohm(values)
+    if range_kohm is None:
+        st.session_state["_actichamp_impedance_status"] = f"Loaded {len(values)} impedance values."
+    else:
+        low, high = range_kohm
+        st.session_state["_actichamp_impedance_status"] = (
+            f"Loaded {len(values)} impedance values ({low:.1f}-{high:.1f} kOhm)."
+        )
+    st.session_state["_actichamp_impedance_timestamp"] = time.time()
+
+
+# --- Live impedance monitoring -------------------------------------------------------
+# A one-shot read (above) switches the amplifier into impedance mode, waits for a settled
+# sweep and leaves the mode again — seconds per call. To keep the Impedance column of the
+# electrode table current the device is instead held in impedance mode and polled; the
+# table itself is rendered inside a fragment so that refresh reruns only the table and not
+# the whole page.
+_IMPEDANCE_MONITOR_KEY = "_impedance_monitor"
+
+
+def _impedance_monitor_device(fs_value: Any) -> Optional[Any]:
+    """The device the live readout polls, created once and kept in session state.
+
+    The already-connected device is preferred: a second producer would fight the connected
+    one over the single 'EEG_SharedMemory' block.
+    """
+    connected = st.session_state.get("_connected_device")
+    if connected is not None and callable(getattr(connected, "poll_impedances", None)):
+        return connected
+
+    monitor = st.session_state.get(_IMPEDANCE_MONITOR_KEY)
+    if monitor is not None:
+        return monitor
+
+    fs = coerce_number(fs_value)
+    tables = st.session_state.get("channel_tables", {})
+    rows = ensure_channel_rows("ActiCHamp", tables.get("ActiCHamp"))
+    params = {
+        "Device": "ActiCHamp",
+        "Parameters": {
+            "fs": float(fs) if fs and fs > 0 else 500.0,
+            "NumberEEGChannels": _actichamp_channel_count(rows),
+        },
+    }
+    try:
+        monitor = DeviceFactory.create(params)
+    except Exception as exc:  # pragma: no cover - hardware/SDK specific
+        LOGGER.exception("Could not create an ActiCHamp impedance monitor")
+        st.session_state["_actichamp_impedance_status"] = f"Live impedance unavailable: {exc}"
+        return None
+    st.session_state[_IMPEDANCE_MONITOR_KEY] = monitor
+    return monitor
+
+
+def stop_impedance_monitor() -> None:
+    """Leave impedance mode on every device that might still be in it.
+
+    Impedance mode and acquisition are mutually exclusive on the amplifier, so this runs
+    before connecting or starting a run, and whenever the column stops being measured
+    (Simulate run, a device that cannot measure it).
+    """
+    connected = st.session_state.get("_connected_device")
+    monitor = st.session_state.pop(_IMPEDANCE_MONITOR_KEY, None)
+    for device in (connected, monitor):
+        stop = getattr(device, "stop_impedance_mode", None)
+        if callable(stop):
+            try:
+                stop()
+            except Exception:  # pragma: no cover - hardware/SDK specific
+                LOGGER.exception("Leaving ActiCHamp impedance mode failed")
+    if monitor is not None and monitor is not connected:
+        try:
+            monitor.disconnect()
+        except Exception:  # pragma: no cover - hardware/SDK specific
+            LOGGER.debug("Disconnecting the impedance monitor raised", exc_info=True)
+    st.session_state["_impedance_monitor_started"] = False
+    # Connecting or switching device is the natural moment to try again.
+    st.session_state["_impedance_monitor_failed"] = False
+
+
+def _poll_live_impedances(device: str, fs_value: Any) -> Optional[List[float]]:
+    """One non-blocking read, written onto the electrode rows. ``None`` if unavailable."""
+    if st.session_state.get("_impedance_monitor_failed"):
+        # One failure per session is enough: without this the fragment would retry (and log)
+        # every single second for as long as the page is open.
+        return None
+    monitor = _impedance_monitor_device(fs_value)
+    if monitor is None:
+        st.session_state["_impedance_monitor_failed"] = True
+        return None
+    try:
+        if not st.session_state.get("_impedance_monitor_started"):
+            monitor.start_impedance_mode()
+            st.session_state["_impedance_monitor_started"] = True
+        values = list(monitor.poll_impedances() or [])
+    except Exception as exc:  # pragma: no cover - hardware/SDK specific
+        LOGGER.exception("Live impedance poll failed")
+        st.session_state["_actichamp_impedance_status"] = f"Live impedance read failed: {exc}"
+        st.session_state["_impedance_monitor_started"] = False
+        st.session_state["_impedance_monitor_failed"] = True
+        return None
+
+    if not values:
+        return []
+
+    channel_tables = st.session_state.setdefault("channel_tables", {})
+    rows = ensure_channel_rows(device, channel_tables.get(device))
+    # Only the Impedance column is touched, so a position or model being edited in the
+    # table at this very moment is left exactly as the operator typed it.
+    channel_tables[device] = _map_impedances_to_channels(rows, values)
+    st.session_state["_actichamp_impedance_timestamp"] = time.time()
+    if _has_measured_impedance(values):
+        st.session_state["_actichamp_impedance_loaded"] = True
+    return values
+
+
+def _position_angle(label: str, fallback_idx: int) -> float:
+    total = len(_STANDARD_POSITION_ORDER) or 1
+    key = _normalize_position_label(label)
+    idx = _POSITION_ANGLE_LOOKUP.get(key)
+    if idx is None:
+        idx = fallback_idx % total
+    return 2 * math.pi * (idx / total)
+
+
+def _safe_channel_coords(label: str, fallback_idx: int = 0) -> tuple[float, float]:
+    pos_x, pos_y = _channel_default_coords(label)
+    if pos_x is not None and pos_y is not None:
+        return float(pos_x), float(pos_y)
+    angle = _position_angle(label, fallback_idx)
+    return float(0.8 * math.cos(angle)), float(0.8 * math.sin(angle))
+
+
+def render_config_snapshot(method: str, device: str, general: Dict[str, Any]) -> None:
+    device_selected = bool(device)
+    method = method or "N/A"
+    device = device or "N/A"
+    full_name = METHOD_FULL_NAMES.get(method)
+    desc = METHOD_DESCRIPTIONS.get(method)
+    params_block = general if "Parameters" not in general else general.get("Parameters", {})
+    fs_value = coerce_number(params_block.get("fs") or general.get("fs"))
+    channels = coerce_number(params_block.get("NumberEEGChannels") or general.get("NumberEEGChannels"))
+    duration = coerce_number(params_block.get("RecordingTime") or general.get("RecordingTime"))
+
+    method_label = f"{method} - {full_name}" if full_name else method
+    # fs carries the schema's first dropdown option, so the summary reported "100 Hz" before
+    # a device was even chosen — and the supported rates depend on the device anyway.
+    fs_txt = f"{fs_value} Hz" if (device_selected and fs_value is not None) else "N/A"
+    ch_txt = f"{int(channels)}" if channels else "N/A"
+    dur_txt = f"{duration} s" if duration else "N/A"
+
+    # Emit with no leading whitespace and no blank lines. When there is no method (and so
+    # no description) the old dedented block left an empty line followed by indented HTML,
+    # which markdown renders as a *code block* — the tags showed up as literal text.
+    parts = [
+        '<div class="snapshot-panel">',
+        f'<div class="title">Method: {html.escape(method_label)}</div>',
+    ]
+    if desc:
+        parts.append(f'<div class="desc">{html.escape(desc)}</div>')
+    parts.append(f'<div class="line"><strong>Device:</strong> {html.escape(device)}</div>')
+    parts.append(
+        f'<div class="stats">fs: {fs_txt}<br>Channels: {ch_txt}<br>Recording time: {dur_txt}</div>'
+    )
+    parts.append("</div>")
+    st.markdown("".join(parts), unsafe_allow_html=True)
+
+
+def _electrode_map_figure(device: str, rows: List[Dict[str, Any]]) -> plt.Figure:
+    fig, ax = plt.subplots(figsize=(6.2, 6.2))
+    ax.set_aspect("equal")
+    ax.axis("off")
+    head_radius = 1.05
+    ax.set_facecolor("#fbfbfd")
+    ax.add_patch(Circle((0, 0), head_radius, facecolor="#f8fafc", edgecolor="#90a4ae", linewidth=1.2))
+    ax.add_patch(Circle((0, 0), 0.35, fill=False, linestyle="--", linewidth=1.0, edgecolor="#b0bec5"))
+    ax.add_patch(
+        Polygon(
+            [(0.0, head_radius), (0.08, head_radius + 0.18), (-0.08, head_radius + 0.18)],
+            closed=True,
+            facecolor="#ffe0b2",
+            edgecolor="#fb8c00",
+            linewidth=1.0,
+        )
+    )
+    ax.add_patch(Rectangle((-head_radius - 0.03, -0.25), 0.12, 0.5, facecolor="#f5f5f5", edgecolor="#b0bec5", linewidth=1.0))
+    ax.add_patch(Rectangle((head_radius - 0.09, -0.25), 0.12, 0.5, facecolor="#f5f5f5", edgecolor="#b0bec5", linewidth=1.0))
+
+    extras = {name.lower() for name in DEVICE_EXTRA_LABELS.get(device, [])}
+    box_width, box_height = 0.22, 0.14
+    for idx, row in enumerate(rows):
+        position_label = row.get("Position") or row.get("Channel") or f"Ch {idx + 1}"
+        normalized = _normalize_position_label(position_label)
+        coords = _STANDARD_1020_XY.get(normalized)
+        if coords is not None:
+            x = float(coords[0]) * _STANDARD_XY_SCALE
+            y = float(coords[1]) * _STANDARD_XY_SCALE
+        else:
+            angle = _position_angle(position_label, idx)
+            radius = 0.85 if row.get("Active") else 0.65
+            x = radius * math.cos(angle)
+            y = radius * math.sin(angle)
+        ch_label = row.get("Channel") or position_label
+        lower_name = str(ch_label).lower()
+        is_active = bool(row.get("Active"))
+        is_reference = "ref" in lower_name
+        is_ground = "gnd" in lower_name or "ground" in lower_name
+        if is_reference:
+            fill_color = "#1e88e5"
+        elif is_ground:
+            fill_color = "#263238"
+        elif is_active or lower_name in extras:
+            fill_color = "#43a047"
+        else:
+            fill_color = "#ffd54f"
+        edge_color = "#0f172a" if is_reference or is_ground else "#37474f"
+        rect = FancyBboxPatch(
+            (x - box_width / 2, y - box_height / 2),
+            box_width,
+            box_height,
+            facecolor=fill_color,
+            edgecolor=edge_color,
+            linewidth=3,
+            boxstyle="round,pad=0.02,rounding_size=0.04",
+            zorder=3,
+        )
+        ax.add_patch(rect)
+        ax.text(
+            x,
+            y + box_height * 0.15,
+            position_label,
+            ha="center",
+            va="center",
+            fontsize=9,
+            color="white" if fill_color in {"#1e88e5", "#263238", "#43a047"} else "#1f2937",
+            weight="bold",
+            zorder=4,
+        )
+        ax.text(
+            x,
+            y - box_height * 0.25,
+            f"{idx + 1}",
+            ha="center",
+            va="center",
+            fontsize=7.5,
+            color="white" if fill_color in {"#1e88e5", "#263238"} else "#424242",
+            zorder=4,
+        )
+    ax.set_xlim(-1.35, 1.35)
+    ax.set_ylim(-1.35, 1.35)
+    ax.set_title(f"{device} electrode map", fontsize=12)
+    return fig
+
+
+def _render_participant_card(participant: Dict[str, Any]) -> None:
+    st.markdown(PARTICIPANT_CARD_STYLE, unsafe_allow_html=True)
+    info_rows = [
+        ("Code", participant.get("Code") or "N/A"),
+        ("Initials", participant.get("Initials") or "N/A"),
+        ("Age", participant.get("Age") or "N/A"),
+        ("Gender", participant.get("Gender") or "N/A"),
+    ]
+    info_html = "".join(
+        f"<div class='field'><div><div class='label'>{label}</div>"
+        f"<div class='value'>{html.escape(str(value))}</div></div></div>"
+        for label, value in info_rows
+    )
+    notes_text = str(participant.get("Notes") or "").strip()
+    notes_html = ""
+    if notes_text:
+        notes_html = f"<div class='notes'>Notes: {html.escape(notes_text)}</div>"
+    card_html = (
+        f"<div class='participant-card'><div class='summary-head'><span class='avatar'>&#9786;</span>"
+        f"<span>Participant summary</span></div>"
+        f"<div class='fields'>{info_html}</div>{notes_html}</div>"
+    )
+    st.markdown(card_html, unsafe_allow_html=True)
+
+
+def _remember_device_selection(device: str) -> None:
+    """Drop cached impedance readings when the device changes; they belong to the old one."""
+    if device == st.session_state.get("_last_device_selection"):
+        return
+    st.session_state["_last_device_selection"] = device
+    st.session_state["_actichamp_impedance_loaded"] = False
+    st.session_state["_actichamp_impedance_status"] = None
+    st.session_state["_actichamp_impedance_timestamp"] = None
+
+
+def _selectbox_with_placeholder(target, label: str, options: List[str], current: Any, key: str, help_text: Any = None) -> str:
+    """A selectbox that starts genuinely unset, returning "" until the user chooses.
+
+    Streamlit selectboxes otherwise default to their first option, so "Device" and "Method"
+    would already look answered and the form could not reveal itself step by step.
+    """
+    choices = [SELECT_PLACEHOLDER] + list(options)
+    current_text = str(current) if current not in (None, "") else SELECT_PLACEHOLDER
+    index = choices.index(current_text) if current_text in choices else 0
+    picked = target.selectbox(label, options=choices, index=index, help=help_text, key=key)
+    return "" if picked == SELECT_PLACEHOLDER else str(picked)
+
+
+def _render_general_field(target, field, general: Dict[str, Any], device: str) -> None:
+    """Render one GeneralParams field into `target` and store its value."""
+    key = f"general_{field.name}"
+    current = general.get(field.name)
+
+    if field.name == "fs" and device.lower() == "unicorn":
+        locked_value = "250"
+        if st.session_state.get(key) != locked_value:
+            st.session_state[key] = locked_value
+        options = [locked_value] + [opt for opt in (field.options or []) if opt != locked_value]
+        value = target.selectbox(
+            field.name, options=options, index=options.index(locked_value),
+            help="UNICORN sampling rate is fixed to 250 Hz.", key=key, disabled=True,
+        )
+    elif field.name == "fs":
+        options = DEVICE_FS_OPTIONS.get(device, field.options or [""]) or [""]
+        if st.session_state.get(key) not in options:
+            st.session_state.pop(key, None)  # previous device's rate may be unavailable here
+        resolved = resolve_choice(options, current)
+        fs_help = field.tooltip or None
+        if device == "ActiCHamp":
+            fs_help = (
+                "ActiCHamp-supported rates. An unsupported rate is clamped by the hardware "
+                "and makes the recording run longer than RecordingTime."
+            )
+        value = target.selectbox(
+            field.name, options=options, index=options.index(resolved), help=fs_help, key=key
+        )
+    elif field.kind == "dropdown":
+        options = field.options or [""]
+        resolved = resolve_choice(options, current)
+        value = target.selectbox(
+            field.name, options=options, index=options.index(resolved),
+            help=field.tooltip or None, key=key,
+        )
+    elif field.kind == "numeric":
+        value = render_numeric_input(target, field, current, key)
+    else:
+        value = target.text_input(field.name, value=current or "", help=field.tooltip or None, key=key)
+
+    general[field.name] = value
+
+
+def _render_general_fields(container, names: Sequence[str], general: Dict[str, Any], device: str) -> None:
+    fields = [f for f in GENERAL_SCHEMA if f.name in set(names)]
+    if not fields:
+        return
+    ncols = 3 if len(fields) > 4 else 2
+    cols = container.columns(ncols)
+    for idx, field in enumerate(fields):
+        _render_general_field(cols[idx % ncols], field, general, device)
+
+
+# ----------------------------------------------------------------------------------
+# Staged session configuration
+# ----------------------------------------------------------------------------------
+# Which GeneralParams fields belong to which step.
+ACQUISITION_FIELDS = ("fs", "RecordingTime")
+# The subject is identified once, by the participant code on the participant form — a
+# second numeric TestSubjectNo here only invited the two to disagree.
+SESSION_DETAIL_FIELDS = ("Filename", "Environment", "AddInfos", "RepeatMeas")
+
+CONFIG_STEPS = (
+    "Device",
+    "Connection",
+    "Method",
+    "Acquisition",
+    "Channels",
+    "Session details",
+)
+
+
+def _is_simulating() -> bool:
+    return bool(st.session_state.get("simulate_run_toggle", False))
+
+
+def _device_connection_ready(device: str, device_values: Dict[str, Any]) -> bool:
+    """True when the device has everything it needs to be addressed.
+
+    Simulated runs never touch the hardware, so a missing port must not wall off the
+    rest of the form.
+    """
+    required = REQUIRED_DEVICE_FIELDS.get(device, ())
+    if not required or _is_simulating():
+        return True
+    return all(str(device_values.get(name) or "").strip() for name in required)
+
+
+def _step_status(general: Dict[str, Any], device_values: Dict[str, Any], method_values: Dict[str, Any]) -> Dict[str, bool]:
+    """Which steps are satisfied. A step is revealed once every earlier step is done."""
+    device = str(general.get("Device") or "")
+    method = str(general.get("Method") or "")
+    fs = coerce_number(general.get("fs"))
+    duration = coerce_number(general.get("RecordingTime"))
+    channels = coerce_number(method_values.get("NumberEEGChannels"))
+    return {
+        "Device": bool(device),
+        "Connection": bool(device) and _device_connection_ready(device, device_values),
+        "Method": bool(method),
+        "Acquisition": bool(fs) and bool(duration and duration > 0),
+        "Channels": bool(channels and channels > 0),
+        "Session details": True,  # optional metadata; never blocks
+    }
+
+
+def _first_incomplete(status: Dict[str, bool]) -> Optional[str]:
+    for name in CONFIG_STEPS:
+        if not status.get(name):
+            return name
+    return None
+
+
+def config_step_status() -> Dict[str, bool]:
+    """Step completion for the staged form, read back from the stored editor state.
+
+    The top-of-page progress bar renders from this, so it cannot disagree with the form.
+    It used to keep its own checklist, which ticked "Sampling rate" and "Electrodes" before
+    a device had even been chosen — fs carries a schema default and the channel table is
+    pre-populated, so both were true by construction.
+    """
+    general = st.session_state.get("general_form", {}) or {}
+    device = str(general.get("Device") or "")
+    method = str(general.get("Method") or "")
+    device_values = (st.session_state.get("device_forms", {}) or {}).get(device, {}) or {}
+    method_values = (st.session_state.get("method_forms", {}) or {}).get(method, {}) or {}
+    return _step_status(general, device_values, method_values)
+
+
+def config_progress_steps() -> List[tuple]:
+    """(label, done) per configuration step, with everything past the first open one pending."""
+    status = config_step_status()
+    steps: List[tuple] = []
+    reached = True
+    for name in CONFIG_STEPS:
+        done = reached and status.get(name, False)
+        if not done:
+            reached = False
+        steps.append((name, done))
+    return steps
+
+
+def render_session_configuration() -> tuple[Dict[str, Any], Dict[str, Any], Dict[str, Any], Dict[str, Any]]:
+    """The Session configuration page, revealed one step at a time.
+
+    Each step appears only once every earlier step is satisfied, so the page never shows
+    fields the operator cannot meaningfully answer yet. Values for steps that are not yet
+    rendered keep their stored defaults, so nothing is lost by not showing them.
+    """
+    from cortipy.ui_streamlit.device_settings import render_device_config
+
+    general = st.session_state["general_form"]
+    method_field = next(f for f in GENERAL_SCHEMA if f.name == "Method")
+    device_field = next(f for f in GENERAL_SCHEMA if f.name == "Device")
+    method_options = method_field.options or sorted(METHOD_SCHEMAS.keys())
+    device_options = sorted(set((device_field.options or []) + SUPPORTED_EXTRA_DEVICES))
+
+    device_values: Dict[str, Any] = {}
+    method_values: Dict[str, Any] = {}
+    participant_values: Dict[str, Any] = dict(st.session_state.get("participant", {}))
+
+    def status() -> Dict[str, bool]:
+        return _step_status(general, device_values, method_values)
+
+    # --- Step 1: device -----------------------------------------------------------
+    with st.expander("Session configuration", expanded=True):
+        form_col, viz_col = st.columns((3, 2))
+
+        top = form_col.columns(3)
+        device = _selectbox_with_placeholder(
+            top[0], "Device", device_options, general.get("Device"), "general_Device",
+            device_field.tooltip or None,
+        )
+        general["Device"] = device
+        _remember_device_selection(device)
+
+        # --- Step 3: method (rendered next to the device, but gated behind it) -----
+        method = ""
+        if device:
+            method = _selectbox_with_placeholder(
+                top[1], "Method", method_options, general.get("Method"), "general_Method",
+                method_field.tooltip or None,
+            )
+            general["Method"] = method
+            full = METHOD_FULL_NAMES.get(method)
+            desc = METHOD_DESCRIPTIONS.get(method)
+            if full or desc:
+                top[1].caption(" - ".join(p for p in (full or "", desc or "") if p))
+
+        with viz_col:
+            _spacer, snap_col = viz_col.columns([1, 5])
+            with snap_col:
+                render_config_snapshot(general.get("Method", ""), general.get("Device", ""), general)
+
+        if not device:
+            form_col.info("**Step 1 — pick a device.** Everything else follows from it.")
+            return dict(general), method_values, device_values, participant_values
+
+    # --- Step 2: connection settings ---------------------------------------------
+    if REQUIRED_DEVICE_FIELDS.get(device) or device in DEVICE_CONFIG_SCHEMA:
+        device_values = render_device_config(device)
+    else:
+        device_values = dict(st.session_state.setdefault("device_forms", {}).get(device, {}))
+
+    if not status()["Connection"]:
+        missing = ", ".join(REQUIRED_DEVICE_FIELDS.get(device, ()))
+        st.info(f"**Step 2 — connect {device}.** Set {missing} (or turn on *Simulate run*) to continue.")
+        return dict(general), method_values, device_values, participant_values
+
+    if not method:
+        st.info(f"**Step 3 — pick a method.** {device} is ready; choose what you are measuring.")
+        return dict(general), method_values, device_values, participant_values
+
+    # --- Step 4: acquisition ------------------------------------------------------
+    with st.expander("Acquisition", expanded=True):
+        st.caption("Sampling rate and how long the recording runs.")
+        _render_general_fields(st.container(), ACQUISITION_FIELDS, general, device)
+
+    if not status()["Acquisition"]:
+        st.info("**Step 4 — set the sampling rate and a recording time above zero.**")
+        return dict(general), method_values, device_values, participant_values
+
+    # --- Step 5: channels + method parameters -------------------------------------
+    method_values = render_method_form(method)
+
+    if not status()["Channels"]:
+        st.info("**Step 5 — set NumberEEGChannels** so the montage and the reference can be resolved.")
+        return dict(general), method_values, device_values, participant_values
+
+    # --- Step 6: electrodes -------------------------------------------------------
+    # The montage lives here rather than on its own page: it needs the device and the
+    # channel count, both settled by now, and it is part of preparing the same session.
+    render_channel_editor(device, embedded=True)
+
+    # --- Step 7: session details + participant ------------------------------------
+    with st.expander("Session details", expanded=True):
+        st.caption("Optional metadata stored alongside the recording.")
+        _render_general_fields(st.container(), SESSION_DETAIL_FIELDS, general, device)
+    participant_values = render_participant_form()
+
+    return dict(general), method_values, device_values, participant_values
+
+
+def render_method_form(method: str) -> Dict[str, Any]:
+    schema = METHOD_SCHEMAS.get(method, [])
+    method_state = st.session_state["method_forms"].setdefault(method, default_values(schema))
+    if not schema:
+        st.info(f"No dedicated parameter schema found for {method}.")
+        return {}
+
+    device = st.session_state.get("general_form", {}).get("Device", "")
+    # Fields the selected hardware cannot honour are not shown. Their stored defaults still
+    # flow into the params, so nothing is dropped — the form just stops asking for values
+    # that have no meaning on this device.
+    visible_schema = [f for f in schema if _field_applies_to_device(f.name, device)]
+    hidden_count = len(schema) - len(visible_schema)
+
+    with st.expander(f"{method} parameters", expanded=True):
+        if hidden_count:
+            hidden_names = ", ".join(f.name for f in schema if f not in visible_schema)
+            st.caption(f"{hidden_count} field(s) hidden — not applicable to {device}: {hidden_names}.")
+        ncols = 3 if len(visible_schema) > 4 else 2  # denser grid for long method forms (less scrolling)
+        cols = st.columns(ncols)
+        for idx, field in enumerate(visible_schema):
+            target = cols[idx % ncols]
+            key = f"{method}_{field.name}"
+            current = method_state.get(field.name)
+            if field.name == "ReferenceChannel":
+                device = st.session_state.get("general_form", {}).get("Device", "")
+                if has_hardware_reference(device):
+                    # The reference is fixed in hardware; there is nothing to choose.
+                    target.text_input(
+                        "Reference",
+                        value=f"Fixed hardware reference ({device})",
+                        disabled=True,
+                        key=f"{key}_fixed",
+                        help=f"{device} references to its built-in electrode; no software "
+                             "re-reference is applied.",
+                    )
+                    value = None  # do not carry a ReferenceChannel for this device
+                else:
+                    ref_options, ref_labels = _reference_channel_options(device)
+                    if ref_options:
+                        current_ref = coerce_number(current)
+                        resolved_ref = int(current_ref) if current_ref in ref_options else ref_options[0]
+                        value = target.selectbox(
+                            "Reference: all EEG - selected channel",
+                            options=ref_options,
+                            index=ref_options.index(resolved_ref),
+                            format_func=lambda option: ref_labels.get(option, str(option)),
+                            help="During analysis, every EEG channel is referenced as EEG channel minus this selected channel.",
+                            key=key,
+                        )
+                    else:
+                        value = render_numeric_input(target, field, current, key)
+            elif field.kind == "dropdown":
+                options = field.options or [""]
+                resolved = resolve_choice(options, current)
+                value = target.selectbox(field.name, options=options, index=options.index(resolved), help=field.tooltip or None, key=key)
+            elif field.kind == "numeric":
+                value = render_numeric_input(target, field, current, key)
+            else:
+                value = target.text_input(field.name, value=current or "", help=field.tooltip or None, key=key)
+            method_state[field.name] = value
+
+        missing = missing_method_frequencies(method, method_state)
+        if missing:
+            st.warning(
+                "  ".join(missing)
+                + "  Leaving it at 0 makes the evaluator fall back to its own default, so the "
+                "results would describe a stimulus you never set."
+            )
+    return dict(method_state)
+
+
+def _electrode_model_options() -> List[str]:
+    """Every model in the library, category by category, in the order electrodes.json lists them.
+
+    One dropdown holds the lot. A data_editor column's options are fixed for the whole
+    column — Streamlit cannot make one column's options depend on another column's value
+    in the same row — so a per-row list filtered to that row's category is not possible.
+    Instead each entry carries its category in its label (see ``_electrode_model_label``),
+    which keeps the categories in blocks you scroll to, and picking one fills the
+    read-only Electrode type column in.
+
+    Models the library lists under more than one category (the "Other / not listed" escape
+    hatch) belong to none in particular, so they are collected once at the end.
+    """
+    grouped: List[str] = []
+    shared: List[str] = []
+    seen: set = set()
+    for rubric in ELECTRODE_RUBRICS:
+        for model in ELECTRODE_LIBRARY.get(rubric, []):
+            if model in seen:
+                continue
+            seen.add(model)
+            (grouped if model in MODEL_TO_RUBRIK else shared).append(model)
+    return grouped + shared
+
+
+def _electrode_model_label(model: str) -> str:
+    """How one model reads in the dropdown: "<category> · <model>" where it has one."""
+    rubric = MODEL_TO_RUBRIK.get(model)
+    return f"{rubric} · {model}" if rubric else str(model)
+
+
+def _sync_rubrik_to_model(row: Dict[str, Any]) -> None:
+    """Set the row's Electrode type from its model, and fill a model in if it has none.
+
+    The type is shown read-only in the table: the operator picks a model and the category
+    follows from electrodes.json. A model the library files under several categories (the
+    "Other / not listed" escape hatch) or one this build has never heard of leaves the
+    type as it stands, rather than guessing.
+    """
+    row["Rubrik"] = _valid_electrode_rubrik(row.get("Rubrik") or row.get("Rubric"))
+    model = str(row.get("Model") or "").strip()
+    if not model:
+        row["Model"] = _model_for_rubrik(row["Rubrik"])
+        return
+    row["Model"] = model
+    row["Rubrik"] = MODEL_TO_RUBRIK.get(model, row["Rubrik"])
+
+
+def _render_apply_all_electrodes(device: str, rows: List[Dict[str, Any]]) -> Optional[tuple[str, str]]:
+    """Optional convenience: stamp one electrode onto every channel at once.
+
+    Each channel picks its own model in the table; this is just a shortcut for the common
+    case of a uniform cap. It returns (rubric, model) *only* when Apply is clicked, so it
+    never overwrites per-channel choices on an ordinary rerun (which was the whole problem
+    with the previous cap-wide-only selector).
+    """
+    with st.expander("Set one electrode for all channels", expanded=False):
+        existing = next((r.get("Rubrik") for r in rows if r.get("Rubrik")), None)
+        current_rubric = _valid_electrode_rubrik(existing)
+        cols = st.columns([2, 2, 1], vertical_alignment="bottom")
+        rubric = cols[0].selectbox(
+            "Electrode type",
+            options=ELECTRODE_RUBRICS,
+            index=ELECTRODE_RUBRICS.index(current_rubric) if current_rubric in ELECTRODE_RUBRICS else 0,
+            key=f"capall_type_{device}",
+            help="The model list is filtered to this type.",
+        )
+        models = list(ELECTRODE_LIBRARY.get(rubric, [])) or [""]
+        model = cols[1].selectbox(
+            "Electrode model",
+            options=models,
+            index=0,
+            key=f"capall_model_{device}_{rubric}",
+        )
+        apply = cols[2].button("Apply to all", key=f"capall_apply_{device}", width="stretch")
+    if apply:
+        return rubric, str(model or "")
+    return None
+
+
+def _requested_eeg_channel_count(device: str) -> int:
+    """How many EEG channels the session is recording (NumberEEGChannels, capped to montage)."""
+    rows = ensure_channel_rows(device, st.session_state["channel_tables"].get(device))
+    extras = set(DEVICE_EXTRA_LABELS.get(device, []))
+    eeg_rows = [row for row in rows if row.get("Channel") not in extras]
+    method = str(st.session_state.get("general_form", {}).get("Method") or "")
+    method_state = st.session_state.get("method_forms", {}).get(method, {}) if method else {}
+    requested = coerce_number(method_state.get("NumberEEGChannels"))
+    count = int(requested) if requested and requested > 0 else len(eeg_rows)
+    return max(1, min(count, len(eeg_rows)))
+
+
+def _reference_channel_options(device: str) -> tuple[List[int], Dict[int, str]]:
+    """One reference option per recorded EEG channel — exactly NumberEEGChannels of them.
+
+    The reference has to be a channel that is actually recorded, so the option count must
+    equal the EEG channel count. It previously listed active rows, which could drift from
+    NumberEEGChannels.
+    """
+    rows = ensure_channel_rows(device, st.session_state["channel_tables"].get(device))
+    extras = set(DEVICE_EXTRA_LABELS.get(device, []))
+    eeg_rows = [row for row in rows if row.get("Channel") not in extras]
+    count = _requested_eeg_channel_count(device)
+
+    options: List[int] = []
+    labels: Dict[int, str] = {}
+    for eeg_index, row in enumerate(eeg_rows[:count], start=1):
+        label = row.get("Position") or row.get("Channel") or f"Ch {eeg_index}"
+        options.append(eeg_index)
+        labels[eeg_index] = f"{eeg_index}: {label}"
+    return options, labels
+
+
+def ensure_channel_rows(device: str, existing: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    base_count = DEVICE_DEFAULT_CHANNELS.get(device, 8)
+    extras = DEVICE_EXTRA_LABELS.get(device, [])
+    existing = existing or []
+    existing_map = {
+        (row.get("Channel") or row.get("Label")): dict(row)
+        for row in existing
+        if row.get("Channel") or row.get("Label")
+    }
+    default_positions = DEVICE_POSITION_DEFAULTS.get(device, [])
+
+    def base_row(label: str, is_extra: bool, index: Optional[int] = None) -> Dict[str, Any]:
+        default_rubric = ELECTRODE_RUBRICS[0] if ELECTRODE_RUBRICS else ""
+        default_model = _model_for_rubrik(default_rubric)
+        position_label = label.replace(" ", "")
+        if index is not None and index < len(default_positions):
+            position_label = default_positions[index]
+        pos_x, pos_y = _safe_channel_coords(position_label, index or 0)
+        row = {
+            "Channel": label,
+            "Position": position_label,
+            "Rubrik": default_rubric,
+            "Model": default_model,
+            "Impedance": 0.0,
+            "Active": True if is_extra else False,
+            "PosX": pos_x,
+            "PosY": pos_y,
+        }
+        return row
+
+
+    rows: List[Dict[str, Any]] = []
+    for label in extras:
+        row = existing_map.get(label, base_row(label, True))
+        row["Active"] = True
+        _sync_rubrik_to_model(row)
+        rows.append(row)
+
+    for idx in range(base_count):
+        label = f"Ch {idx + 1}"
+        row = existing_map.get(label, base_row(label, False, idx))
+        _sync_rubrik_to_model(row)
+        rows.append(row)
+
+    return rows
+
+
+def _apply_channel_count(device: str, method: str) -> None:
+    """on_change handler for the Electrodes 'Channels to record' stepper.
+
+    Runs inside Streamlit's single rerun for the click and writes the new count BEFORE the
+    page body renders. That is what stops rapid +/- clicks from racing an extra st.rerun()
+    and snapping the selection back — there is no second rerun and no reload flash.
+    """
+    raw = st.session_state.get(f"electrodes_count_{device}")
+    new_count = coerce_number(raw)
+    if new_count is None or new_count < 1:
+        return
+    st.session_state.setdefault("method_forms", {}).setdefault(method, {})["NumberEEGChannels"] = int(new_count)
+    # Keep the method-form widget in step, and force the data editor to re-init for the new
+    # row count (its key carries the revision).
+    st.session_state.pop(f"{method}_NumberEEGChannels", None)
+    _bump_channel_editor_revision(device)
+
+
+def _visible_channel_rows(
+    rows: List[Dict[str, Any]], device: str, count: int
+) -> List[Dict[str, Any]]:
+    """The rows the electrode table shows: the extras, then the first ``count`` EEG channels."""
+    extras = set(DEVICE_EXTRA_LABELS.get(device, []))
+    extra_rows = [row for row in rows if (row.get("Channel") or row.get("Label")) in extras]
+    eeg_rows = [row for row in rows if (row.get("Channel") or row.get("Label")) not in extras]
+    return extra_rows + eeg_rows[:count]
+
+
+def _persist_channel_edits(device: str, editor_key: str, channel_order: List[str]) -> None:
+    """on_change handler for the electrode table: store every edit immediately.
+
+    Streamlit runs this before the script reruns, which is the whole point. A typed
+    electrode position used to live only in the editor's own widget state until the end of
+    the next run, so anything that rebuilt the table first — an impedance read, a changed
+    channel count, a new editor key — rebuilt it from the *previous* values and the edit
+    was gone a moment after it was made. Writing the edit into ``channel_tables`` here
+    makes the stored table, not the widget, the thing that survives.
+    """
+    state = st.session_state.get(editor_key) or {}
+    deltas = state.get("edited_rows") or {}
+    if not deltas:
+        return
+    rows = st.session_state.get("channel_tables", {}).get(device)
+    if not rows:
+        return
+    by_channel = {str(row.get("Channel")): row for row in rows}
+    for row_index, changes in deltas.items():
+        try:
+            channel = channel_order[int(row_index)]
+        except (TypeError, ValueError, IndexError):
+            continue
+        row = by_channel.get(channel)
+        if row is None:
+            continue
+        for column, value in (changes or {}).items():
+            row[column] = value
+        # Electrode type is not typed in — it is the chosen model's category.
+        _sync_rubrik_to_model(row)
+
+
+def _can_measure_impedance(device: str) -> bool:
+    """True when this amplifier could read impedances for us if asked to.
+
+    Simulate run promises that no hardware is opened and measuring holds the amplifier in
+    impedance mode, so there is nothing to offer there.
+    """
+    return device in IMPEDANCE_CAPABLE_DEVICES and not _is_simulating()
+
+
+def _render_live_impedance_toggle(device: str) -> bool:
+    """Whether to show the impedance table beside the montage, refreshing every second.
+
+    Off by default, and that is the point. A refresh is a round trip that ends in a page
+    rerun, and that rerun is what closes an open dropdown and loses the scroll position in
+    the montage table -- Streamlit cannot refresh one element on its own. With this off
+    nothing refreshes at all, so the table can be worked in undisturbed; with it on the
+    impedance is live, which is what matters while the cap is being fitted rather than
+    while the montage is being written down.
+    """
+    return st.checkbox(
+        "Live impedance",
+        value=False,
+        key=f"live_impedance_{device}",
+        help=(
+            f"Show measured impedance beside the table, re-read every "
+            f"{IMPEDANCE_POLL_SECONDS:.0f} s. While it is off nothing on this page "
+            "refreshes, so the table can be scrolled and edited without interruption."
+        ),
+    )
+
+
+def _render_edit_coords_toggle(device: str) -> bool:
+    """The coordinates toggle, rendered above the table(s) rather than inside a column.
+
+    Inside the left column it pushed that table one row down, so its rows no longer lined
+    up with the impedance table beside it.
+    """
+    return st.checkbox(
+        "Edit coordinates",
+        value=False,
+        key=f"edit_coords_{device}",
+        help="Show the PosX/PosY columns used to place the electrode on scalp plots.",
+    )
+
+
+def _electrode_columns_setup(edit_coords: bool) -> tuple[List[str], List[str]]:
+    """The Model options and the column order every electrode table shares
+    (Channel/Position/[PosX/PosY]/Model).
+
+    The electrode category is not a column: it is the chosen model's category, it is
+    already written into every label in the Model dropdown, and it is still recorded with
+    the montage — so a column of its own only repeated what the model already said.
+    """
+    columns = ["Channel", "Position"]
+    if edit_coords:
+        columns += ["PosX", "PosY"]
+    columns += ["Model"]
+    return _electrode_model_options(), columns
+
+
+def _electrode_column_config(model_options: List[str]) -> Dict[str, Any]:
+    """The column_config shared by every electrode table (Impedance is added by the
+    caller, since only the combined single table shows it as an editable column)."""
+    return {
+        "Channel": st.column_config.TextColumn("Channel", disabled=True, width=80),
+        "Position": st.column_config.TextColumn(
+            "Electrode / Position",
+            help="10-20 label or custom montage description",
+            width=200,
+        ),
+        "Model": st.column_config.SelectboxColumn(
+            "Electrode model",
+            help=(
+                "Every electrode in electrodes.json, listed category by category — pick "
+                "the one on this channel and the Electrode type fills itself in."
+            ),
+            width=380,
+            options=model_options,
+            format_func=_electrode_model_label,
+            required=False,
+        ),
+        "PosX": st.column_config.NumberColumn(
+            "Pos X",
+            help="Custom X coordinate for scalp plot (-1.5 to 1.5). Leave blank to use defaults.",
+            min_value=-1.5,
+            max_value=1.5,
+            step=0.05,
+            format="%.2f",
+        ),
+        "PosY": st.column_config.NumberColumn(
+            "Pos Y",
+            help="Custom Y coordinate for scalp plot (-1.5 to 1.5). Leave blank to use defaults.",
+            min_value=-1.5,
+            max_value=1.5,
+            step=0.05,
+            format="%.2f",
+        ),
+    }
+
+
+def _apply_electrode_edits(
+    edited: List[Dict[str, Any]], *, edit_coords: bool, saved_coords: Dict[Any, tuple]
+) -> None:
+    """Normalize Active/Electrode type/Position/PosX/PosY after an edit to any table.
+
+    Electrode type is derived from the chosen model here as everywhere else, which is safe
+    because the type is read-only in the table: there is no operator choice to overwrite.
+    """
+    for row_idx, row in enumerate(edited):
+        # Every row on screen is a channel being recorded, so it is active by
+        # definition; the count is what decides, not a per-row toggle.
+        row["Active"] = True
+        _sync_rubrik_to_model(row)
+        if not row.get("Position"):
+            row["Position"] = row["Channel"].replace(" ", "")
+        pos_x = coerce_number(row.get("PosX"))
+        pos_y = coerce_number(row.get("PosY"))
+        if (pos_x is None or pos_y is None) and not edit_coords:
+            # Not shown => not returned. Restore rather than regenerate, or a hidden
+            # column would wipe coordinates that were already set.
+            prev_x, prev_y = saved_coords.get(row["Channel"], (None, None))
+            pos_x = coerce_number(prev_x) if pos_x is None else pos_x
+            pos_y = coerce_number(prev_y) if pos_y is None else pos_y
+        if pos_x is None or pos_y is None:
+            pos_x, pos_y = _safe_channel_coords(row["Position"], row_idx)
+        row["PosX"] = float(pos_x)
+        row["PosY"] = float(pos_y)
+
+
+def _render_electrode_table(device: str, edit_coords: bool) -> List[Dict[str, Any]]:
+    """The single combined table: Position, category, model and Impedance together.
+
+    Used whenever nothing on the page is refreshing on a timer -- either this device does
+    not measure impedance, or Simulate run means nothing is being read from it -- so there
+    is no reason to keep Impedance apart from the columns the operator edits by hand.
+    """
+    channel_state = st.session_state["channel_tables"]
+    all_rows = ensure_channel_rows(device, channel_state.get(device))
+    revisions = st.session_state.setdefault("_channel_editor_revision", {})
+    editor_revision = int(revisions.get(device, 0))
+    count = _requested_eeg_channel_count(device)
+    rows = _visible_channel_rows(all_rows, device, count)
+
+    _render_impedance_status_caption(device)
+
+    model_options, columns = _electrode_columns_setup(edit_coords)
+    columns = columns + ["Impedance"]
+
+    # The editor drops columns it is not showing, so remember the coordinates and
+    # put them back afterwards -- otherwise hiding them would silently reset them.
+    saved_coords = {
+        row.get("Channel"): (row.get("PosX"), row.get("PosY")) for row in rows
+    }
+
+    editor_key = f"channels_{device}_{editor_revision}_{int(edit_coords)}"
+    edited = st.data_editor(
+        rows,
+        num_rows="fixed",
+        hide_index=True,
+        key=editor_key,
+        on_change=_persist_channel_edits,
+        args=(device, editor_key, [str(row.get("Channel")) for row in rows]),
+        column_order=columns,
+        column_config={
+            **_electrode_column_config(model_options),
+            "Impedance": st.column_config.NumberColumn(
+                "Impedance (kOhm)",
+                width=160,
+                min_value=0.0,
+                step=0.5,
+                format="%.1f",
+                help="Measured impedance for this electrode.",
+            ),
+        },
+    )
+    _apply_electrode_edits(edited, edit_coords=edit_coords, saved_coords=saved_coords)
+
+    # Merge the edited rows back into the full montage. Channels beyond the recorded
+    # count are not on screen but keep their positions and impedances, so raising the
+    # count again restores what was already set for them. The cap-wide electrode
+    # type/model applies to every channel, on screen or not.
+    extras = set(DEVICE_EXTRA_LABELS.get(device, []))
+    shown = {str(row["Channel"]) for row in edited}
+    merged = {str(r.get("Channel")): dict(r) for r in all_rows}
+    for row in edited:
+        merged[str(row["Channel"])] = row
+    # Edited rows already carry their own per-channel electrode; off-screen rows keep
+    # theirs. Only the recorded/extra distinction is applied here.
+    for name, entry in merged.items():
+        if name not in extras and name not in shown:
+            entry["Active"] = False  # beyond the recorded count
+    channel_state[device] = list(merged.values())
+    return edited
+
+
+def _render_editable_electrode_columns(device: str, edit_coords: bool) -> List[Dict[str, Any]]:
+    """Position, category and model -- the columns that stay put while impedance streams in.
+
+    Rendered plainly, never inside the impedance fragment, so nothing here is redrawn on
+    the 1-second refresh: a dropdown left open or a half-typed Position survives it
+    untouched, and only the operator's own edits change what is on screen.
+    """
+    channel_state = st.session_state["channel_tables"]
+    all_rows = ensure_channel_rows(device, channel_state.get(device))
+    revisions = st.session_state.setdefault("_channel_editor_revision", {})
+    editor_revision = int(revisions.get(device, 0))
+    count = _requested_eeg_channel_count(device)
+    rows = _visible_channel_rows(all_rows, device, count)
+
+    model_options, columns = _electrode_columns_setup(edit_coords)
+
+    saved_coords = {
+        row.get("Channel"): (row.get("PosX"), row.get("PosY")) for row in rows
+    }
+
+    editor_key = f"channels_{device}_{editor_revision}_{int(edit_coords)}_pos"
+    edited = st.data_editor(
+        rows,
+        num_rows="fixed",
+        hide_index=True,
+        key=editor_key,
+        on_change=_persist_channel_edits,
+        args=(device, editor_key, [str(row.get("Channel")) for row in rows]),
+        column_order=columns,
+        column_config=_electrode_column_config(model_options),
+    )
+    _apply_electrode_edits(edited, edit_coords=edit_coords, saved_coords=saved_coords)
+
+    # Only the fields this table owns are written back. Impedance is left exactly as the
+    # shared montage already has it, so this can never clobber a value the impedance side
+    # -- refreshing independently, once a second, in the column next to this one -- just wrote.
+    extras = set(DEVICE_EXTRA_LABELS.get(device, []))
+    shown = {str(row["Channel"]) for row in edited}
+    owned_fields = ("Position", "PosX", "PosY", "Rubrik", "Model", "Active")
+    merged = {str(r.get("Channel")): dict(r) for r in all_rows}
+    for row in edited:
+        channel = str(row["Channel"])
+        target = merged.setdefault(channel, dict(row))
+        for field in owned_fields:
+            target[field] = row[field]
+    for name, entry in merged.items():
+        if name not in extras and name not in shown:
+            entry["Active"] = False  # beyond the recorded count
+    channel_state[device] = list(merged.values())
+    return edited
+
+
+def _render_impedance_status_caption(device: str) -> None:
+    """Explain why Impedance is hand-typed, for a device that cannot measure it.
+
+    Nothing is shown for a device that does measure it — the read status and last-read
+    timestamp used to be printed here, but the readout itself (the Impedance values moving
+    off 0.0) already says whether it is working, so the extra line was just noise.
+    """
+    if device not in IMPEDANCE_CAPABLE_DEVICES:
+        st.caption(
+            f"Continuous impedance polling is not available for {device}; "
+            "enter measured impedance values manually when needed."
+        )
+
+
+def _impedance_only_rows(device: str) -> List[Dict[str, Any]]:
+    """Channel + Impedance for the currently visible rows, freshly read from state."""
+    all_rows = ensure_channel_rows(device, st.session_state["channel_tables"].get(device))
+    count = _requested_eeg_channel_count(device)
+    rows = _visible_channel_rows(all_rows, device, count)
+    return [
+        {
+            "Channel": row.get("Channel"),
+            "Impedance": coerce_number(row.get("Impedance")) or 0.0,
+        }
+        for row in rows
+    ]
+
+
+@st.fragment(run_every=IMPEDANCE_POLL_SECONDS)
+def _render_live_impedance_table(device: str, fs_value: Any) -> None:
+    """The Impedance side of the split view: polled and redrawn every second, on its own.
+
+    It never touches Position/Rubrik/Model, so it cannot interrupt an edit being made in
+    the table next to it -- that table is not part of this fragment and does not rerun
+    with it (only this one does, on the ``run_every`` timer).
+    """
+    _poll_live_impedances(device, fs_value)
+    st.dataframe(
+        _impedance_only_rows(device),
+        hide_index=True,
+        width="stretch",
+        column_config={
+            "Channel": st.column_config.TextColumn("Channel", width=80),
+            "Impedance": st.column_config.NumberColumn(
+                "Impedance (kOhm)", width=110, format="%.1f"
+            ),
+        },
+    )
+
+
+def render_channel_editor(device: str, embedded: bool = False) -> List[Dict[str, Any]]:
+    """The electrode / impedance table.
+
+    ``embedded=True`` renders it as a step of the Session configuration page: the controls
+    that only mirror method-form fields (channel count, reference channel) are left out,
+    because that form is already on screen right above the table. The standalone page keeps
+    them, so calling this with the default is unchanged.
+    """
+    if not device:
+        # Without a device there is no montage, no channel count and no impedance support,
+        # so the editor rendered an "Electrodes ()" table of meaningless Ch1..Ch8 rows.
+        st.info(
+            "**Pick a device first.** Open *Session configuration* and choose one -- the "
+            "electrode table is built from the device's montage."
+        )
+        return []
+
+    all_rows = ensure_channel_rows(device, st.session_state["channel_tables"].get(device))
+
+    # The amplifier hands back its FIRST N channels -- Ch 30 cannot be read without reading
+    # Ch 1..29 -- so the recorded set is always a prefix. NumberEEGChannels decides N, and
+    # the table shows exactly those channels. It used to list all 32 ActiCHamp rows with a
+    # "Use channel" box that build_channels silently reset to the first N on the next rerun.
+    extras_set = set(DEVICE_EXTRA_LABELS.get(device, []))
+    eeg_rows = [r for r in all_rows if (r.get("Channel") or r.get("Label")) not in extras_set]
+
+    method = str(st.session_state.get("general_form", {}).get("Method") or "")
+    method_state = st.session_state.setdefault("method_forms", {}).setdefault(method, {}) if method else {}
+    requested = coerce_number(method_state.get("NumberEEGChannels"))
+    count = int(requested) if requested and requested > 0 else len(eeg_rows)
+    count = max(1, min(count, len(eeg_rows)))
+
+    rows = _visible_channel_rows(all_rows, device, count)
+
+    with st.expander(f"Electrodes ({device})", expanded=True):
+        head_l, head_r = st.columns([3, 1], vertical_alignment="bottom")
+        head_l.caption(
+            f"Recording the first **{count}** of {len(eeg_rows)} {device} channels. Name each one "
+            "(Position) and pick the electrode hardware. Ground/Reference are always included."
+        )
+        if not embedded and method and any(
+            f.name == "NumberEEGChannels" for f in METHOD_SCHEMAS.get(method, [])
+        ):
+            # A STABLE key (not tied to `count`) plus an on_change callback: rapid +/- clicks
+            # accumulate instead of snapping back, and there is no extra rerun/flash. The old
+            # `..._{count}` key rebuilt the widget on every change, which caused exactly that.
+            count_key = f"electrodes_count_{device}"
+            # Seed/reconcile the stored value so an external NumberEEGChannels change (method
+            # form / loaded session) is reflected. After a user edit the two already agree, so
+            # this only ever corrects external changes -- it never fights the stepper.
+            if int(st.session_state.get(count_key, count) or count) != count:
+                st.session_state[count_key] = count
+            st.session_state.setdefault(count_key, count)
+            head_r.number_input(
+                "Channels to record",
+                min_value=1,
+                max_value=len(eeg_rows),
+                step=1,
+                key=count_key,
+                on_change=_apply_channel_count,
+                args=(device, method),
+                help="Same setting as NumberEEGChannels in Session configuration.",
+            )
+        fs_value = st.session_state.get("general_form", {}).get("fs")
+
+        extras_set = set(DEVICE_EXTRA_LABELS.get(device, []))
+
+        # ReferenceChannel is a 1-based index over EEG channels. Analysis subtracts the
+        # selected channel from every EEG channel; Ground/Reference extras are not EEG columns.
+        # Embedded, the method form above already owns this field: showing a second selector
+        # for it on the same page would mean two widgets writing one value.
+        method = st.session_state.get("general_form", {}).get("Method")
+        method_has_ref = any(f.name == "ReferenceChannel" for f in METHOD_SCHEMAS.get(method, []))
+        # Only the recorded channels can be a reference, so cap to NumberEEGChannels.
+        eeg_rows = [row for row in rows if row["Channel"] not in extras_set][:_requested_eeg_channel_count(device)]
+        if embedded:
+            pass  # handled by the method form above
+        elif has_hardware_reference(device):
+            st.caption(f"Reference is fixed in hardware for {device} -- nothing to choose.")
+        elif method and method_has_ref and eeg_rows:
+            ref_labels = [f"{i + 1}: {row.get('Position') or row['Channel']}" for i, row in enumerate(eeg_rows)]
+            current_ref = st.session_state.get("method_forms", {}).get(method, {}).get("ReferenceChannel")
+            try:
+                cur_idx = int(current_ref) - 1
+            except (TypeError, ValueError):
+                cur_idx = 0
+            cur_idx = cur_idx if 0 <= cur_idx < len(ref_labels) else 0
+            choice = st.selectbox(
+                "Reference channel",
+                options=list(range(len(ref_labels))),
+                format_func=lambda i: ref_labels[i],
+                index=cur_idx,
+                key=f"ref_electrode_{device}",
+                help="Analysis uses all EEG channels minus this selected ReferenceChannel.",
+            )
+            new_ref = choice + 1
+            if str(new_ref) != str(current_ref):
+                st.session_state.setdefault("method_forms", {}).setdefault(method, {})["ReferenceChannel"] = new_ref
+                st.session_state.pop(f"{method}_ReferenceChannel", None)  # keep the method form in sync
+
+        # Both toggles sit on one row above the split, so the two tables below start at
+        # the same height and their rows line up.
+        toggles = st.columns(3)
+        with toggles[0]:
+            edit_coords = _render_edit_coords_toggle(device)
+        live_impedance = False
+        if _can_measure_impedance(device):
+            with toggles[1]:
+                live_impedance = _render_live_impedance_toggle(device)
+        if not live_impedance:
+            # Nothing is polled and nothing reruns on a timer: the amplifier is left out of
+            # impedance mode and the montage table is the only thing on the page.
+            stop_impedance_monitor()
+
+        if live_impedance:
+            # Two tables: Impedance refreshes on its own beside the montage, which is not
+            # part of that fragment. The page still ticks once a second though, so this is
+            # the view for fitting electrodes rather than for editing the montage.
+            main_col, imp_col = st.columns([4, 1])
+            with main_col:
+                _render_editable_electrode_columns(device, edit_coords)
+            with imp_col:
+                _render_live_impedance_table(device, fs_value)
+        else:
+            _render_electrode_table(device, edit_coords)
+
+    all_rows = ensure_channel_rows(device, st.session_state["channel_tables"].get(device))
+    return _visible_channel_rows(all_rows, device, count)
+
+
+def render_live_preview_tab(params: Dict[str, Any], validation_issues: List[str]) -> None:
+    st.subheader("Live preview (beta)")
+    st.caption(
+        "Stream a short window from the configured device. This uses the current session settings and renders up to "
+        "four channels in real time."
+    )
+
+    # Simulate run promises no hardware is touched. The preview built its device straight
+    # from params, so with Simulate on it still tried to open the real port and failed.
+    if _is_simulating():
+        params = dict(params)
+        params["Device"] = "Dummy"
+        st.info("**Simulate run is on** — previewing synthetic data; no hardware is opened.")
+
+    if validation_issues:
+        st.warning("Fix configuration issues in the Session tab before starting a live preview.")
+        return
+
+    parameters = params.get("Parameters", {})
+    fs_value = coerce_number(parameters.get("fs"))
+    fs = float(fs_value) if fs_value else 0.0
+    channel_count = len(params.get("Channels", [])) or int(
+        parameters.get("NumberEEGChannels") or DEVICE_DEFAULT_CHANNELS.get(params.get("Device"), 8)
+    )
+    channel_count = max(channel_count, 1)
+    channel_labels = [row.get("Channel") or f"Ch {idx+1}" for idx, row in enumerate(params.get("Channels", []))] or [
+        f"Ch {idx+1}" for idx in range(channel_count)
+    ]
+    options = ["All"] + channel_labels
+    selection = st.multiselect("Channels to preview", options=options, default=["All"])
+    if not selection or "All" in selection:
+        selected_indices = list(range(channel_count))
+    else:
+        selected_indices = [channel_labels.index(label) for label in selection if label in channel_labels]
+
+    unlimited = st.checkbox("Run indefinitely (manual stop)", value=False)
+    duration = float("inf") if unlimited else float(
+        st.slider("Preview duration (s)", min_value=2, max_value=120, value=10, step=1)
+    )
+    # The rolling window is fixed, so traces stay comparable between runs.
+    window = LIVE_WINDOW_SECONDS
+    plot_cols = st.columns([1, 1, 1])
+    # This tab owns its own plot/scale widgets, keyed apart from the sidebar's live-view
+    # controls — two widgets may not share a key, and the sidebar renders on this page too.
+    plot_cols[0].selectbox(
+        "Live plot",
+        options=list(LIVE_PLOT_TYPES),
+        index=(
+            list(LIVE_PLOT_TYPES).index(st.session_state.get("live_preview_plot"))
+            if st.session_state.get("live_preview_plot") in LIVE_PLOT_TYPES
+            else list(LIVE_PLOT_TYPES).index(DEFAULT_LIVE_PLOT)
+        ),
+        key="live_preview_plot",
+        help="Which plot to show. Works for every method.",
+    )
+    st.write("UI state:", st.session_state.get("live_preview_plot"))
+    scale_cols = plot_cols
+    scale_cols[1].selectbox(
+        "Scaling (y-axis)",
+        options=list(LIVE_SCALE_OPTIONS),
+        index=list(LIVE_SCALE_OPTIONS).index(
+            st.session_state.get("live_preview_scale", DEFAULT_LIVE_SCALE)
+        ),
+        key="live_preview_scale",
+        help="Auto fits each channel to its own data. A fixed range keeps channels and runs "
+             "on identical axes, which is what makes them comparable.",
+    )
+    scale_cols[2].caption(f"Window fixed at {LIVE_WINDOW_SECONDS:g} s.")
+    interval = st.slider("Update interval (s)", min_value=0.05, max_value=1.0, value=0.25, step=0.05)
+
+    placeholder = st.empty()
+    vep_placeholder = st.empty()
+    fft_placeholder = st.empty()
+    st.caption("Per-channel views")
+    per_channel_container = st.container()
+    per_channel_placeholders = [per_channel_container.empty() for _ in selected_indices]
+    state = st.session_state
+    active = state.get("_live_preview_active", False)
+    start_clicked = st.button("Start live preview", type="primary", disabled=active)
+    stop_clicked = st.button("Stop live preview", type="secondary", disabled=not active)
+
+    if start_clicked:
+        _reset_plot_window_open_state(
+            "live_preview_signal",
+            "live_preview_fft",
+            *[f"live_channel_{idx + 1}" for idx in selected_indices],
+        )
+        state["_live_preview_active"] = True
+        state["_live_preview_unlimited"] = bool(unlimited)
+        state["_live_preview_args"] = {
+            "selected_indices": selected_indices,
+            "duration": float(duration),
+            "window": float(window),
+            "interval": float(interval),
+        }
+        state["_live_preview_last_buffer"] = None
+        st.rerun()
+
+    if stop_clicked:
+        state["_live_preview_active"] = False
+        st.rerun()
+
+    if state.get("_live_preview_active") and state.get("_live_preview_args"):
+        args = state["_live_preview_args"]
+        chunk_duration = args["duration"] if math.isfinite(args["duration"]) else args["window"]
+        try:
+            st.write("ABOUT TO RUN:", st.session_state.get("live_preview_plot", DEFAULT_LIVE_PLOT))
+            buffer = run_live_preview(
+                params,
+                placeholder,
+                fft_placeholder,
+                args["selected_indices"],
+                per_channel_placeholders,
+                initial_buffer=state.get("_live_preview_last_buffer"),
+                duration=float(chunk_duration),
+                window=float(args["window"]),
+                update_interval=float(args["interval"]),
+                final_interactive=not state.get("_live_preview_unlimited", False),
+                scale=resolve_live_scale(st.session_state.get("live_preview_scale")),
+                plot_type=st.session_state.get("live_preview_plot", DEFAULT_LIVE_PLOT),
+                vep_placeholder=vep_placeholder,
+            )
+            state["_live_preview_last_buffer"] = buffer
+            if state.get("_live_preview_unlimited", False) and state.get("_live_preview_active", False):
+                st.rerun()
+            else:
+                state["_live_preview_active"] = False
+                st.success(f"Captured {buffer.shape[0]} samples over {args['duration']} seconds.")
+        except Exception as exc:  # pragma: no cover
+            state["_live_preview_active"] = False
+            st.error(f"Live preview failed: {exc}")
+    if (
+        not state.get("_live_preview_active")
+        and state.get("_live_preview_last_buffer") is not None
+        and state.get("_live_preview_unlimited", False)
+        and state.get("_live_preview_args")
+    ):
+        buffer = state["_live_preview_last_buffer"]
+        indices = _normalize_channel_indices(state["_live_preview_args"].get("selected_indices"), channel_count)
+        _plot_live_buffer(
+            buffer, fs, placeholder, channel_indices=indices, params=params, render_inline=True,
+            plot_type=st.session_state.get("live_preview_plot", DEFAULT_LIVE_PLOT),
+            scale=resolve_live_scale(st.session_state.get("live_preview_scale")),
+            vep_placeholder=vep_placeholder,
+        )
+        st.success(f"Stopped live preview after capturing {buffer.shape[0]} samples.")
+
+
+def render_participant_form() -> Dict[str, Any]:
+    participant = st.session_state["participant"]
+    with st.expander("Participant / proband information", expanded=True):
+        form_col, viz_col = st.columns((2.2, 0.9))
+        with form_col:
+            cols = form_col.columns([1.25, 1.0, 0.65, 1.0])
+            participant["Code"] = cols[0].text_input(
+                "Participant code",
+                value=participant.get("Code", ""),
+                placeholder="e.g. VEP_023",
+                key="participant_Code",
+            )
+            participant["Initials"] = cols[1].text_input(
+                "Initials",
+                value=participant.get("Initials", ""),
+                key="participant_Initials",
+            )
+            age_number = coerce_number(participant.get("Age"))
+            age_default = int(age_number) if isinstance(age_number, (int, float)) and age_number > 0 else 0
+            # Key-only (no value=) so the stepper does not snap back on a slow rerun.
+            if not isinstance(st.session_state.get("participant_Age"), (int, float)) or isinstance(
+                st.session_state.get("participant_Age"), bool
+            ):
+                st.session_state["participant_Age"] = age_default
+            participant["Age"] = cols[2].number_input(
+                "Age",
+                min_value=0,
+                max_value=110,
+                key="participant_Age",
+            )
+            gender_value = resolve_choice(GENDER_OPTIONS, participant.get("Gender"))
+            participant["Gender"] = cols[3].selectbox(
+                "Gender",
+                options=GENDER_OPTIONS,
+                index=GENDER_OPTIONS.index(gender_value),
+                key="participant_Gender",
+            )
+            notes_col, _ = form_col.columns([3, 1])
+            participant["Notes"] = notes_col.text_area(
+                "Session notes",
+                value=participant.get("Notes", ""),
+                height=128,
+                key="participant_Notes",
+            )
+        with viz_col:
+            _render_participant_card(participant)
+    return dict(participant)
+
+
+def _device_emits_trigger(device: str, params_block: Dict[str, Any]) -> bool:
+    """Whether the adapter appends a trigger column after the EEG/AUX block.
+
+    Only ActiCHamp does. UNICORN's extra columns are accelerometer/gyro/battery/counter,
+    not a trigger, and the simulated/stream devices emit EEG only.
+    """
+    if str(device).lower() != "actichamp":
+        return False
+    return bool(params_block.get("IncludeTriggers", True))
+
+
+def _channel_entry(row: Dict[str, Any], *, active: bool) -> Dict[str, Any]:
+    channel_name = row.get("Channel") or row.get("Label")
+    rubric = _valid_electrode_rubrik(row.get("Rubrik") or row.get("Rubric"))
+    entry = {
+        "Channel": channel_name,
+        "Position": row.get("Position") or str(channel_name).replace(" ", ""),
+        "Rubrik": rubric,
+        # What the table shows is what gets recorded: a model outside the row's category
+        # is the operator's answer, not something to correct on the way to the metadata.
+        "Model": str(row.get("Model") or "").strip() or _model_for_rubrik(rubric),
+        "Impedance": coerce_number(row.get("Impedance")),
+        "Active": bool(active),
+    }
+    pos_x = coerce_number(row.get("PosX"))
+    pos_y = coerce_number(row.get("PosY"))
+    if pos_x is not None and pos_y is not None:
+        entry["PosX"] = float(pos_x)
+        entry["PosY"] = float(pos_y)
+    return entry
+
+
+def build_channels(
+    device: str,
+    requested_eeg_channels: Optional[int] = None,
+) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Split the electrode table into (EEG channels, reference/ground electrodes).
+
+    The returned EEG list is positional: entry ``i`` describes data column ``i``.  GND/Ref
+    are physical electrodes but carry no data column, so they are returned separately
+    instead of being prepended to the montage — prepending them is what made every
+    consumer label column 0 "GND" and report one channel more than was selected.
+
+    The amplifier always hands back its first N channels, so the active set is the first N
+    rows.  You choose which electrode sits on each amplifier channel via ``Position``, not
+    by activating an arbitrary subset.
+    """
+    rows = st.session_state["channel_tables"].get(device) or ensure_channel_rows(device)
+    extra_labels = set(DEVICE_EXTRA_LABELS.get(device, []))
+
+    eeg_rows = [r for r in rows if (r.get("Channel") or r.get("Label")) not in extra_labels]
+    extra_rows = [r for r in rows if (r.get("Channel") or r.get("Label")) in extra_labels]
+
+    if requested_eeg_channels and requested_eeg_channels > 0:
+        count = min(int(requested_eeg_channels), len(eeg_rows))
+    else:
+        active = [r for r in eeg_rows if bool(r.get("Active"))]
+        count = len(active) if active else len(eeg_rows)
+
+    # Reconcile the table so the Active flags cannot drift from the acquired width.
+    active_eeg_ids = {id(row) for row in eeg_rows[:count]}
+    synced: List[Dict[str, Any]] = []
+    for row in rows:
+        updated = dict(row)
+        name = updated.get("Channel") or updated.get("Label")
+        updated["Active"] = True if name in extra_labels else id(row) in active_eeg_ids
+        synced.append(updated)
+    st.session_state["channel_tables"][device] = synced
+
+    channels = [
+        _channel_entry(row, active=True)
+        for row in eeg_rows[:count]
+        if (row.get("Channel") or row.get("Label"))
+    ]
+    extras = [
+        _channel_entry(row, active=True)
+        for row in extra_rows
+        if (row.get("Channel") or row.get("Label"))
+    ]
+    return channels, extras
+
+
+def build_metadata(participant: Dict[str, Any]) -> Dict[str, Any]:
+    cleaned = {key: value for key, value in participant.items() if value not in ("", None, 0)}
+    return {"Participant": cleaned} if cleaned else {}
+
+
+def assemble_params(
+    general: Dict[str, Any],
+    method_values: Dict[str, Any],
+    participant: Dict[str, Any],
+    device_specific: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    params: Dict[str, Any] = {
+        "Method": general["Method"],
+        "Device": general["Device"],
+        "Parameters": {},
+    }
+    for field in GENERAL_SCHEMA:
+        if field.name in {"Method", "Device"}:
+            continue
+        value = convert_value(field, general.get(field.name))
+        if value not in (None, "", []):
+            params["Parameters"][field.name] = value
+    for field in METHOD_SCHEMAS.get(params["Method"], []):
+        value = convert_value(field, method_values.get(field.name))
+        if value not in (None, "", []):
+            params["Parameters"][field.name] = value
+    if has_hardware_reference(params["Device"]):
+        # The reference is fixed in hardware; carrying a software ReferenceChannel would make
+        # the evaluators re-reference already-referenced data. Drop it.
+        params["Parameters"].pop("ReferenceChannel", None)
+    elif any(field.name == "ReferenceChannel" for field in METHOD_SCHEMAS.get(params["Method"], [])):
+        reference_value = coerce_number(params["Parameters"].get("ReferenceChannel"))
+        if reference_value is None or reference_value < 1:
+            params["Parameters"]["ReferenceChannel"] = 1
+    if device_specific:
+        for key, value in device_specific.items():
+            if value in (None, "", []):
+                continue
+            params["Parameters"][key] = value
+            for alias in DEVICE_FIELD_ALIASES.get(key, []):
+                params["Parameters"][alias] = value
+
+    if params["Device"].lower() == "unicorn":
+        params["Parameters"]["fs"] = 250
+
+    requested_channels_value = coerce_number(params["Parameters"].get("NumberEEGChannels"))
+    requested_channels = int(requested_channels_value) if requested_channels_value and requested_channels_value > 0 else None
+    channels, reference_electrodes = build_channels(params["Device"], requested_channels)
+    if channels:
+        params["Channels"] = channels
+        # Channels is now exactly the EEG block, so it *is* the channel count. Keeping the
+        # two in sync is what stops "3 selected" from recording 4.
+        params["Parameters"]["NumberEEGChannels"] = len(channels)
+    if reference_electrodes:
+        # GND/Ref have impedances worth keeping but occupy no data column.
+        params["ReferenceElectrodes"] = reference_electrodes
+
+    aux_value = coerce_number(params["Parameters"].get("NumberAUXChannels"))
+    aux_count = int(aux_value) if aux_value and aux_value > 0 else 0
+    if channels and _device_emits_trigger(params["Device"], params["Parameters"]):
+        # ActiCHamp VEP always uses physical AUX1, immediately after the 32 EEG inputs.
+        if str(params.get("Method", "")).lower() == "vep":
+            params["Parameters"]["TriggerChannel"] = 33
+        else:
+            trigger_value = coerce_number(params["Parameters"].get("TriggerChannel"))
+            if trigger_value is None or trigger_value < 1:
+                params["Parameters"]["TriggerChannel"] = len(channels) + 1
+
+    # State the unit the samples are in rather than leaving every reader to assume.
+    params["Parameters"]["SignalUnit"] = DEFAULT_SIGNAL_UNIT
+
+    metadata = build_metadata(participant)
+    if metadata:
+        params["Metadata"] = metadata
+
+    return params
+
+
+def validate_params(params: Dict[str, Any]) -> List[str]:
+    issues: List[str] = []
+    method = params.get("Method")
+    device = params.get("Device") or ""
+    parameters = params.get("Parameters", {})
+    if not method:
+        issues.append("Method must be selected.")
+    if not device:
+        issues.append("Device must be selected.")
+    if "fs" not in parameters or not parameters["fs"]:
+        issues.append("Sampling rate (fs) is required.")
+    if not _has_active_eeg_channels(params):
+        issues.append("Select at least one EEG channel.")
+    if (device.lower() if device else "") not in {"actichamp", "unicorn", "lsl", "offline", "dummy"}:
+        issues.append(f"Device '{device}' is not yet supported by the Python pipeline.")
+    if device and device.lower() == "unicorn":
+        port = (
+            parameters.get("UNICORNPort")
+            or parameters.get("UNICORNAddress")
+            or parameters.get("UnicornPort")
+            or parameters.get("UnicornAddress")
+        )
+        if not port:
+            issues.append("UNICORN configuration requires a serial port / address.")
+
+    # A reference channel past the recorded EEG count is silently dropped downstream (analysis
+    # falls back to channel 1). Reachable by lowering the channel count after picking a higher
+    # reference, or by loading metadata whose reference exceeds the current montage.
+    reference = parameters.get("ReferenceChannel")
+    if reference not in (None, "", 0) and not has_hardware_reference(device or ""):
+        reference_num = coerce_number(reference)
+        n_eeg = len(params.get("Channels") or []) or (coerce_number(parameters.get("NumberEEGChannels")) or 0)
+        if reference_num is not None and n_eeg and not (1 <= reference_num <= n_eeg):
+            issues.append(
+                f"Reference channel {int(reference_num)} is out of range (1-{int(n_eeg)} EEG channels)."
+            )
+
+    issues.extend(missing_method_frequencies(method, parameters))
+    return issues
+
+
+def missing_method_frequencies(method: Any, parameters: Dict[str, Any]) -> List[str]:
+    """Stimulus frequencies the method needs but that are still zero.
+
+    Left at zero, the evaluators silently substitute their own value — SSVEP computes
+    everything against 10 Hz — so the results describe a stimulus the operator never set.
+    """
+    issues: List[str] = []
+    for name in REQUIRED_METHOD_FREQUENCIES.get(str(method or ""), ()):
+        value = coerce_number(parameters.get(name))
+        if value is None or float(value) <= 0:
+            issues.append(f"{method} requires {name} to be greater than 0 Hz.")
+    return issues
+
+
+def params_to_json(params: Dict[str, Any]) -> str:
+    def default(obj: Any):
+        if isinstance(obj, np.ndarray):
+            return obj.tolist()
+        raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+    return json.dumps(params, indent=2, default=default)
+
+
+def current_params_snapshot() -> Optional[Dict[str, Any]]:
+    """Assemble the current editor state into a params dict for export (None if incomplete)."""
+    general = dict(st.session_state.get("general_form", {}) or {})
+    if not general.get("Method") or not general.get("Device"):
+        return None
+    method = general["Method"]
+    device = general["Device"]
+    method_values = dict(st.session_state.get("method_forms", {}).get(method, {}) or {})
+    device_values = dict(st.session_state.get("device_forms", {}).get(device, {}) or {})
+    participant = dict(st.session_state.get("participant", {}) or {})
+    try:
+        return assemble_params(general, method_values, participant, device_values)
+    except Exception:  # pragma: no cover - defensive: never break the sidebar over export
+        LOGGER.exception("Failed to assemble params snapshot for export")
+        return None
+
+
+def _connection_signature(params: Dict[str, Any]) -> str:
+    parameters = params.get("Parameters", {}) if isinstance(params, dict) else {}
+
+    def pick(*names: str) -> Dict[str, Any]:
+        values: Dict[str, Any] = {}
+        for name in names:
+            if name in parameters:
+                values[name] = parameters.get(name)
+            elif name in params:
+                values[name] = params.get(name)
+        return values
+
+    payload: Dict[str, Any] = {"Device": str(params.get("Device") or "").strip().lower()}
+    device = payload["Device"]
+    if device == "unicorn":
+        payload.update(
+            pick(
+                "fs",
+                "NumberEEGChannels",
+                "UNICORNPort",
+                "UNICORNAddress",
+                "UnicornPort",
+                "UnicornAddress",
+                "UNICORNDeviceName",
+                "UnicornDeviceName",
+                "UnicornTimeout",
+                "UNICORNTimeout",
+            )
+        )
+    elif device == "actichamp":
+        payload.update(
+            pick(
+                "fs",
+                "NumberEEGChannels",
+                "NumberAUXChannels",
+                "ActiChampPath",
+                "actichampPath",
+                "ActiChampTimeout",
+                "UseActiveElectrodes",
+                "IncludeTriggers",
+            )
+        )
+    elif device == "lsl":
+        payload.update(pick("fs", "NumberEEGChannels", "StreamName"))
+    elif device in {"dummy", "sim", "simulation"}:
+        payload.update(pick("fs", "NumberEEGChannels", "Noise"))
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        default=lambda obj: obj.tolist() if isinstance(obj, np.ndarray) else str(obj),
+    )
+
+
+def _disconnect_session_device() -> None:
+    # Impedance mode is left first: it may be running on the very device being released,
+    # and the amplifier must not be handed on still measuring impedance.
+    stop_impedance_monitor()
+    device = st.session_state.pop("_connected_device", None)
+    st.session_state.pop("_connected_device_signature", None)
+    if device is not None:
+        try:
+            device.disconnect()
+        except Exception:
+            LOGGER.debug("Disconnecting cached device raised", exc_info=True)
+
+
+def _session_device_ready(params: Optional[Dict[str, Any]]) -> bool:
+    if params is None:
+        return False
+    return (
+        st.session_state.get("_connected_device") is not None
+        and st.session_state.get("_connected_device_signature") == _connection_signature(params)
+    )
+
+
+def _requires_device_connection(
+    params: Optional[Dict[str, Any]],
+    *,
+    simulate: bool,
+    use_imported_data: bool,
+    imported_data: Optional[np.ndarray],
+) -> bool:
+    if params is None or simulate:
+        return False
+    if use_imported_data and imported_data is not None:
+        return False
+    device = str(params.get("Device") or "").strip().lower()
+    return device not in {"offline", "file"}
+
+
+def connect_device_for_run(params: Dict[str, Any]) -> tuple[DeviceInterface, str]:
+    """Connect to the configured device, probe a short window, and keep it ready."""
+    device = DeviceFactory.create(params)
+    aux = _resolve_aux_channels(params)
+    probe_s = 0.5
+    try:
+        device.connect()
+        sample = _as_2d_array(device.acquire(probe_s, aux))
+
+        device_name = str(params.get("Device", "")).lower()
+
+        n_eeg = int(params.get("Parameters", {}).get("NumberEEGChannels", 0))
+        n_aux = int(params.get("Parameters", {}).get("NumberAUXChannels", 0))
+
+        if device_name == "unicorn":
+            n_keep = n_eeg
+        elif device_name == "actichamp":
+            n_keep = n_eeg + n_aux
+        else:
+            n_keep = sample.shape[1]
+
+        sample = sample[:, :n_keep]
+        if sample.size == 0 or sample.shape[0] == 0:
+            raise RuntimeError("Connected, but no samples were received (device may still be settling).")
+        eff_fs = sample.shape[0] / probe_s
+        selected_s = _selected_recording_seconds(params)
+        selected_text = f"Selected recording: {selected_s:.0f}s" if selected_s else "Selected recording length not set"
+        return device, f"Streaming - {sample.shape[1]} channels, ~{eff_fs:.0f} Hz. {selected_text}."
+    except Exception:
+        try:
+            device.disconnect()
+        except Exception:
+            LOGGER.debug("Device disconnect after failed connect raised", exc_info=True)
+        raise
+
+
+def verify_device_connection(params: Dict[str, Any]) -> tuple[bool, str]:
+    """Connect to the configured device and confirm it streams a short window.
+
+    Returns (ok, message). Used as a pre-flight 'first-connect confirm' so a recording
+    isn't started against a device that hasn't actually come up / is still settling.
+    """
+    device: Optional[DeviceInterface] = None
+    try:
+        device, msg = connect_device_for_run(params)
+        return True, msg
+    finally:
+        if device is not None:
+            try:
+                device.disconnect()
+            except Exception:  # pragma: no cover - best-effort cleanup
+                LOGGER.debug("Device disconnect after verify raised", exc_info=True)
+
+
+def _sanitize_stem(name: Any) -> str:
+    """Filesystem/BIDS-safe stem: keep alphanumerics, '-' and '_'; spaces become '_'."""
+    text = str(name or "").strip()
+    text = re.sub(r"\s+", "_", text)
+    text = re.sub(r"[^A-Za-z0-9_-]", "", text)
+    return text.strip("_-")
+
+
+def next_run_index(root: Path, stem_base: str) -> int:
+    """Next free run number for exports whose name starts from `stem_base`, under `root`.
+
+    Every export used to land on the same filename, so exporting a second recording into a
+    dataset folder silently destroyed the first. Runs are numbered instead, which is also
+    how BIDS distinguishes repeats of the same task.
+    """
+    root = Path(root)
+    if not root.exists() or not stem_base:
+        return 1
+    pattern = re.compile(rf"{re.escape(stem_base)}.*run-(\d+)", re.IGNORECASE)
+    highest = 0
+    for path in root.rglob("*"):
+        match = pattern.search(path.name)
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return highest + 1
+
+
+def dataset_recording_stem(params: Dict[str, Any]) -> str:
+    """The base filename a recording is saved under (from the operator's Filename)."""
+    pblock = params.get("Parameters", {}) if isinstance(params, dict) else {}
+    part = (params.get("Metadata") or {}).get("Participant") or {}
+    subject = str(part.get("Code") or "01").replace(" ", "") or "01"
+    task = str(params.get("Method") or "task").lower()
+    return _sanitize_stem(pblock.get("Filename")) or f"{subject}_{task}"
+
+
+def save_recording_to_dataset(
+    data: Any, params: Dict[str, Any], folder: Path, *, overwrite: bool = False
+) -> tuple[str, Path]:
+    """Save a run into the dataset: ONE ``<folder-name>.jsonld`` + ``raw_data/<run>.parquet``.
+
+    A dataset is one folder with a single SBIDS JSON-LD named after the folder; every run is
+    appended to it (the format from the CortiPy paper) and its raw data goes to a Parquet in
+    ``raw_data/`` named after the run's Filename. The JSON-LD carries the full config verbatim
+    — including the UNICORN COM port — so a loaded dataset can restore it. No params.json /
+    data.npz.
+
+    Returns ``(status, jsonld_path)``: ``"saved"``, or ``"exists"`` when a run of that name is
+    already in the dataset and ``overwrite`` is False (so the caller can overwrite or rename).
+    """
+    from cortipy.shared.bids import BIDSLoadResult, _coerce_to_raw_array
+    from cortipy.shared.dataset import _export_recording_data, _meta_from_result
+    from cortipy.shared.sbids import SbidsExporter
+
+    folder = Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
+    stem = dataset_recording_stem(params)
+    jsonld = folder / f"{folder.name}.jsonld"
+
+    # Open the existing dataset to append to it, or start a fresh one named after the folder.
+    exporter: Optional[SbidsExporter] = None
+    if jsonld.exists():
+        try:
+            exporter = SbidsExporter.from_document(json.loads(jsonld.read_text(encoding="utf-8")))
+        except Exception:
+            LOGGER.exception("Could not reopen dataset %s; starting a fresh document", jsonld.name)
+    if exporter is None:
+        exporter = SbidsExporter(dataset_id=(_sanitize_stem(folder.name) or "DATASET"), dataset_name=folder.name)
+
+    raw_dir = folder / "raw_data"
+
+    if not overwrite:
+        recording_exists = exporter.has_recording(stem) or any(
+            raw_dir.glob(f"{stem}.*")
+        )
+        if recording_exists:
+            return "exists", jsonld
+
+    arr = np.asarray(data, dtype=float)
+
+    if arr.ndim != 2:
+        raise ValueError("Recording data must be 2-D (samples x channels).")
+    pblock = params.get("Parameters", {}) if isinstance(params, dict) else {}
+    fs = float(coerce_number(pblock.get("fs")) or 250.0)
+    chans = params.get("Channels") or []
+    ch_names = [(c.get("Position") or c.get("Channel")) for c in chans] or None
+    if ch_names and len(ch_names) != arr.shape[1]:
+        ch_names = None  # montage does not match the data width; fall back to Ch1..N
+    raw = _coerce_to_raw_array(arr, fs, ch_names, None)
+    result = BIDSLoadResult(
+        raw=raw, data=arr, sampling_rate=fs, events=None, channels=None,
+        metadata={"params": params}, source_path=Path(stem), ancillary_files=[],
+    )
+
+
+    if overwrite:
+        exporter.remove_recording(stem)
+        for stale in raw_dir.glob(f"{stem}.*"):
+            try:
+                stale.unlink()
+            except OSError:
+                pass
+
+    try:
+        dest_path, content_url, file_size = _export_recording_data(
+            raw=result.raw, data=result.data, raw_dir=raw_dir, export_format="parquet", stem=stem,
+        )
+    except (ImportError, ModuleNotFoundError, OSError, ValueError) as exc:
+        # Parquet requires an optional engine (pyarrow/fastparquet). Keep the recording
+        # saveable on installations that do not have one, while retaining the preferred
+        # format whenever it is available.
+        LOGGER.warning("Parquet export failed for %s; falling back to NPZ: %s", stem, exc)
+        dest_path, content_url, file_size = _export_recording_data(
+            raw=result.raw, data=result.data, raw_dir=raw_dir, export_format="npz", stem=stem,
+        )
+    meta = _meta_from_result(result, content_url)
+    participant = (params.get("Metadata") or {}).get("Participant") or {}
+    exporter.add_recording_from_cortipy_json(
+        meta_json=meta, raw_file=str(dest_path),
+        subject_id=participant.get("Code"), file_size_bytes=file_size, content_url=content_url,
+        start_time_iso=params.get("Timestamp") or None,
+    )
+    temporary_jsonld = jsonld.with_suffix(".jsonld.tmp")
+    exporter.save(str(temporary_jsonld))
+    temporary_jsonld.replace(jsonld)
+    return "saved", jsonld
+
+
+def export_recording(data: Any, params: Dict[str, Any], out_dir: Path, container: str, raw_format: str) -> Path:
+    """Export a recording as BIDS or JSON-LD metadata with a selectable raw layer."""
+    from cortipy.shared.bids import BIDSLoader, BIDSLoadResult, _coerce_to_raw_array
+
+    arr = np.asarray(data, dtype=float)
+    if arr.ndim != 2:
+        raise ValueError("Recording data must be 2-D (samples x channels).")
+    pblock = params.get("Parameters", {}) if isinstance(params, dict) else {}
+    fs = float(coerce_number(pblock.get("fs")) or 250.0)
+    chans = params.get("Channels") or []
+    ch_names = [(c.get("Position") or c.get("Channel")) for c in chans] or None
+    if ch_names and len(ch_names) != arr.shape[1]:
+        ch_names = None  # fall back to Ch1..N when the montage doesn't match the data width
+    part = (params.get("Metadata") or {}).get("Participant") or {}
+    subject = (str(part.get("Code") or "01").replace(" ", "") or "01")
+    task = str(params.get("Method") or "task").lower()
+    # Honour the filename the operator typed on the session page. It used to be ignored, so
+    # exports were always named sub_task_run regardless of what was entered.
+    custom = _sanitize_stem(pblock.get("Filename"))
+    stem_base = custom or f"{subject}_{task}"
+    fmt = raw_format.lower()
+    out_dir = Path(out_dir)
+    container_key = str(container or "").upper().replace("-", "").replace("_", "").replace(" ", "")
+
+    if container_key == "BIDS":
+        if fmt == "npz":
+            raise ValueError(
+                "BIDS export does not support NPZ raw data. "
+                "Choose JSON-LD + NPZ, or use BIDS + Parquet/EDF."
+            )
+        root = out_dir / "bids_export"
+        # BIDS keeps its sub-/task- structure; a custom filename becomes the task label so it
+        # still shows in the path. Number the run instead of overwriting the previous one.
+        bids_task = custom or task
+        run = f"{next_run_index(root, f'sub-{subject}_task-{bids_task}'):02d}"
+        # Standard BIDS sidecars drop CortiPy's rich config (Method, StimFreq, montage,
+        # participant). Stash the full params under a namespaced sidecar key — BIDS tolerates
+        # unknown keys, and it lets the loader restore the session losslessly on re-import.
+        cortipy_meta = {k: v for k, v in params.items() if k != "data"}
+        BIDSLoader(root).to_bids(
+            arr, sampling_rate=fs, ch_names=ch_names, subject=subject, task=bids_task, run=run,
+            format=fmt, overwrite=False,
+            dataset_description={"Name": custom or params.get("Method") or "CortiPy export"},
+            sidecar={"CortiPyParameters": cortipy_meta},
+        )
+        return root
+
+    from cortipy.shared.dataset import CortiDataset  # JSON-LD/SBIDS path
+    raw = _coerce_to_raw_array(arr, fs, ch_names, None)
+    root = out_dir / "jsonld_export"
+    run = next_run_index(root, stem_base)
+    result = BIDSLoadResult(
+        raw=raw, data=arr, sampling_rate=fs, events=None, channels=None,
+        metadata={"params": params},
+        source_path=Path(f"{stem_base}_run-{run:02d}_scalpdata"), ancillary_files=[],
+    )
+    # The stem must be unique per recording: to_sbids derives the dataset @id, the dataset
+    # name AND the raw file name from it, so a fixed stem meant every export overwrote the
+    # last one. No BIDS "sub-" entity prefix here — it leaked into urn:dataset:... and came
+    # back doubled on re-import.
+    out = root / f"sbids_meta_{stem_base}_run-{run:02d}.jsonld"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    CortiDataset(result).to_sbids(out, export_format=fmt)
+    return out.parent
+
+
+def _simulated_stimulus_frequencies(params: Dict[str, Any]) -> List[float]:
+    """The frequencies the paradigm's evaluator will look for."""
+    parameters = params.get("Parameters", {}) if isinstance(params, dict) else {}
+    method = str(params.get("Method") or "").strip().lower()
+    out: List[float] = []
+
+    def _add(value: Any) -> None:
+        number = coerce_number(value)
+        if number and float(number) > 0:
+            out.append(float(number))
+
+    if method == "ssvep":
+        stim = parameters.get("StimFreq")
+        for entry in stim if isinstance(stim, (list, tuple)) else [stim]:
+            _add(entry)
+    elif method == "assr":
+        _add(parameters.get("ASSRModulationFrequency"))
+    elif method == "alpha":
+        out.append(10.0)  # the alpha rhythm is the point of the run
+    return out
+
+
+def simulated_recording_data(params: Dict[str, Any]) -> np.ndarray:
+    """Synthetic EEG for "Simulate run".
+
+    This used to return np.zeros(), so every simulated run produced a flat line and every
+    chart drawn from it was empty — which read as "the plots are broken". Generate actual
+    EEG-like signal instead, carrying the paradigm's stimulus frequency so the evaluator
+    has something to find.
+    """
+    parameters = params.get("Parameters", {}) if isinstance(params, dict) else {}
+    fs = float(coerce_number(parameters.get("fs")) or 250.0)
+    recording_seconds = _selected_recording_seconds(params) or 1.0
+    n_channels_value = coerce_number(
+        parameters.get("NumberEEGChannels")
+        or len(params.get("Channels", []))
+        or 8
+    )
+    n_channels = max(1, int(n_channels_value or 8))
+
+    from cortipy.shared.dataset import CortiDataset
+
+    dataset = CortiDataset.generate_eeg_samples(
+        sampling_rate=fs,
+        duration_s=float(recording_seconds),
+        channel_count=n_channels,
+        channel_names=[c.get("Position") or c.get("Channel") for c in params.get("Channels", [])][:n_channels] or None,
+        seed=0,  # deterministic: the same configuration simulates the same run
+    )
+    data = np.asarray(dataset.result.data, dtype=float)  # microvolts
+
+    n_samples = max(1, int(round(fs * recording_seconds)))
+    if data.shape[0] > n_samples:
+        data = data[:n_samples]
+
+    # Drive the paradigm's own frequency on top of the background. The generator assigns
+    # its base frequencies random amplitudes, so the stimulus has to be added explicitly
+    # or the evaluator may find nothing at the frequency the operator configured.
+    stim_freqs = _simulated_stimulus_frequencies(params)
+    if stim_freqs and data.size:
+        t = np.arange(data.shape[0], dtype=float) / fs
+        for freq in stim_freqs:
+            data += 18.0 * np.sin(2.0 * np.pi * freq * t)[:, None]
+    return data
+
+
+def _folder_has_session(path: Path) -> bool:
+    """True when a folder holds something the loaders can turn back into a session.
+
+    That means CortiPy's own ``params.json`` **or** an exported metadata file — JSON-LD
+    (``.jsonld``, the default export container) or a plain settings ``.json``. Only these
+    are resumable; an interrupted run or an empty folder is not. JSON-LD counts because
+    ``_load_dataset_folder`` already knows how to read it back into params.
+    """
+    if (path / "params.json").is_file():
+        return True
+    if any(path.rglob("*.jsonld")):
+        return True
+    if any(any(dd.parent.glob("sub-*")) for dd in path.rglob("dataset_description.json")):
+        return True  # a BIDS export (dataset_description.json beside a sub-* directory)
+    return any(p.name.lower() != "dataset_description.json" for p in path.glob("*.json"))
+
+
+@st.cache_data
+def list_saved_sessions(base_dir: Path) -> List[Path]:
+    """Resumable session folders under ``base_dir``, newest first.
+
+    Only folders that actually hold loadable session metadata count (see
+    :func:`_folder_has_session`). A run interrupted before it saved has nothing to resume
+    from — listing it made it "the latest session" and then "Continue experiment" failed
+    with *params.json missing*.
+    """
+    if not base_dir.exists():
+        return []
+    sessions = [path for path in base_dir.iterdir() if path.is_dir() and _folder_has_session(path)]
+    return sorted(sessions, reverse=True)
+
+
+def run_pipeline_once(
+    params: Dict[str, Any],
+    save_dir: Path,
+    live_view: Optional[LiveViewService] = None,
+    connected_device: Optional[DeviceInterface] = None,
+    target_dir: Optional[Path] = None,
+) -> tuple[Dict[str, Any], Optional[Path]]:
+    provider_called = {"done": False}
+    captured: Dict[str, Any] = {}
+
+    def provider(_: Optional[Dict[str, Any]]):
+        if provider_called["done"]:
+            return None
+        provider_called["done"] = True
+        return params
+
+    def save_and_capture(run_params: Dict[str, Any]) -> None:
+        # Capture the finished params (data included) but do NOT write params.json/data.npz.
+        # The app writes the recording as a single JSON-LD + Parquet into the dataset folder.
+        captured["params"] = run_params
+        captured["path"] = Path(target_dir) if target_dir else Path(save_dir)
+
+    def attach_context(context):
+        if live_view is not None:
+            context.attach_service("live_view", live_view)
+        if connected_device is not None:
+            if live_view is not None:
+                context.device = live_view.wrap_device(connected_device, context.params)
+            else:
+                context.device = connected_device
+
+    hooks = PipelineHooks(
+        params_provider=provider,
+        save_callback=save_and_capture,
+        should_continue=lambda _: False,
+        context_hook=attach_context,
+    )
+    MeasurementPipeline(hooks=hooks).run()
+    return captured.get("params", params), captured.get("path")
+
+
+def _load_session_contents(session_dir: Path) -> tuple[Optional[Dict[str, Any]], Optional[np.ndarray]]:
+    """Load a session's params + data, accepting params.json **or** a JSON-LD/JSON export.
+
+    params.json is CortiPy's own per-run format, but JSON-LD (.jsonld) is the default
+    export container and is equally a valid, richer description of a session — the app
+    already converts it to params on upload. Resuming/loading a folder therefore accepts
+    either, via the JSON-LD-aware `_load_dataset_folder`, instead of only params.json.
+    """
+    params_content, data_array, message = _load_dataset_folder(session_dir)
+    if params_content is None:
+        st.warning(message)
+    return params_content, data_array
+
+
+def _load_data_file_path(path: Path) -> Optional[np.ndarray]:
+    suffix = path.suffix.lower()
+    if suffix == ".npz":
+        return _load_npz_array(path)
+    if suffix == ".parquet":
+        return _load_parquet_array(path)
+    if suffix == ".edf":
+        return _load_edf_array(path)
+    return None
+
+
+def _load_settings_file_path(path: Path) -> Dict[str, Any]:
+    suffix = path.suffix.lower()
+    content = path.read_bytes()
+    if suffix in {".toml", ".tml"}:
+        return normalize_params(tomllib.loads(content.decode("utf-8")))
+    parsed = json.loads(content.decode("utf-8"))
+    if suffix == ".jsonld":
+        params = _params_from_jsonld_doc(parsed, path.name)
+        if params is None:
+            raise ValueError("JSON-LD file did not contain usable CortiPy metadata.")
+        return params
+    return normalize_params(parsed)
+
+
+def _dataset_dir_for_settings_file(path: Path) -> Path:
+    parent = path.parent
+    if parent.name in {"jsonld_export", "bids_export"}:
+        return parent.parent
+    return parent
+
+
+def _open_settings_file_dialog(initial_dir: Path) -> Optional[Path]:
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except Exception as exc:
+        raise RuntimeError(f"Native file dialog is unavailable: {exc}") from exc
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        root.attributes("-topmost", True)
+    except Exception:
+        pass
+    try:
+        selected = filedialog.askopenfilename(
+            title="Load CortiPy settings",
+            initialdir=str(initial_dir if initial_dir.exists() else Path.cwd()),
+            filetypes=[
+                ("CortiPy settings", "*.json *.jsonld *.toml *.tml"),
+                ("JSON settings", "*.json"),
+                ("JSON-LD metadata", "*.jsonld"),
+                ("TOML settings", "*.toml *.tml"),
+                ("All files", "*.*"),
+            ],
+        )
+    finally:
+        root.destroy()
+    return Path(selected) if selected else None
+
+
+def _find_first_existing_file(base_dir: Path, candidates: List[str]) -> Optional[Path]:
+    for candidate in candidates:
+        path = base_dir / candidate
+        if path.exists() and path.is_file():
+            return path
+    return None
+
+
+def _minimal_params_from_bids(result, root: Path) -> Dict[str, Any]:
+    """Best-effort params for a BIDS export with no embedded CortiPy config.
+
+    Standard BIDS carries the sampling rate and channel names but not CortiPy's Method /
+    stimulus / montage, so those are approximated. Loading is still useful — you get the
+    data and channels back to view or replay.
+    """
+    ch_names = list(getattr(result.raw, "ch_names", []) or [])
+    name = (result.metadata or {}).get("dataset_description", {}).get("Name")
+    method = name if name in METHOD_SCHEMAS else "Alpha"
+    channels = [{"Channel": f"Ch {i + 1}", "Position": nm, "Active": True} for i, nm in enumerate(ch_names)]
+    return {
+        "Method": method,
+        "Device": "Offline",
+        "Parameters": {"fs": float(result.sampling_rate), "NumberEEGChannels": len(ch_names)},
+        "Channels": channels,
+    }
+
+
+def _load_bids_dataset(dataset_dir: Path):
+    """Load a BIDS export back into (params, data, source_name), or None if it is not BIDS.
+
+    CortiPy embeds the full params under the sidecar's ``CortiPyParameters`` key, so its own
+    BIDS exports round-trip losslessly; a third-party BIDS dataset falls back to a minimal
+    reconstruction.
+    """
+    root = None
+    for description in sorted(dataset_dir.rglob("dataset_description.json")):
+        if any(description.parent.glob("sub-*")):
+            root = description.parent
+            break
+    if root is None:
+        return None
+    try:
+        from cortipy.shared.bids import BIDSLoader
+
+        result = BIDSLoader(root).read_bids()
+    except Exception:
+        return None
+
+    data = np.asarray(result.data, dtype=float)
+    n_ch = len(getattr(result.raw, "ch_names", []) or [])
+    if data.ndim == 2 and n_ch and data.shape[1] != n_ch and data.shape[0] == n_ch:
+        data = data.T  # normalise to (samples, channels)
+
+    embedded = None
+    for sidecar in (result.metadata or {}).get("sidecars", {}).values():
+        if isinstance(sidecar, dict) and isinstance(sidecar.get("CortiPyParameters"), dict):
+            embedded = sidecar["CortiPyParameters"]
+            break
+    params = normalize_params(embedded) if embedded else _minimal_params_from_bids(result, root)
+    return params, data, result.source_path.name
+
+
+def _data_for_selected_params(
+    selected_path: Path, params_loaded: Dict[str, Any], dataset_dir: Path
+) -> Optional[np.ndarray]:
+    """Load the data that belongs to a specifically chosen params file.
+
+    The file dialog can point at a *non-newest* run's params.json in a multi-run folder;
+    its DataFile names that run's data, so we resolve it beside the selected file first and
+    only fall back to a folder-level load when the params carry no DataFile pointer.
+    """
+    datafile = params_loaded.get("DataFile") if isinstance(params_loaded, dict) else None
+    if datafile:
+        name = Path(str(datafile))
+        for candidate in (
+            selected_path.parent / name,
+            dataset_dir / name,
+            dataset_dir / "raw_data" / name.name,
+            dataset_dir / "jsonld_export" / "raw_data" / name.name,
+        ):
+            if candidate.exists() and candidate.is_file():
+                return _load_data_file_path(candidate)
+        return None  # named data is missing — do not substitute another run's data
+    _, data_loaded, _ = _load_dataset_folder(dataset_dir)
+    return data_loaded
+
+
+def _load_dataset_folder(dataset_dir: Path) -> tuple[Optional[Dict[str, Any]], Optional[np.ndarray], str]:
+    """Load params/metadata plus raw data from an existing dataset folder."""
+    dataset_dir = Path(dataset_dir).expanduser()
+    if not dataset_dir.exists() or not dataset_dir.is_dir():
+        return None, None, f"Dataset folder not found: {dataset_dir}"
+
+    params_content: Optional[Dict[str, Any]] = None
+    source_label = ""
+    # A folder reused as an active dataset holds numbered recordings (params.json = run 1,
+    # then params_run-02.json, …). Load the newest run so "load" shows the latest recording.
+    # Sort by the numeric run index, not lexically, or run-100 would rank below run-99.
+    def _run_index(path: Path) -> int:
+        match = re.search(r"run-(\d+)", path.name)
+        return int(match.group(1)) if match else 0
+
+    numbered = sorted(dataset_dir.glob("params_run-*.json"), key=_run_index)
+    params_path: Optional[Path] = numbered[-1] if numbered else _find_first_existing_file(dataset_dir, ["params.json"])
+    if params_path is None:
+        jsonld_files = sorted(dataset_dir.rglob("*.jsonld"))
+        if jsonld_files:
+            params_path = jsonld_files[0]
+    if params_path is None:
+        json_files = sorted(path for path in dataset_dir.glob("*.json") if path.name.lower() != "dataset_description.json")
+        if json_files:
+            params_path = json_files[0]
+
+    if params_path is not None:
+        try:
+            parsed = json.loads(params_path.read_text(encoding="utf-8"))
+            if params_path.suffix.lower() == ".jsonld":
+                params_content = _params_from_jsonld_doc(parsed, params_path.name)
+            else:
+                params_content = normalize_params(parsed)
+            source_label = params_path.name
+        except Exception as exc:
+            return None, None, f"Failed to load settings from {params_path.name}: {exc}"
+
+    data_array: Optional[np.ndarray] = None
+    data_path: Optional[Path] = None
+    declared_datafile = params_content.get("DataFile") if params_content else None
+    if declared_datafile:
+        # The params name a specific run's data file. Use ONLY that — if it is missing, do
+        # not silently pair a different run's data.npz (that would describe the wrong columns).
+        raw_path = Path(str(declared_datafile))
+        raw_candidates = [
+            dataset_dir / raw_path,
+            dataset_dir / "raw_data" / raw_path.name,
+            dataset_dir / "jsonld_export" / "raw_data" / raw_path.name,
+        ]
+        data_path = next((path for path in raw_candidates if path.exists() and path.is_file()), None)
+    else:
+        # No explicit pointer (legacy or foreign folder): fall back to the obvious data file.
+        data_path = _find_first_existing_file(dataset_dir, ["data.npz"])
+        if data_path is None:
+            for pattern in ("*.npz", "*.parquet", "*.edf"):
+                matches = sorted(dataset_dir.rglob(pattern))
+                if matches:
+                    data_path = matches[0]
+                    break
+    if data_path is not None:
+        data_array = _load_data_file_path(data_path)
+
+    if params_content is None:
+        bids = _load_bids_dataset(dataset_dir)
+        if bids is not None:
+            bids_params, bids_data, source_name = bids
+            return bids_params, bids_data, f"Loaded BIDS export ({source_name}) from {dataset_dir.name}."
+        return None, data_array, f"No params.json, JSON-LD, BIDS, or settings data found in {dataset_dir}."
+
+    data_note = f" with {data_path.name}" if data_path is not None and data_array is not None else ""
+    return params_content, data_array, f"Loaded {source_label or 'settings'}{data_note} from {dataset_dir.name}."
+
+
+def active_dataset_path(default_save: str | Path) -> Optional[Path]:
+    raw = str(st.session_state.get("active_dataset_dir") or "").strip()
+    if not raw:
+        return None
+    path = Path(raw).expanduser()
+    if not path.is_absolute():
+        path = Path(default_save).expanduser() / path
+    return path
+
+
+def render_saved_sessions(base_dir: Path) -> tuple[Optional[tuple[str, Dict[str, Any], Optional[np.ndarray]]], List[tuple[str, Dict[str, Any], Optional[np.ndarray]]]]:
+    st.subheader("Saved sessions")
+    refresh = st.button("Refresh list")
+    if refresh:
+        list_saved_sessions.clear()
+    sessions = list_saved_sessions(base_dir)
+    if not sessions:
+        st.info("No sessions saved yet.")
+        return None, []
+
+    primary = st.selectbox("Session directory", options=sessions, format_func=lambda p: p.name)
+    compare_selection = st.multiselect(
+        "Sessions to compare / overlay",
+        options=sessions,
+        default=[primary] if primary else [],
+        format_func=lambda p: p.name,
+    )
+
+    params_content: Optional[Dict[str, Any]] = None
+    data_array: Optional[np.ndarray] = None
+    if primary:
+        params_content, data_array = _load_session_contents(primary)
+
+    cols = st.columns(2)
+    with cols[0]:
+        if params_content:
+            st.caption("params.json")
+            st.json(params_content)
+            if st.button("Load session into editor", key=f"load_session_{primary.name}"):
+                load_params_into_state(normalize_params(params_content), data_array)
+                # Loading fills the editor but must NOT become the save target, or the next
+                # recording would overwrite this dataset. Recording writes a fresh folder.
+                st.session_state["active_dataset_dir"] = ""
+                st.session_state.pop("active_dataset_dir_input", None)
+                st.session_state["last_results"] = {
+                    "label": primary.name,
+                    "params": normalize_params(params_content),
+                    "data": data_array,
+                }
+                st.session_state["_flash"] = (
+                    f"Loaded {primary.name} into the editor. The next recording is saved to a new "
+                    "folder — this dataset is left untouched."
+                )
+                st.rerun()
+        else:
+            st.warning("params.json missing.")
+    with cols[1]:
+        if data_array is not None:
+            st.caption("data.npz (arrays and shapes)")
+            st.write({"data": data_array.shape})
+        else:
+            st.info("data.npz missing.")
+
+    primary_payload: Optional[tuple[str, Dict[str, Any], Optional[np.ndarray]]] = None
+    chart_button = st.button("Show charts for selected session", key="show_primary_charts")
+    if chart_button and params_content:
+        normalized = normalize_params(params_content)
+        primary_payload = (primary.name, normalized, data_array)
+        st.session_state["last_results"] = {
+            "label": primary.name,
+            "params": normalized,
+            "data": data_array,
+        }
+
+    compare_payloads: List[tuple[str, Dict[str, Any], Optional[np.ndarray]]] = []
+    compare_button = st.button("Compare selected sessions", key="compare_sessions")
+    if compare_button:
+        for path in compare_selection:
+            params_loaded, data_loaded = _load_session_contents(path)
+            if params_loaded:
+                compare_payloads.append((path.name, normalize_params(params_loaded), data_loaded))
+    return primary_payload, compare_payloads
+
+
+def handle_upload(target, *, embedded: bool = False) -> None:
+    # `embedded` renders the uploaders directly into `target` (no expander of its own),
+    # for callers that already sit inside an expander — Streamlit forbids nesting expanders.
+    if embedded:
+        from contextlib import nullcontext
+
+        target.caption("Attach a config or data file")
+        container = nullcontext(target)
+    else:
+        container = target.expander("Fallback upload / attach data", expanded=False)
+    with container:
+        uploaded = st.file_uploader(
+            "Load JSON/TOML config, params.json, or JSON-LD metadata",
+            type=["json", "jsonld", "toml", "tml"],
+            key="config_uploader",
+        )
+        data_upload = st.file_uploader(
+            "Attach data file(s): .npz, .parquet, .edf, or JSON-LD + raw file",
+            type=["npz", "parquet", "edf", "jsonld"],
+            accept_multiple_files=True,
+            key="data_uploader_v2",
+        )
+
+        if uploaded:
+            config_bytes = uploaded.getvalue()
+            config_digest = f"{uploaded.name}:{hashlib.sha1(config_bytes).hexdigest()}"
+            if st.session_state.get("_last_config_upload_digest") == config_digest:
+                st.caption(f"Loaded '{uploaded.name}'. Upload a different file to apply new settings.")
+            else:
+                suffix = Path(uploaded.name).suffix.lower()
+                try:
+                    if suffix in {".toml", ".tml"}:
+                        config = tomllib.loads(config_bytes.decode("utf-8"))
+                        params = normalize_params(config)
+                    elif suffix == ".jsonld":
+                        config = json.loads(config_bytes.decode("utf-8"))
+                        params = _params_from_jsonld_doc(config, uploaded.name)
+                        if params is None:
+                            return
+                    else:
+                        config = json.loads(config_bytes.decode("utf-8"))
+                        params = normalize_params(config)
+                except Exception as exc:  # pragma: no cover
+                    st.error(f"Failed to parse uploaded config: {exc}")
+                else:
+                    load_params_into_state(params)
+                    st.session_state["_last_config_upload_digest"] = config_digest
+                    st.session_state["_flash"] = f"Imported parameters from '{uploaded.name}'."
+                    st.rerun()
+
+        if data_upload:
+            uploads = list(data_upload) if isinstance(data_upload, list) else [data_upload]
+            jsonld_upload = next((item for item in uploads if Path(item.name).suffix.lower() == ".jsonld"), None)
+            data_file = next((item for item in uploads if Path(item.name).suffix.lower() in {".npz", ".parquet", ".edf"}), None)
+            upload_digest = hashlib.sha1(
+                b"".join(item.name.encode("utf-8") + b"\0" + item.getvalue() for item in uploads)
+            ).hexdigest()
+            already_loaded = st.session_state.get("_last_data_upload_digest") == upload_digest
+            if already_loaded:
+                st.caption("Attached data already loaded. Upload different files to replace it.")
+                return
+            params_from_jsonld: Optional[Dict[str, Any]] = None
+            if jsonld_upload is not None:
+                try:
+                    params_from_jsonld = _params_from_jsonld_doc(
+                        json.loads(jsonld_upload.getvalue().decode("utf-8")),
+                        jsonld_upload.name,
+                    )
+                except Exception as exc:  # pragma: no cover
+                    st.error(f"Failed to parse uploaded JSON-LD: {exc}")
+                    params_from_jsonld = None
+            data_array = _load_uploaded_data_array(data_file) if data_file is not None else None
+            if data_array is not None:
+                st.session_state["imported_data"] = data_array
+                st.session_state["use_imported_data"] = True
+                st.success(f"Attached data from '{data_file.name}'.")
+                st.session_state["_last_data_upload_digest"] = upload_digest
+            if params_from_jsonld is not None:
+                # An explicitly uploaded data file means replay was the intent.
+                load_params_into_state(
+                    params_from_jsonld, data_array, enable_replay=data_array is not None
+                )
+                st.session_state["_last_data_upload_digest"] = upload_digest
+                st.session_state["_flash"] = f"Imported JSON-LD metadata from '{jsonld_upload.name}'."
+                st.rerun()
+
+def _open_folder_dialog(initial_dir: Path, title: str = "Select dataset folder") -> Optional[Path]:
+    """Native Explorer/Finder folder picker. Returns the chosen folder, or None if cancelled."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+    except Exception as exc:
+        raise RuntimeError(f"Native folder dialog is unavailable: {exc}") from exc
+
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        root.attributes("-topmost", True)
+    except Exception:
+        pass
+    try:
+        selected = filedialog.askdirectory(
+            title=title,
+            initialdir=str(initial_dir if initial_dir.exists() else Path.cwd()),
+            mustexist=False,  # let "New" create/select a fresh folder in the dialog
+        )
+    finally:
+        root.destroy()
+    return Path(selected) if selected else None
+
+
+def _dataset_recording_count(folder: Path) -> int:
+    """How many recordings a dataset folder already holds (best effort)."""
+    folder = Path(folder)
+    if not folder.exists():
+        return 0
+    count = len(list(folder.glob("params_run-*.json")))
+    if (folder / "params.json").is_file():
+        count += 1
+    if count == 0:  # JSON-LD-only / exported dataset
+        count = len({p.name for p in folder.rglob("*.jsonld")})
+    return count
+
+
+@st.dialog("Dataset looks incomplete")
+def _incomplete_dataset_dialog(folder: str, message: str) -> None:
+    st.warning(f"'{Path(folder).name}' does not contain a readable CortiPy dataset.")
+    st.caption(message)
+    st.caption("Use it as a fresh dataset (new recordings will be created here), or pick another folder.")
+    cols = st.columns(2)
+    if cols[0].button("Use as new dataset", type="primary", width="stretch"):
+        Path(folder).mkdir(parents=True, exist_ok=True)
+        st.session_state["active_dataset_dir"] = str(folder)
+        st.session_state.pop("active_dataset_dir_input", None)
+        st.session_state.pop("_dataset_incomplete", None)
+        st.session_state["_dataset_msg"] = ("ok", f"New dataset at '{Path(folder).name}'. Recordings are saved here.")
+        st.rerun()
+    if cols[1].button("Cancel", width="stretch"):
+        st.session_state.pop("_dataset_incomplete", None)
+        st.rerun()
+
+
+def render_sidebar_controls() -> SidebarControls:
+    sidebar = st.sidebar
+    sidebar.title("Controls")
+
+    # ------------------------------------------------------------------
+    # 1 · Dataset — pick where recordings go: a new folder, or an existing dataset to extend.
+    # ------------------------------------------------------------------
+    default_save = str(DEFAULT_SAVE_DIR)  # internal base; the active dataset folder is the real target
+    with sidebar.container(border=True):
+        st.markdown("**1 · Dataset**")
+        active = str(st.session_state.get("active_dataset_dir") or "").strip()
+
+        pick_cols = st.columns(2)
+        new_clicked = pick_cols[0].button(
+            "＋ New…", key="dataset_new_btn", width="stretch",
+            help="Pick a folder for a fresh dataset. Every recording is auto-named and saved into it.",
+        )
+        load_clicked = pick_cols[1].button(
+            "📂 Load…", key="dataset_load_btn", width="stretch",
+            help="Pick an existing dataset folder to resume and extend it (reads its JSON-LD / params).",
+        )
+
+        if new_clicked or load_clicked:
+            try:
+                initial = Path(active).parent if active else DEFAULT_SAVE_DIR
+                folder = _open_folder_dialog(initial, title="Select dataset folder")
+            except Exception as exc:
+                st.session_state["_dataset_msg"] = ("err", f"Could not open the folder dialog: {exc}")
+            else:
+                if folder is None:
+                    st.session_state["_dataset_msg"] = ("info", "No folder selected.")
+                elif load_clicked:
+                    params_content, data_array, message = _load_dataset_folder(folder)
+                    if params_content:
+                        load_params_into_state(params_content, data_array)
+                        st.session_state["active_dataset_dir"] = str(folder)
+                        st.session_state.pop("active_dataset_dir_input", None)
+                        st.session_state["last_results"] = {
+                            "label": folder.name, "params": params_content, "data": data_array,
+                        }
+                        st.session_state["_dataset_msg"] = (
+                            "ok", f"Loaded dataset '{folder.name}'. New recordings extend it.",
+                        )
+                    else:
+                        # Not a readable dataset -> popup asking what to do.
+                        st.session_state["_dataset_incomplete"] = (str(folder), message)
+                else:  # New
+                    folder.mkdir(parents=True, exist_ok=True)
+                    st.session_state["active_dataset_dir"] = str(folder)
+                    st.session_state.pop("active_dataset_dir_input", None)
+                    st.session_state["_dataset_msg"] = (
+                        "ok", f"New dataset at '{folder.name}'. Recordings are saved here.",
+                    )
+            st.rerun()
+
+        incomplete = st.session_state.get("_dataset_incomplete")
+        if incomplete:
+            _incomplete_dataset_dialog(incomplete[0], incomplete[1])
+
+        msg = st.session_state.pop("_dataset_msg", None)
+        if msg:
+            {"ok": st.success, "info": st.info}.get(msg[0], st.error)(msg[1])
+
+        if active:
+            active_path = Path(active)
+            n = _dataset_recording_count(active_path)
+            st.caption(f"📁 **{active_path.name}**")
+            st.caption(str(active_path))
+        else:
+            st.info("Choose **New** or **Load** to set the dataset folder — otherwise each run creates its own folder.")
+
+    # ------------------------------------------------------------------
+    # 2 · Run mode — one choice replaces the old simulate toggle + replay checkbox.
+    # ------------------------------------------------------------------
+    with sidebar.container(border=True):
+        st.markdown("**2 · Run mode**")
+        imported_data = st.session_state.get("imported_data")
+        run_options = [RUN_MODE_LIVE, RUN_MODE_SIM, RUN_MODE_REPLAY]
+
+        # Seed the selector from the stored flags the first time (or after a load set them),
+        # then let the widget own its state so the operator's choice sticks across reruns.
+        if "run_mode_choice" not in st.session_state:
+            if st.session_state.get("use_imported_data") and imported_data is not None:
+                st.session_state["run_mode_choice"] = RUN_MODE_REPLAY
+            elif _is_simulating():
+                st.session_state["run_mode_choice"] = RUN_MODE_SIM
+            else:
+                st.session_state["run_mode_choice"] = RUN_MODE_LIVE
+        # A load/upload may have requested a mode change. Apply it HERE — before the widget is
+        # instantiated — because Streamlit forbids writing the key afterwards.
+        pending_mode = st.session_state.pop("_pending_run_mode", None)
+        if pending_mode in run_options:
+            st.session_state["run_mode_choice"] = pending_mode
+
+        run_mode = st.radio(
+            "Run mode",
+            run_options,
+            key="run_mode_choice",
+            label_visibility="collapsed",
+        )
+
+        simulate = run_mode == RUN_MODE_SIM
+        # These two flags are the source of truth every other module reads.
+        st.session_state["simulate_run_toggle"] = simulate
+        st.session_state["use_imported_data"] = run_mode == RUN_MODE_REPLAY and imported_data is not None
+
+        if run_mode == RUN_MODE_LIVE:
+            st.caption("Records from the connected hardware.")
+        elif run_mode == RUN_MODE_SIM:
+            st.caption("Generates synthetic EEG and saves it — no device needed.")
+        elif imported_data is None:
+            st.caption("**Load** a dataset above to attach a recording, then this replays it.")
+        else:
+            st.caption("Re-runs analysis on the attached recording — no device needed.")
+
+    # ------------------------------------------------------------------
+    # 3 · Connect & start — unchanged behaviour, relabelled as the final step.
+    # ------------------------------------------------------------------
+    with sidebar.container(border=True):
+        st.markdown("**3 · Connect & start**")
+        snap = current_params_snapshot()
+        imported_data = st.session_state.get("imported_data")
+        use_imported = st.session_state.get("use_imported_data", False)
+        connection_required = _requires_device_connection(
+            snap,
+            simulate=simulate,
+            use_imported_data=use_imported,
+            imported_data=imported_data,
+        )
+
+        if not connection_required and st.session_state.get("_connected_device") is not None:
+            _disconnect_session_device()
+            st.session_state["_device_check"] = (
+                "warn",
+                "Hardware connection released because this mode does not require it.",
+            )
+        connected_device_cached = st.session_state.get("_connected_device") is not None
+        if snap is not None and connected_device_cached and not _session_device_ready(snap):
+            _disconnect_session_device()
+            st.session_state["_device_check"] = ("warn", "Configuration changed. Connect the device again before starting.")
+
+        if st.button(
+            "Connect device",
+            width="stretch",
+            key="test_device_connection",
+            disabled=snap is None or not connection_required,
+            help="Connect, probe, and keep the device ready so Start begins without another connection handshake.",
+        ):
+            if snap is None:
+                st.session_state["_device_check"] = ("warn", "Choose a method and device first.")
+            else:
+                _disconnect_session_device()
+                with st.spinner("Connecting..."):
+                    try:
+                        device, msg = connect_device_for_run(snap)
+                        st.session_state["_connected_device"] = device
+                        st.session_state["_connected_device_signature"] = _connection_signature(snap)
+                        st.session_state["_device_check"] = ("ok", f"{msg} Ready to start.")
+                        # For ActiCHamp, read impedances right away THROUGH the connected device
+                        # (reuses its producer) and fill the electrode table — no extra click.
+                        if (snap.get("Device") or "") in IMPEDANCE_CAPABLE_DEVICES:
+                            st.session_state["_actichamp_impedance_loaded"] = False
+                            _fetch_actichamp_impedances(
+                                snap.get("Parameters", {}).get("fs"), force=True, quiet=True
+                            )
+                    except Exception as exc:
+                        LOGGER.exception("Device connection failed")
+                        st.session_state["_device_check"] = ("err", str(exc))
+
+        check = st.session_state.get("_device_check")
+
+        if check:
+            kind, msg = check
+            {"ok": st.success, "warn": st.warning}.get(kind, st.error)(
+                {"ok": "[ok] ", "warn": "", "err": "[error] "}.get(kind, "") + msg
+            )
+
+        connection_ready = _session_device_ready(snap)
+        start_disabled = snap is None or (connection_required and not connection_ready)
+        start_button = st.button(
+            "Start measurement",
+            type="primary",
+            width="stretch",
+            key="start_measurement",
+            disabled=start_disabled,
+        )
+
+        if connection_required:
+            if connection_ready:
+                st.caption("Device is connected. Start begins acquisition using the live connection.")
+            else:
+                st.caption("Connect the device first. Simulate and replay do not require hardware.")
+        else:
+            st.caption("This mode does not require a hardware connection.")
+
+    # (The 'Data & export' section is intentionally hidden for now: recordings are saved
+    # and exported straight into the active dataset folder chosen above.)
+
+    with sidebar.expander("Live view options", expanded=False):
+        live_view_enabled = st.toggle(
+            "During measurement",
+            value=True,
+            key="live_view_enabled_toggle",
+        )
+
+        # Which plot to show, and the y scale. The window is fixed.
+        st.selectbox(
+            "Live plot",
+            options=list(LIVE_PLOT_TYPES),
+            index=(
+                list(LIVE_PLOT_TYPES).index(st.session_state.get("live_view_plot"))
+                if st.session_state.get("live_view_plot") in LIVE_PLOT_TYPES
+                else list(LIVE_PLOT_TYPES).index(DEFAULT_LIVE_PLOT)
+            ),
+            disabled=not live_view_enabled,
+            key="live_view_plot",
+            help="Which plot to show during the recording. Works for every method.",
+        )
+        st.selectbox(
+            "Scaling (y-axis)",
+            options=list(LIVE_SCALE_OPTIONS),
+            index=list(LIVE_SCALE_OPTIONS).index(
+                st.session_state.get("live_view_scale", DEFAULT_LIVE_SCALE)
+            ),
+            disabled=not live_view_enabled,
+            key="live_view_scale",
+            help="Auto fits each channel to its own data. A fixed range keeps channels and "
+                 "runs on identical axes.",
+        )
+        st.caption(f"Rolling window fixed at {LIVE_WINDOW_SECONDS:g} s.")
+        live_view_window = LIVE_WINDOW_SECONDS
+
+    with sidebar.expander("Diagnostics (logs)", expanded=False):
+        st.caption(f"Log file: {LOG_PATH}")
+
+        if st.button("Refresh logs", key="refresh_logs_button"):
+            st.rerun()
+
+        log_lines = _tail_log(LOG_PATH, 60)
+
+        errs = [ln for ln in log_lines if "[ERROR]" in ln]
+        warns = [ln for ln in log_lines if "[WARNING]" in ln]
+
+        if errs:
+            st.error("Recent errors:\n\n" + "\n".join(errs[-4:]))
+        elif warns:
+            st.warning("Recent warnings:\n\n" + "\n".join(warns[-4:]))
+
+        st.code("\n".join(log_lines) if log_lines else "(log is empty)", language="log")
+
+    return SidebarControls(
+        default_save=default_save,
+        active_dataset_dir=str(active_dataset_path(default_save)) if active_dataset_path(default_save) else None,
+        simulate=simulate,
+        live_view_enabled=live_view_enabled,
+        live_view_window=int(live_view_window),
+        start_button=start_button,
+    )
+
+def render_footer() -> None:
+    st.divider()
+    st.caption(
+        "Research use only: CortiPy is not a medical device and must not be used for diagnosis or patient care. "
+        "Validate latency/trigger behavior and device compatibility in your lab before clinical evaluation."
+    )
+    st.caption(
+        "Protect privacy: avoid uploading or storing identifiable participant data. "
+        "Keep run folders on secured systems and use anonymized or synthetic data when sharing."
+    )

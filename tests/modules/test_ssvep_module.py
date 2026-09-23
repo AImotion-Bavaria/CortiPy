@@ -21,8 +21,9 @@ def test_collect_measurements_runs_fft(module_context_factory, fake_device, spy_
     prime = np.zeros((2, 3))
     chunk1 = np.ones((2, 3))
     chunk2 = np.full((2, 3), 2.0)
+    chunk3 = np.full((1, 3), 3.0)
     device.prime_return = prime
-    device.acquire_returns = deque([chunk1, chunk2])
+    device.acquire_returns = deque([chunk1, chunk2, chunk3])
     context.device = device
 
     calc_calls = []
@@ -38,17 +39,17 @@ def test_collect_measurements_runs_fft(module_context_factory, fake_device, spy_
 
     module.collect_measurements(context)
 
-    expected = np.vstack([prime, chunk1, chunk2])
+    expected = np.vstack([prime, chunk1, chunk2, chunk3])
     np.testing.assert_array_equal(context.data_buffer, expected)
     np.testing.assert_array_equal(context.params["data"], expected)
 
     assert fake_device.prime_calls == [(module.first_second_duration, 1)]
-    assert fake_device.acquire_calls == [(module.time_step, 1), (module.time_step, 1)]
-    assert len(calc_calls) == 2
+    assert fake_device.acquire_calls == [(module.time_step, 1), (module.time_step, 1), (1.0, 1)]
+    assert len(calc_calls) == 3
     for data_ref, fs in calc_calls:
         np.testing.assert_array_equal(data_ref[:, 0], np.zeros(data_ref.shape[0]))
         assert fs == 100.0
-    assert len(plot_spy.calls) == 2
+    assert len(plot_spy.calls) == 3
 
 
 def test_apply_reference_actichamp_and_unicorn():

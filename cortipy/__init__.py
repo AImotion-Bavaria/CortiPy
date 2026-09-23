@@ -16,4 +16,4 @@ __all__ = [
     "ModuleContext",
 ]
 
-__version__ = "v0.1.2"
+__version__ = "v0.2.0"

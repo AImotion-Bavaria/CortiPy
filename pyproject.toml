@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "cortipy"
 description = "Python EEG acquisition and analysis toolkit"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.9,<3.13"
 authors = [{ name = "CortiPy developers" }]
 license = { text = "Apache-2.0" }
 classifiers = [
@@ -35,9 +35,9 @@ dynamic = ["version"]
 
 [project.optional-dependencies]
 ui = [
-    "streamlit>=1.26",
-    "plotly>=5.24",
-    "streamlit-plotly-events>=0.0.6",
+    "streamlit>=1.38,<1.50",
+    "plotly>=5.24,<6",
+    "streamlit-plotly-events==0.0.6",
 ]
 bids = [
     "pyedflib>=0.1.36",
@@ -52,6 +52,13 @@ sbids = [
     "jsonschema>=4.22.0",
     "pyld>=2.0.4",
 ]
+stim = [
+    "pygame>=2.5",
+]
+
+dev = [
+    "ruff",
+]
 
 [project.urls]
 Homepage = "https://github.com/CortiPy/CortiPy"
@@ -65,3 +72,11 @@ include-package-data = true
 
 [tool.setuptools.dynamic]
 version = { attr = "cortipy.__version__" }
+
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+ 
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

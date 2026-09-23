@@ -9,6 +9,7 @@ from cortipy.evaluation.vep import VepEvaluator
 from cortipy.shared.filtering import filter_vep
 from cortipy.shared.notifications import info_end_live, info_start_live
 from cortipy.shared.plotting import plot_live_avg_vep
+from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
 from cortipy.shared.segmentation import seg_sig_fast
 from cortipy.shared.triggers import trigger_adc
 
@@ -47,7 +48,10 @@ class VepModule(ModuleBase):
             data_step = self._ensure_array(device.acquire(duration, aux_ch))
             data = np.vstack([data, data_step])
 
-            self._update_live_plot(params, data, fs)
+            # LiveViewService owns the referenced, cumulative VEP figure in the Streamlit
+            # UI. Avoid also creating the legacy plot_live_avg_vep figure for that path.
+            if context.get_service("live_view") is None:
+                self._update_live_plot(params, data, fs)
             elapsed += duration
 
         info_end_live()
@@ -72,14 +76,10 @@ class VepModule(ModuleBase):
         data_ref = np.array(data, copy=True)
 
         if device == "actichamp":
-            ref_idx = int(param_block.get("ReferenceChannel", 1)) - 1
-            trig_idx = int(param_block.get("TriggerChannel", data_ref.shape[1])) - 1
-            mask = np.ones(data_ref.shape[1], dtype=bool)
-            if 0 <= trig_idx < mask.size:
-                mask[trig_idx] = False
-            data_ref[:, mask] = data_ref[:, mask] - data_ref[:, [ref_idx]]
+            data_ref = apply_eeg_reference(data_ref, param_block)
         elif device == "unicorn":
-            data_ref = data_ref[:, : min(8, data_ref.shape[1])]
+            data_ref = apply_eeg_reference(data_ref, param_block)
+            data_ref = data_ref[:, : min(8, eeg_channel_count(param_block, data_ref.shape[1]))]
 
         return data_ref
 
@@ -93,7 +93,9 @@ class VepModule(ModuleBase):
             return
 
         referenced = self._apply_reference(params, data)
-        referenced[:, live_channel] = filter_vep(referenced[:, [live_channel]], 0.5, fs)
+        # filter_vep returns a 2-D (N, 1) column; flatten it to fit the 1-D channel slice
+        # (otherwise: "could not broadcast (N,1) into (N,)" on the first live update).
+        referenced[:, live_channel] = filter_vep(referenced[:, [live_channel]], 0.5, fs).ravel()
         triggered = trigger_adc(referenced, fs, trigger_channel, self.max_time, edge=param_block.get("edge", "b"))
         segments = seg_sig_fast(triggered, fs, self.max_time, trigger_channel)
         if segments.size == 0:

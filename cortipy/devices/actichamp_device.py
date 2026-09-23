@@ -158,6 +158,10 @@ class ActiChampDevice(DeviceInterface):
         self._buffer_ptr: int | None = None
         self._data_view: np.ndarray | None = None
         self._spawned_producer = False
+        # Continuous impedance monitoring (see start_impedance_mode): the acquisition rate
+        # has to be restored when the mode is left, so it is remembered on entry.
+        self._impedance_mode = False
+        self._impedance_previous_rate = 0.0
 
         # Protect shared-memory access – important with Streamlit reruns / threads.
         self._lock = threading.RLock()
@@ -198,8 +202,24 @@ class ActiChampDevice(DeviceInterface):
 
             buf = self._buf
 
+            # Wall-clock safety cap: sized from the requested duration so a producer that
+            # streams at a different rate than `self.sampling_rate` cannot make a short
+            # recording block for minutes (see RecordingTime overshoot reports).
+            start_time = time.perf_counter()
+            deadline = start_time + max(1.0, duration_seconds) * 3.0 + 5.0
+
             copied = 0
             while copied < samples_needed:
+                if time.perf_counter() > deadline:
+                    logger.warning(
+                        "ActiChamp.acquire timed out: got %d/%d samples in %.1fs for a %.1fs "
+                        "request @ %.0f Hz (effective ~%.0f Hz). Check that the producer honors "
+                        "the requested sampling rate.",
+                        copied, samples_needed, time.perf_counter() - start_time,
+                        duration_seconds, self.sampling_rate,
+                        copied / max(time.perf_counter() - start_time, 1e-6),
+                    )
+                    break
                 write_idx = int(buf.writeIndex)
                 read_idx = int(buf.readIndex)
                 available = write_idx - read_idx
@@ -230,9 +250,22 @@ class ActiChampDevice(DeviceInterface):
 
                 buf.readIndex = read_idx
 
+            elapsed = time.perf_counter() - start_time
+            effective_fs = copied / elapsed if elapsed > 0 else self.sampling_rate
+            if self.sampling_rate > 0 and abs(effective_fs - self.sampling_rate) > 0.15 * self.sampling_rate:
+                logger.warning(
+                    "ActiChamp.acquire delivered %d samples in %.2fs (~%.0f Hz) but fs is set to "
+                    "%.0f Hz; RecordingTime will be off by ~%.1fx.",
+                    copied, elapsed, effective_fs, self.sampling_rate,
+                    self.sampling_rate / max(effective_fs, 1e-6),
+                )
+            else:
+                logger.debug("ActiChamp.acquire: %d samples in %.2fs (~%.0f Hz)", copied, elapsed, effective_fs)
+
             return out[:copied]
 
     def disconnect(self) -> None:
+        self.stop_impedance_mode()
         with self._lock:
             logger.info("Disconnecting ActiChamp device.")
             if self._buffer is not None:
@@ -268,25 +301,161 @@ class ActiChampDevice(DeviceInterface):
     def prime(self, duration_seconds: float, aux_channels: int = 0) -> np.ndarray:
         return self.acquire(duration_seconds, aux_channels)
 
-    def read_impedances(self) -> list[float]:
-        """Return impedance values from the shared control block."""
+    def prepare_for_recording(self) -> None:
         with self._lock:
             if self._buffer is None:
-                raise RuntimeError("ActiChamp shared memory is not mapped.")
+                return
+            self._buf.control.stopRequested = False
+            self._buf.readIndex = self._buf.writeIndex
+
+    def read_impedances(
+        self,
+        wait_seconds: float = 6.0,
+        poll_interval: float = 0.1,
+        settle_seconds: float = 1.0,
+    ) -> list[float]:
+        """Return impedance values from the shared control block.
+
+        Impedance data is produced before a sampling rate is written to the
+        shared control block.  The normal ``connect`` path sets that sampling
+        rate and switches the producer into acquisition mode, so this method
+        maps or starts the producer without calling ``connect`` when needed.
+        """
+        with self._lock:
+            if self._buffer is None:
+                try:
+                    self._map_shared_buffer()
+                except RuntimeError as exc:
+                    logger.info("Shared memory not available for impedance read; starting producer: %s", exc)
+                    self._start_producer()
+                    self._map_shared_buffer()
 
             buf = self._buf
-            size = int(buf.impSize)
-            if size <= 0:
+            buf.control.stopRequested = False
+            # Remember the acquisition rate so we can restore it: impedance mode needs
+            # targetSamplingRate=0, but leaving it at 0 afterwards broke the next recording
+            # (it streamed at a wrong/garbled rate, e.g. ~67 Hz instead of 500 Hz).
+            previous_sampling_rate = float(buf.control.targetSamplingRate)
+            buf.control.targetSamplingRate = 0.0
+            # Tell the producer to switch the amplifier into impedance mode. Without this the
+            # producer never measures impedances, so impSize stays 0 and every value stays 0 —
+            # which looked like "impedance never updates".
+            buf.control.measureImpedance = True
+            buf.control.showImpedanceLEDs = True
+            buf.impSize = 0
+            for idx in range(MAX_CHANNELS + 2):
+                buf.impedances[idx] = -1.0
+
+            deadline = time.time() + max(0.0, float(wait_seconds))
+            first_positive_at: float | None = None
+            last_values: list[float] = []
+
+            try:
+                while True:
+                    size = int(buf.impSize)
+                    if size > 0:
+                        limit = min(size, MAX_CHANNELS + 2)
+                        last_values = [float(buf.impedances[i]) for i in range(limit)]
+                        if any(value > 0 for value in last_values):
+                            if first_positive_at is None:
+                                first_positive_at = time.time()
+                            if (time.time() - first_positive_at) >= max(0.0, float(settle_seconds)):
+                                return last_values
+
+                    if time.time() >= deadline:
+                        break
+                    time.sleep(max(0.01, float(poll_interval)))
+
+                return last_values
+            finally:
+                if self._impedance_mode:
+                    # A live monitor owns the mode; leaving it here would stop its updates.
+                    self._impedance_previous_rate = previous_sampling_rate
+                else:
+                    # Leave impedance mode, or the next acquisition would start with the amplifier
+                    # still measuring impedance instead of streaming EEG.
+                    buf.control.measureImpedance = False
+                    buf.control.showImpedanceLEDs = False
+                    # Restore the acquisition rate so a subsequent recording streams correctly.
+                    buf.control.targetSamplingRate = previous_sampling_rate
+
+    # ------------------------------------------------------------------
+    # Continuous impedance monitoring.
+    #
+    # ``read_impedances`` enters impedance mode, waits for a settled reading and leaves it
+    # again. That is right for a one-shot check but useless as a live display: it takes
+    # seconds per call and flips the amplifier in and out of impedance mode every time.
+    # A monitor instead enters the mode once, lets the caller poll the shared control block
+    # as often as it likes, and leaves the mode when it stops.
+    def start_impedance_mode(self) -> None:
+        """Put the amplifier into impedance mode and keep it there until stopped."""
+        with self._lock:
+            if self._buffer is None:
+                try:
+                    self._map_shared_buffer()
+                except RuntimeError as exc:
+                    logger.info(
+                        "Shared memory unavailable for impedance monitoring; starting producer: %s",
+                        exc,
+                    )
+                    self._start_producer()
+                    self._map_shared_buffer()
+
+            buf = self._buf
+            if not self._impedance_mode:
+                # Impedance mode needs targetSamplingRate=0; the acquisition rate is put back
+                # by stop_impedance_mode, or the next recording streams at a garbled rate.
+                self._impedance_previous_rate = float(buf.control.targetSamplingRate)
+                buf.impSize = 0
+                for idx in range(MAX_CHANNELS + 2):
+                    buf.impedances[idx] = -1.0
+            buf.control.stopRequested = False
+            buf.control.targetSamplingRate = 0.0
+            buf.control.measureImpedance = True
+            buf.control.showImpedanceLEDs = True
+            self._impedance_mode = True
+            logger.info("ActiChamp impedance monitoring started.")
+
+    def poll_impedances(self) -> list[float]:
+        """The values measured so far (ohms), without waiting. Empty until the first sweep."""
+        with self._lock:
+            if self._buffer is None or not self._impedance_mode:
+                return []
+            try:
+                buf = self._buf
+                size = int(buf.impSize)
+                if size <= 0:
+                    return []
+                limit = min(size, MAX_CHANNELS + 2)
+                return [float(buf.impedances[i]) for i in range(limit)]
+            except RuntimeError:
+                # The mapping went away (producer restarted); the caller polls again shortly.
+                logger.warning("Shared memory invalid while polling ActiChamp impedances.")
                 return []
 
-            limit = min(size, MAX_CHANNELS + 2)
-            return [float(buf.impedances[i]) for i in range(limit)]
+    def stop_impedance_mode(self) -> None:
+        """Leave impedance mode and restore the acquisition rate. Safe to call twice."""
+        with self._lock:
+            if not self._impedance_mode:
+                return
+            self._impedance_mode = False
+            if self._buffer is None:
+                return
+            try:
+                buf = self._buf
+                buf.control.measureImpedance = False
+                buf.control.showImpedanceLEDs = False
+                buf.control.targetSamplingRate = self._impedance_previous_rate
+            except RuntimeError:
+                logger.warning("Shared memory invalid while leaving ActiChamp impedance mode.")
+            logger.info("ActiChamp impedance monitoring stopped.")
 
     # ------------------------------------------------------------------
     def _channel_limit(self, aux_channels: int) -> int:
+        # The SDK returns enabled channels in amplifier order: EEG first, then AUX.
+        # The trigger is an AUX channel when selected in the amplifier configuration;
+        # it is not an additional column appended by the shared-memory producer.
         total = self.channel_count + int(aux_channels or self.default_aux)
-        if self.include_triggers:
-            total += 1
         return min(total, MAX_CHANNELS)
 
     def _start_producer(self) -> None:
@@ -433,6 +602,12 @@ class ActiChampDevice(DeviceInterface):
             buf.control.stopRequested = False
             buf.readIndex = buf.writeIndex
 
+        # Acquisition and impedance measurement are mutually exclusive on the amplifier.
+        # Clearing the flags here means a recording can never inherit impedance mode from a
+        # live impedance monitor that was left running.
+        self._impedance_mode = False
+        buf.control.measureImpedance = False
+        buf.control.showImpedanceLEDs = False
         buf.control.targetSamplingRate = self.sampling_rate
         buf.control.useActiveElectrodes = bool(self.use_active_electrodes)
         logger.debug(

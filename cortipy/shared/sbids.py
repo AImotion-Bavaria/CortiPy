@@ -2,18 +2,83 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
+import re
 from copy import deepcopy
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Iterable, Sequence, Tuple
+from typing import Any, Iterable, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
 from mne.io import BaseRaw
 
-from .bids import BIDSLoadResult, BIDSLoader, ExperimentBinLoader, _coerce_to_raw_array
+from .bids import (
+    BIDSLoadResult,
+    BIDSLoader,
+    ExperimentBinLoader,
+    _coerce_to_raw_array,
+    raw_to_microvolts,
+)
+
+# Acquisition parameters carried through the JSON-LD graph, as
+# (Params key, schema:PropertyValue name, schema:unitCode or None).
+#
+# Anything absent here is LOST on round-trip. StimFreq used to be missing, so a reloaded
+# SSVEP dataset silently fell back to the evaluator's 10 Hz default and every derived
+# metric was computed against the wrong stimulation frequency.
+RECORDING_PROPERTIES: Tuple[Tuple[str, str, Optional[str]], ...] = (
+    ("fs", "SamplingRate", "HZ"),
+    ("NumberEEGChannels", "NumberEEGChannels", None),
+    ("NumberAUXChannels", "NumberAUXChannels", None),
+    ("ReferenceChannel", "ReferenceChannel", None),
+    ("TriggerChannel", "TriggerChannel", None),
+    ("LowestFrequency", "LowestFrequency", "HZ"),
+    ("HighestFrequency", "HighestFrequency", "HZ"),
+    ("StimFreq", "StimFreq", "HZ"),
+    ("ASSRModulationFrequency", "ASSRModulationFrequency", "HZ"),
+    ("ASSRCarrierFrequency", "ASSRCarrierFrequency", "HZ"),
+    ("TriggerTime", "TriggerTime", "SEC"),
+    ("Trigger", "Trigger", None),
+    ("Epochs", "Epochs", None),
+    ("EpochLength", "EpochLength", None),
+    ("PlotChannelLabel", "PlotChannelLabel", None),
+    ("SignalUnit", "SignalUnit", None),
+    ("Stimulus", "Stimulus", None),
+    ("Environment", "Environment", None),
+)
+
+# Participant attributes carried on the schema:Patient node, as
+# (Participant key, schema:PropertyValue name, schema:unitCode or None).
+#
+# schema.org gives Person no age property, so age travels as a schema:additionalProperty
+# with "ANN", the UN/CEFACT common code for "year" that schema:unitCode is defined against.
+# Anything absent here is LOST on round-trip: age and initials used to be, so a session
+# reloaded from its JSON-LD came back with an empty participant form.
+PARTICIPANT_PROPERTIES: Tuple[Tuple[str, str, Optional[str]], ...] = (
+    ("Age", "Age", "ANN"),
+    ("Initials", "Initials", None),
+)
+
+# schema:gender is typed as GenderType, whose members are schema:Male and schema:Female.
+# Anything else stays a plain string, which schema.org explicitly allows for people who do
+# not identify as a binary gender.
+GENDER_TYPE_IDS = {"male": "schema:Male", "female": "schema:Female"}
+
+# Values the participant form emits for "not stated"; writing them would assert a gender
+# the operator never entered.
+_UNSET_GENDER_VALUES = {"", "unspecified", "unknown", "n/a", "none"}
+
+
+def sha256_file(path: str | os.PathLike, *, chunk_size: int = 1 << 20) -> str:
+    """SHA-256 of a file's bytes, streamed so large recordings do not load into memory."""
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for chunk in iter(lambda: handle.read(chunk_size), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 class SbidsExporter:
@@ -32,6 +97,7 @@ class SbidsExporter:
         "impedance": {"@id": "sbids:impedance", "@type": "xsd:float"},
         "signalUnit": {"@id": "sbids:signalUnit", "@type": "xsd:string"},
         "impedanceUnit": {"@id": "sbids:impedanceUnit", "@type": "xsd:string"},
+        "sha256": {"@id": "sbids:sha256", "@type": "xsd:string"},
     }
 
     def __init__(self, dataset_id: str, dataset_name: str):
@@ -52,6 +118,45 @@ class SbidsExporter:
         self._known_subjects = set()
         self._known_devices = set()
 
+    @classmethod
+    def from_document(cls, doc: dict) -> "SbidsExporter":
+        """Reopen an existing SBIDS document to append more recordings to the same dataset."""
+        graph = doc.get("@graph", []) or []
+        dataset_node = next((n for n in graph if "Dataset" in str(n.get("@type", ""))), {})
+        dataset_id = str(doc.get("@id", "")).replace("urn:dataset:", "") or "DATASET"
+        dataset_name = dataset_node.get("schema:name") or dataset_id
+        exporter = cls(dataset_id=dataset_id, dataset_name=dataset_name)
+        exporter.doc = doc
+        exporter.doc.setdefault("@context", deepcopy(cls.BASE_CONTEXT))
+        exporter._graph = doc.setdefault("@graph", [])
+        exporter._known_subjects = {
+            str(n["@id"]).replace("urn:subject:", "")
+            for n in exporter._graph if str(n.get("@id", "")).startswith("urn:subject:")
+        }
+        exporter._known_devices = {
+            str(n["@id"]).replace("urn:device:", "")
+            for n in exporter._graph if str(n.get("@id", "")).startswith("urn:device:")
+        }
+        return exporter
+
+    def remove_recording(self, filename_stem: str) -> None:
+        """Drop a recording (and its file/channel nodes) so it can be re-saved (overwrite)."""
+        pattern = re.compile(rf"_{re.escape(filename_stem)}(?:_|$)")
+        self._graph[:] = [
+            node for node in self._graph
+            if not (
+                str(node.get("@id", "")).startswith(("urn:recording:", "urn:file:", "urn:channel:"))
+                and pattern.search(str(node.get("@id", "")))
+            )
+        ]
+
+    def has_recording(self, filename_stem: str) -> bool:
+        pattern = re.compile(rf"_{re.escape(filename_stem)}$")
+        return any(
+            str(node.get("@id", "")).startswith("urn:recording:") and pattern.search(str(node.get("@id", "")))
+            for node in self._graph
+        )
+
     def add_recording_from_cortipy_json(
         self,
         meta_json: dict,
@@ -67,27 +172,21 @@ class SbidsExporter:
         params = meta_json.get("Parameters", {})
         channels = meta_json.get("Channels", [])
         participant = meta_json.get("Metadata", {}).get("Participant", {})
-        subj_id = (
+        # Keep the identifier bare. It used to fall back to f"{device}_sub_{n}", which put a
+        # "sub" token inside schema:identifier and re-emerged as sub-Simulated_sub_1 on a
+        # later BIDS export.
+        #
+        # The participant code is the only subject identifier the UI collects. TestSubjectNo
+        # is read for params.json files written before it was removed from the form, so their
+        # subject numbers survive re-export; nothing writes it any more.
+        subj_id = str(
             subject_id
             or participant.get("Code")
-            or f"{device}_sub_{params.get('TestSubjectNo', '1')}"
+            or params.get("TestSubjectNo", "1")
         )
-        self._add_subject(
-            subj_id=subj_id,
-            gender=participant.get("Gender"),
-            dominant_hand=participant.get("DominantHand"),
-        )
+        self._add_subject(subj_id=subj_id, participant=participant)
         self._add_device(name=device)
-        fs = params.get("fs")
         rec_time = params.get("RecordingTime")
-        env = params.get("Environment")
-        n_eeg = params.get("NumberEEGChannels")
-        n_aux = params.get("NumberAUXChannels")
-        ref_ch = params.get("ReferenceChannel")
-        trig_ch = params.get("TriggerChannel")
-        lowest_f = params.get("LowestFrequency")
-        highest_f = params.get("HighestFrequency")
-        stimulus = params.get("Stimulus") or params.get("Start")
         filename_stem = params.get("Filename") or os.path.splitext(os.path.basename(raw_file))[0]
         recording_urn = f"urn:recording:{subj_id}_{filename_stem}"
         file_urn = f"urn:file:{subj_id}_{filename_stem}"
@@ -110,81 +209,34 @@ class SbidsExporter:
             recording_node["schema:duration"] = f"PT{int(rec_time)}S"
         if method:
             recording_node["schema:measurementTechnique"] = method
-        if env:
-            recording_node["schema:additionalProperty"].append(
-                {
-                    "@type": "schema:PropertyValue",
-                    "schema:name": "Environment",
-                    "schema:value": env,
-                }
-            )
-        if fs is not None:
-            recording_node["schema:additionalProperty"].append(
-                {
-                    "@type": "schema:PropertyValue",
-                    "schema:name": "SamplingRate",
-                    "schema:value": fs,
-                    "schema:unitCode": "HZ",
-                }
-            )
-        if n_eeg is not None:
-            recording_node["schema:additionalProperty"].append(
-                {
-                    "@type": "schema:PropertyValue",
-                    "schema:name": "NumberEEGChannels",
-                    "schema:value": n_eeg,
-                }
-            )
-        if n_aux is not None:
-            recording_node["schema:additionalProperty"].append(
-                {
-                    "@type": "schema:PropertyValue",
-                    "schema:name": "NumberAUXChannels",
-                    "schema:value": n_aux,
-                }
-            )
-        if ref_ch is not None:
-            recording_node["schema:additionalProperty"].append(
-                {
-                    "@type": "schema:PropertyValue",
-                    "schema:name": "ReferenceChannel",
-                    "schema:value": ref_ch,
-                }
-            )
-        if trig_ch is not None:
-            recording_node["schema:additionalProperty"].append(
-                {
-                    "@type": "schema:PropertyValue",
-                    "schema:name": "TriggerChannel",
-                    "schema:value": trig_ch,
-                }
-            )
-        if lowest_f is not None:
-            recording_node["schema:additionalProperty"].append(
-                {
-                    "@type": "schema:PropertyValue",
-                    "schema:name": "LowestFrequency",
-                    "schema:value": lowest_f,
-                }
-            )
-        if highest_f is not None:
-            recording_node["schema:additionalProperty"].append(
-                {
-                    "@type": "schema:PropertyValue",
-                    "schema:name": "HighestFrequency",
-                    "schema:value": highest_f,
-                }
-            )
-        if stimulus:
-            recording_node["schema:additionalProperty"].append(
-                {
-                    "@type": "schema:PropertyValue",
-                    "schema:name": "Stimulus",
-                    "schema:value": stimulus,
-                }
-            )
+
+        for param_key, prop_name, unit_code in RECORDING_PROPERTIES:
+            value = params.get(param_key)
+            if param_key == "Stimulus" and not value:
+                value = params.get("Start")
+            if value in (None, "", []):
+                continue
+            prop_node = {
+                "@type": "schema:PropertyValue",
+                "schema:name": prop_name,
+                "schema:value": value,
+            }
+            if unit_code:
+                prop_node["schema:unitCode"] = unit_code
+            recording_node["schema:additionalProperty"].append(prop_node)
+        # Carry the full Parameters block verbatim so nothing the property list omits is lost
+        # on re-import — most importantly the connection settings (UNICORN COM port / address),
+        # so a loaded dataset can restore them into the config.
+        if isinstance(params, dict) and params:
+            recording_node["schema:additionalProperty"].append({
+                "@type": "schema:PropertyValue",
+                "schema:name": "CortiPyParameters",
+                "schema:value": json.dumps(params, default=str),
+            })
         variable_measured = []
-        for idx, ch in enumerate(channels):
+        # GND/Ref live outside Channels (they hold no data column) but still carry impedance
+        # worth recording. They are emitted as AUXChannel nodes and read back the same way.
+        for idx, ch in enumerate(list(channels) + list(meta_json.get("ReferenceElectrodes") or [])):
             label = ch.get("Channel")
             pos = ch.get("Position")
             imp = ch.get("Impedance")
@@ -246,6 +298,9 @@ class SbidsExporter:
         }
         if file_size_bytes is not None:
             file_node["schema:fileSize"] = int(file_size_bytes)
+        if os.path.exists(raw_file):
+            # Size alone cannot detect corruption or a silently truncated/rewritten export.
+            file_node["sha256"] = sha256_file(raw_file)
         self._graph.append(file_node)
 
     def to_dict(self) -> dict:
@@ -258,18 +313,48 @@ class SbidsExporter:
         with open(path, "w", encoding="utf-8") as f:
             f.write(self.to_json(indent=indent))
 
-    def _add_subject(self, subj_id: str, gender: str | None, dominant_hand: str | None) -> None:
-        if subj_id in self._known_subjects:
-            return
+    def _add_subject(self, subj_id: str, participant: dict | None = None) -> None:
+        """Write (or complete) the schema:Patient node for a participant.
+
+        A known subject is merged, not skipped: reopening a dataset whose first recording was
+        saved before the operator filled in age/sex would otherwise leave that node forever
+        incomplete. Only keys the new block carries are overwritten, so appending a recording
+        with no participant metadata cannot blank out what an earlier one recorded.
+        """
+        participant = participant or {}
         node = {
             "@id": f"urn:subject:{subj_id}",
             "@type": "schema:Patient",
+            # The pseudonymous participant code IS the identifier; no name is ever written.
             "schema:identifier": str(subj_id),
         }
-        if gender:
-            node["schema:gender"] = gender
-        if dominant_hand:
-            node["schema:description"] = f"DominantHand: {dominant_hand}"
+        gender = str(participant.get("Gender") or "").strip()
+        if gender.lower() not in _UNSET_GENDER_VALUES:
+            gender_id = GENDER_TYPE_IDS.get(gender.lower())
+            node["schema:gender"] = {"@id": gender_id} if gender_id else gender
+        notes = participant.get("Notes")
+        if notes:
+            node["schema:description"] = str(notes)
+        properties = []
+        for key, prop_name, unit_code in PARTICIPANT_PROPERTIES:
+            value = participant.get(key)
+            if value in (None, "", []):
+                continue
+            prop_node = {
+                "@type": "schema:PropertyValue",
+                "schema:name": prop_name,
+                "schema:value": value,
+            }
+            if unit_code:
+                prop_node["schema:unitCode"] = unit_code
+            properties.append(prop_node)
+        if properties:
+            node["schema:additionalProperty"] = properties
+        if subj_id in self._known_subjects:
+            existing = next((n for n in self._graph if n.get("@id") == node["@id"]), None)
+            if existing is not None:
+                existing.update(node)
+                return
         self._graph.append(node)
         self._known_subjects.add(subj_id)
 
@@ -712,7 +797,7 @@ class SBIDSLoader:
         loader_metadata = {"sidecars": sidecars} if sidecars else {}
         loader = BIDSLoader(data_path.parent)
         raw = loader._load_raw(data_path, preload=preload, metadata=loader_metadata, channels=channels)
-        return raw, raw.get_data().T
+        return raw, raw_to_microvolts(raw)
 
     @staticmethod
     def _load_numpy_data(path: Path) -> np.ndarray:
@@ -874,26 +959,26 @@ def _export_recording_data(rec: BIDSLoadResult, raw_dir: Path, export_format: st
         if not dest_path.exists():
             dest_path.write_bytes(src_path.read_bytes())
         size = dest_path.stat().st_size
-        return dest_path, str(Path("raw_data") / dest_path.name), size
+        return dest_path, f"raw_data/{dest_path.name}", size
 
     if export_format == "npz":
         dest_path = raw_dir / f"{stem}.npz"
         np.savez_compressed(dest_path, data=rec.data)
         size = dest_path.stat().st_size
-        return dest_path, str(Path("raw_data") / dest_path.name), size
+        return dest_path, f"raw_data/{dest_path.name}", size
 
     if export_format in {"edf", "hdf5", "zarr"}:
         dest_path = raw_dir / f"{stem}.{_ext_for_format(export_format)}"
         helper = BIDSLoader(raw_dir)
         helper._write_raw(rec.raw, dest_path, format=export_format, overwrite=True)
         size = dest_path.stat().st_size
-        return dest_path, str(Path("raw_data") / dest_path.name), size
+        return dest_path, f"raw_data/{dest_path.name}", size
 
     dest_path = raw_dir / f"{stem}.parquet"
     frame = pd.DataFrame(rec.data, columns=list(rec.raw.ch_names))
     frame.to_parquet(dest_path)
     size = dest_path.stat().st_size
-    return dest_path, str(Path("raw_data") / dest_path.name), size
+    return dest_path, f"raw_data/{dest_path.name}", size
 
 
 def convert_bids_to_sbids(
@@ -969,3 +1054,76 @@ def convert_bids_to_sbids(
     output_path = output or bids_root / default_output_path(dataset_name, dataset_id)
     exporter.save(str(output_path))
     return output_path
+
+
+# ----------------------------------------------------------------------------------
+# Integrity
+# ----------------------------------------------------------------------------------
+def verify_sbids_checksums(jsonld_path: str | os.PathLike) -> list[dict[str, Any]]:
+    """Re-hash every raw file referenced by an SBIDS document and compare to its digest.
+
+    Returns one record per file node with a ``status`` of:
+      ``ok``       - recorded digest matches the bytes on disk
+      ``mismatch`` - file changed since export (corruption, truncation, silent rewrite)
+      ``missing``  - contentUrl does not resolve to a file
+      ``no_digest``- exported before checksums existed; nothing to compare against
+    """
+    path = Path(jsonld_path)
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    graph = doc.get("@graph") or []
+    if isinstance(graph, dict):
+        graph = [graph]
+
+    results: list[dict[str, Any]] = []
+    for node in graph:
+        if not isinstance(node, dict):
+            continue
+        types = node.get("@type") or []
+        types = [types] if isinstance(types, str) else list(types)
+        if not any("DigitalDocument" in str(t) for t in types):
+            continue
+
+        content_url = node.get("schema:contentUrl") or node.get("contentUrl") or ""
+        # contentUrl is dataset-relative; tolerate the Windows backslashes older exports wrote.
+        rel = str(content_url).replace("\\", "/")
+        data_path = (path.parent / rel).resolve()
+        if not data_path.exists():
+            # raw_data/ is not always a direct sibling of the document. Search *within* the
+            # document's own directory only — never above it, or a same-named file from an
+            # unrelated dataset would be hashed and reported as this one.
+            name = Path(rel).name or str(node.get("schema:name") or "")
+            match = next((c for c in path.parent.rglob(name) if c.is_file()), None) if name else None
+            if match is not None:
+                data_path = match.resolve()
+        expected = node.get("sha256")
+
+        record: dict[str, Any] = {
+            "file": str(data_path),
+            "id": node.get("@id"),
+            "expected": expected,
+            "actual": None,
+        }
+        if not data_path.exists():
+            record["status"] = "missing"
+        elif not expected:
+            record["status"] = "no_digest"
+        else:
+            actual = sha256_file(data_path)
+            record["actual"] = actual
+            record["status"] = "ok" if actual == str(expected) else "mismatch"
+        results.append(record)
+    return results
+
+
+if __name__ == "__main__":  # pragma: no cover - convenience CLI
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Verify SHA-256 digests in an SBIDS JSON-LD document.")
+    parser.add_argument("jsonld", help="Path to sbids_meta_*.jsonld")
+    args = parser.parse_args()
+
+    records = verify_sbids_checksums(args.jsonld)
+    for rec in records:
+        print(f"{rec['status']:>10}  {Path(rec['file']).name}")
+    bad = [r for r in records if r["status"] in {"mismatch", "missing"}]
+    raise SystemExit(1 if bad else 0)

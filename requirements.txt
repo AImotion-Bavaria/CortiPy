@@ -1,2 +1,2 @@
-# Install CortiPy with UI, BIDS, and SBIDS extras (single source: pyproject.toml)
--e .[ui,bids,sbids]
+# Install CortiPy with UI, BIDS, SBIDS, and stimulus extras (single source: pyproject.toml)
+-e .[ui,bids,sbids,stim]

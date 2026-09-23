@@ -26,12 +26,17 @@ import matplotlib.pyplot as plt
 
 from cortipy.evaluation.base import EvaluatorBase, save_new_figures
 from cortipy.shared import plot_cortipy_topomap
+from cortipy.shared.channels import channel_labels, resolve_plot_channel
 from cortipy.shared.filtering import filter_vep
+from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
 from cortipy.shared.segmentation import seg_sig_fast
 from cortipy.shared.signal import time_vector
 from cortipy.shared.triggers import trigger_adc
 
 LOGGER = logging.getLogger("cortipy.evaluation.vep")
+
+# VEP is an occipital response; Oz is the conventional site, the rest stand in for it.
+VEP_CHANNEL_PREFERENCE = ("Oz", "POz", "O1", "O2", "Pz")
 
 
 def _show_mpl(fig: plt.Figure, key: str) -> None:
@@ -64,6 +69,8 @@ HP_CUTOFF = 0.5
 SNR_SIGNAL_WINDOW = (0.08, 0.125)  # seconds
 SNR_NOISE_WINDOW = (0.46, 0.50)
 RN_ANALYSIS_WINDOW = (0.020, 0.250)
+FSP_SP_TIME = 0.1  # seconds
+FSP_ANALYSIS_WINDOW = (0.05, 0.15)
 
 
 class VepEvaluator(EvaluatorBase):
@@ -149,6 +156,17 @@ class VepEvaluator(EvaluatorBase):
         snr_peak, rn_values = snr_peak_metrics(segments, average_signals, fs)
         evaluation["SNR_Peak"] = snr_peak
         evaluation["RN_micV"] = rn_values
+        fsp_values = np.full(segments.shape[2], np.nan)
+        p_sp_values = np.full(segments.shape[2], np.nan)
+        for ch in range(segments.shape[2]):
+            try:
+                fsp_result = calculate_fsp(segments[:, :, ch], average_signals[:, ch], fs)
+            except ValueError:
+                continue
+            fsp_values[ch] = fsp_result["Fsp"]
+            p_sp_values[ch] = fsp_result["p_sp"]
+        evaluation["Fsp"] = fsp_values
+        evaluation["p_sp"] = p_sp_values
 
         params["Evaluation"] = evaluation
 
@@ -157,15 +175,32 @@ class VepEvaluator(EvaluatorBase):
 
         if render_plots:
             LOGGER.debug("Rendering VEP evaluation plots")
-            _ensure_interactive_backend()
+            # Streamlit renders figures itself; switching to Tk/Qt here starts a GUI
+            # outside the main thread and can fail while the recording result is saved.
+            if not _is_streamlit_runtime():
+                _ensure_interactive_backend()
             plt.rcParams["figure.max_open_warning"] = 0
             plt.rcParams["figure.raise_window"] = True
-            plot_vep(average_signals, params, peak_stats)
-            plot_vep_matrix(evaluation, param_block.get("ReferenceChannel", 1), params.get("Channels"), average_signals)
-            _plot_vep_all_channels(average_signals, evaluation["average_signals"]["time"], params, peak_stats)
-            _plot_vep_trace_overlay(segments, fs, params, plot_channel_label)
-            _plot_vep_erp_channel(average_signals, fs, params, plot_channel_label)
-            _plot_vep_topomap(context, params, t_ms=topomap_latency_ms)
+            selected_idx = _channel_index_from_label(
+                param_block.get("LivePlotCH", plot_channel_label),
+                params.get("Channels"),
+                average_signals.shape[1],
+            )
+            selected_avg = average_signals[:, [selected_idx]]
+            selected_peaks = {
+                name: {
+                    "peak_values": values["peak_values"][[selected_idx]],
+                    "peak_times": values["peak_times"][[selected_idx]],
+                }
+                for name, values in peak_stats.items()
+            }
+            selected_params = dict(params)
+            selected_params["Channels"] = [
+                params.get("Channels", [])[selected_idx]
+            ] if params.get("Channels") and selected_idx < len(params["Channels"]) else params.get("Channels")
+            selected_label = channel_labels(params, average_signals.shape[1])[selected_idx]
+            plot_vep(selected_avg, selected_params, selected_peaks)
+            _plot_vep_trace_overlay(segments, fs, params, selected_label)
             if show_plots and not _is_streamlit_runtime():
                 try:
                     fig_nums = plt.get_fignums()
@@ -198,18 +233,13 @@ class VepEvaluator(EvaluatorBase):
 
 
 def _apply_reference(data: np.ndarray, device: Optional[str], params: MutableMapping[str, Any]) -> Tuple[np.ndarray, int]:
-    array = np.array(data, dtype=float, copy=True)
-    trigger_idx = int(params.get("TriggerChannel", array.shape[1])) - 1
+    trigger_idx = int(params.get("TriggerChannel", np.shape(data)[1])) - 1
     dev = (device or "").lower()
 
-    if dev == "actichamp":
-        reference_idx = int(params.get("ReferenceChannel", 1)) - 1
-        mask = np.ones(array.shape[1], dtype=bool)
-        if 0 <= trigger_idx < mask.size:
-            mask[trigger_idx] = False
-        array[:, mask] = array[:, mask] - array[:, [reference_idx]]
-    elif dev == "unicorn":
-        array = array[:, : min(array.shape[1], 8)]
+    # Reference every device; simulated/replayed runs used to skip this entirely.
+    array = apply_eeg_reference(np.array(data, dtype=float, copy=True), params)
+    if dev == "unicorn":
+        array = array[:, : min(8, eeg_channel_count(params, array.shape[1]))]
 
     return array, trigger_idx
 
@@ -368,6 +398,39 @@ def residual_noise_eclipse(sweeps: np.ndarray, fs: float, analysis_window: Tuple
     return rn, diff_wave
 
 
+def calculate_fsp(
+    segments: np.ndarray, average_signal: np.ndarray, fs: float, sp_time_s: float = FSP_SP_TIME,
+    analysis_window_s: tuple[float, float] = FSP_ANALYSIS_WINDOW,
+) -> dict[str, float]:
+    """Translate MATLAB getFspFmp: Fsp, p_sp, Fmp, and p_mp.
+
+    Fsp comes from ABR testing (Elberling & Don); here it is applied to VEP with a
+    single point at 100 ms and a 50-150 ms window. ``segments`` is epochs x samples
+    and ``average_signal`` is samples. MATLAB's 1-based indices are converted to
+    clipped zero-based indices here.
+    """
+    sweeps = np.asarray(segments, dtype=float)
+    average = np.asarray(average_signal, dtype=float).reshape(-1)
+    if sweeps.ndim != 2 or sweeps.shape[1] != average.size:
+        raise ValueError("segments must be epochs x samples matching average_signal.")
+    n_sweeps = sweeps.shape[0]
+    if n_sweeps < 2:
+        raise ValueError("Fsp requires at least two sweeps.")
+    sp_index = int(round(sp_time_s * fs)) - 1
+    sp_index = min(max(sp_index, 0), sweeps.shape[1] - 1)
+    start = max(0, int(round(analysis_window_s[0] * fs)) - 1)
+    stop = min(sweeps.shape[1], int(round(analysis_window_s[1] * fs)))
+    if start >= stop:
+        raise ValueError("analysis_window_s is invalid or too narrow.")
+    signal_variance = float(np.var(average[start:stop], ddof=1))
+    single_variance = float(np.var(sweeps[:, sp_index], ddof=1))
+    multi_variance = float(np.mean(np.var(sweeps[:, start:stop], axis=0, ddof=1)))
+    df1, df2 = 5, n_sweeps - 1
+    fsp = float(n_sweeps * signal_variance / single_variance) if single_variance else float("nan")
+    fmp = float(n_sweeps * signal_variance / multi_variance) if multi_variance else float("nan")
+    return {"Fsp": fsp, "p_sp": float(stats.f.cdf(fsp, df1, df2)), "Fmp": fmp, "p_mp": float(stats.f.cdf(fmp, df1, df2))}
+
+
 def plot_vep(avg_signal: np.ndarray, params: dict, peaks: Dict[str, Dict[str, np.ndarray]]) -> None:
     param_block = params.get("Parameters", {})
     fs = float(param_block.get("fs", 1.0))
@@ -509,39 +572,17 @@ def _channel_title(params: dict, channel_idx: int, channels: Optional[Sequence[A
 
 
 def _channel_labels(channels: Optional[Sequence[Any]], count: int) -> list[str]:
-    result = []
-    if channels:
-        for entry in channels:
-            label = None
-            if isinstance(entry, dict):
-                label = entry.get("Position") or entry.get("label") or entry.get("name")
-            elif isinstance(entry, (list, tuple)) and entry:
-                label = entry[0]
-            elif isinstance(entry, str):
-                label = entry
-            result.append(str(label) if label is not None else f"Ch{len(result)+1}")
-            if len(result) >= count:
-                break
-    while len(result) < count:
-        result.append(f"Ch{len(result)+1}")
-    return result
+    return channel_labels(channels, count)
 
 
 def _channel_index_from_label(label: Any, channels: Optional[Sequence[Any]], count: int) -> int:
     """Resolve 0-based channel index from a label or numeric string."""
-    if label is None:
-        return 0
-    try:
-        idx = int(label) - 1
-        if 0 <= idx < count:
-            return idx
-    except Exception:
-        pass
-    labels = [str(lab).lower() for lab in _channel_labels(channels, count)]
-    try:
-        return labels.index(str(label).lower())
-    except ValueError:
-        return 0
+    idx, used, exact = resolve_plot_channel(
+        channels, label, count, preference=VEP_CHANNEL_PREFERENCE
+    )
+    if not exact and label is not None:
+        LOGGER.warning("VEP plot channel %r not in montage; using %r instead", label, used)
+    return idx
 
 
 def _ensure_interactive_backend() -> None:

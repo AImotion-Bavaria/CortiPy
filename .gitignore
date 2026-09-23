@@ -122,10 +122,12 @@ cython_debug/
 # ----------------------------------------
 # Project-specific
 # ----------------------------------------
-/cortipy_runs/*
-!/cortipy_runs/README.md
+**/cortipy_runs/*
+!**/cortipy_runs/README.md
 results.json
+.plot_windows/
 AGENTS.md
+CLAUDE.md
 TODO.md
 /datasets
 /experiments/synData_binrt
@@ -134,6 +136,9 @@ TODO.md
 /experiments/experiment1/results
 /experiments/experiment2/results
 /experiments/experiment3/results
-
+/tests/*
+git_helper.md
+/.claude/*
+/docs/*
 # Ignore any directory with "rand" in its name (and contents).
 **/*rand*/

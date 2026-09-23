@@ -2,6 +2,12 @@
 
 from .assr import assr_f_test, calc_snr as assr_calc_snr, compute_psd as assr_compute_psd
 from .bids import BIDSLoader, BIDSLoadResult, ExperimentBinLoader
+from .channels import (
+    channel_entries,
+    channel_labels,
+    resolve_channel_index,
+    resolve_plot_channel,
+)
 from .dataset import CortiDataset
 from .bera import (
     avg_seg_avg,
@@ -41,6 +47,8 @@ from .ssvep import (
 from .sbids import (
     SBIDSLoader,
     SbidsExporter,
+    sha256_file,
+    verify_sbids_checksums,
     build_sbids_document_for_dataset,
     default_output_path as sbids_default_output_path,
     export_dataset as export_sbids_dataset,
@@ -54,8 +62,14 @@ __all__ = [
     "BIDSLoadResult",
     "ExperimentBinLoader",
     "CortiDataset",
+    "channel_entries",
+    "channel_labels",
+    "resolve_channel_index",
+    "resolve_plot_channel",
     "SBIDSLoader",
     "SbidsExporter",
+    "sha256_file",
+    "verify_sbids_checksums",
     "build_sbids_document_for_dataset",
     "sbids_default_output_path",
     "export_sbids_dataset",

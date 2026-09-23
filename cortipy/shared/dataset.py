@@ -11,7 +11,8 @@ import pandas as pd
 import numpy as np
 import importlib
 
-from .bids import BIDSLoader, BIDSLoadResult, ExperimentBinLoader
+from .bids import BIDSLoader, BIDSLoadResult, ExperimentBinLoader, raw_to_microvolts
+from .units import to_volts
 from .sbids import read_sbids
 
 
@@ -155,7 +156,7 @@ class CortiDataset:
         metadata: dict[str, Any] = {"params": params, "source": "synthetic_sine_trigger"}
         result = BIDSLoadResult(
             raw=raw,
-            data=raw.get_data().T,
+            data=raw_to_microvolts(raw),
             sampling_rate=float(sfreq),
             events=None,
             channels=channels_df,
@@ -201,7 +202,8 @@ class CortiDataset:
         )
 
         info = mne.create_info(ch_names=names, sfreq=float(sampling_rate), ch_types=types)
-        raw = mne.io.RawArray(data.T, info)
+        # `data` is microvolts; MNE needs volts. result.data below stays in uV.
+        raw = mne.io.RawArray(to_volts(data.T, types), info)
         channels_df = pd.DataFrame({"name": names, "type": [ct.upper() for ct in types]})
 
         params = {
@@ -482,7 +484,7 @@ class CortiDataset:
         raw.set_channel_types({channel_name: "stim"})
 
         # Keep result arrays in sync
-        self.result.data = raw.get_data().T
+        self.result.data = raw_to_microvolts(raw)
         ch_types = raw.get_channel_types()
         ch_names = raw.ch_names
         self.result.channels = pd.DataFrame({"name": ch_names, "type": [ct.upper() for ct in ch_types]})
@@ -616,9 +618,25 @@ def _meta_from_result(result: BIDSLoadResult, source_rel: str) -> dict[str, Any]
     if isinstance(result.metadata, dict) and "params" in result.metadata:
         params = result.metadata["params"]
     participant = params.get("Metadata", {}).get("Participant", {}) if isinstance(params, dict) else {}
-    subject = participant.get("Code") if isinstance(participant, dict) else None
-    # Force channel list to match the actual raw channels to avoid mismatches on import
-    channels = [{"Channel": name, "Position": name, "Active": True} for name in result.raw.ch_names]
+    participant = dict(participant) if isinstance(participant, dict) else {}
+    subject = participant.get("Code")
+
+    # Keep the real montage when it lines up with the raw channels: it carries Position,
+    # Impedance, Rubrik and Model. Flattening it to bare names threw all of that away, so
+    # an SBIDS export lost every electrode detail the operator had entered.
+    montage = params.get("Channels") if isinstance(params, dict) else None
+    if isinstance(montage, list) and len(montage) == len(result.raw.ch_names):
+        channels = [dict(entry) for entry in montage]
+    elif isinstance(montage, list) and montage and len(montage) < len(result.raw.ch_names):
+        # ActiCHamp saves AUX/trigger columns after the EEG block, and Channels describes only
+        # the EEG block. Keep the montage for those leading columns; the trailing ones get names.
+        channels = [dict(entry) for entry in montage] + [
+            {"Channel": name, "Position": name, "Active": True}
+            for name in result.raw.ch_names[len(montage):]
+        ]
+    else:
+        channels = [{"Channel": name, "Position": name, "Active": True} for name in result.raw.ch_names]
+
     # Ensure Parameters contains sampling rate for tabular exports
     parameters_block = params.get("Parameters", {}) if isinstance(params, dict) else {}
     if "fs" not in parameters_block and getattr(result, "sampling_rate", None):
@@ -626,14 +644,23 @@ def _meta_from_result(result: BIDSLoadResult, source_rel: str) -> dict[str, Any]
             parameters_block["fs"] = float(result.sampling_rate)
         except Exception:
             parameters_block.setdefault("fs", float(result.raw.info.get("sfreq", 0.0)))
-    return {
+
+    meta = {
         "Method": params.get("Method", "Import") if isinstance(params, dict) else "Import",
         "Device": params.get("Device", "Unknown") if isinstance(params, dict) else "Unknown",
         "Parameters": parameters_block,
         "Channels": channels,
-        "Metadata": {"Participant": {"Code": subject}} if subject else {},
+        # The whole block, not just the code: re-exporting a loaded recording used to strip
+        # age/sex/initials back off the subject node.
+        "Metadata": {"Participant": participant} if participant else {},
         "DataFile": source_rel,
     }
+    # GND/Ref hold no data column, so they are not in `Channels` — but they are real
+    # electrodes with impedances and belong in the graph as AUXChannel nodes.
+    reference_electrodes = params.get("ReferenceElectrodes") if isinstance(params, dict) else None
+    if reference_electrodes:
+        meta["ReferenceElectrodes"] = [dict(entry) for entry in reference_electrodes]
+    return meta
 
 
 def _ext_for_format(fmt: str) -> str:
@@ -713,8 +740,10 @@ def _synthetic_sine_trigger_raw(
     every = max(1, int(round(trigger_interval_s * sfreq)))
     trigger[::every] = 1.0
     data = np.vstack([sine, trigger])
-    info = mne.create_info(ch_names=[channel, stim_label], sfreq=sfreq, ch_types=["eeg", "stim"])
-    return mne.io.RawArray(data, info)
+    ch_types = ["eeg", "stim"]
+    info = mne.create_info(ch_names=[channel, stim_label], sfreq=sfreq, ch_types=ch_types)
+    # sine is in microvolts (amplitude_uV); the trigger is unitless and must not be scaled.
+    return mne.io.RawArray(to_volts(data, ch_types), info)
 
 
 def _synthesize_eeg_data(

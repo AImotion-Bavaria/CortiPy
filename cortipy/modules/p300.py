@@ -8,6 +8,7 @@ from cortipy.core.context import ModuleContext
 from cortipy.evaluation.p300 import P300Evaluator
 from cortipy.shared import filter_vep, plot_live_erp, seg_sig_fast_p300, trigger_adc
 from cortipy.shared.notifications import info_end_live, info_start_live
+from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
 
 from .base import ModuleBase
 
@@ -68,14 +69,10 @@ class P300Module(ModuleBase):
         device = str(params.get("Device", "")).lower()
         referenced = np.array(data, copy=True)
         if device == "actichamp":
-            ref_idx = int(param_block.get("ReferenceChannel", 1)) - 1
-            trig_idx = int(param_block.get("TriggerChannel", data.shape[1])) - 1
-            mask = np.ones(referenced.shape[1], dtype=bool)
-            if 0 <= trig_idx < mask.size:
-                mask[trig_idx] = False
-            referenced[:, mask] = referenced[:, mask] - referenced[:, [ref_idx]]
+            referenced = apply_eeg_reference(referenced, param_block)
         elif device == "unicorn":
-            referenced = referenced[:, : min(8, referenced.shape[1])]
+            referenced = apply_eeg_reference(referenced, param_block)
+            referenced = referenced[:, : min(8, eeg_channel_count(param_block, referenced.shape[1]))]
         return referenced
 
     def _update_live_plot(self, params: dict, data: np.ndarray, fs: float) -> None:
@@ -88,7 +85,7 @@ class P300Module(ModuleBase):
         referenced = self._apply_reference(params, data)
         if live_ch < 0 or live_ch >= referenced.shape[1]:
             return
-        referenced[:, live_ch] = filter_vep(referenced[:, [live_ch]], self.high_pass_cutoff, fs)
+        referenced[:, live_ch] = filter_vep(referenced[:, [live_ch]], self.high_pass_cutoff, fs).ravel()
 
         triggered = trigger_adc(referenced, fs, trig_idx, self.max_time, edge=param_block.get("edge", "f"))
         segments = seg_sig_fast_p300(triggered, fs, self.max_time, trig_idx)

@@ -91,7 +91,8 @@ def compute_t2circ(data: np.ndarray, fs: float, stim_freqs: Sequence[float]) -> 
     """Compute T²circ statistics for each channel."""
     if data.ndim == 1:
         data = data[:, np.newaxis]
-    if not stim_freqs:
+    stim_freqs = np.atleast_1d(stim_freqs)  # accept list or ndarray without ambiguous truthiness
+    if stim_freqs.size == 0:
         return np.array([]), np.array([])
     primary = float(stim_freqs[0])
     if primary <= 0 or fs <= 0:
@@ -138,7 +139,11 @@ def cca_correlations(data: np.ndarray, fs: float, stim_freqs: Sequence[float]) -
     if data.shape[0] < 2:
         return np.array([]), np.array([])
     t = np.arange(data.shape[0]) / fs
-    freq_list = list(stim_freqs) + [stim_freqs[0] + 1, 50] if stim_freqs else [50]
+    stim_freqs = np.atleast_1d(stim_freqs)  # accept list or ndarray without ambiguous truthiness
+    if stim_freqs.size:
+        freq_list = list(stim_freqs) + [float(stim_freqs[0]) + 1, 50]
+    else:
+        freq_list = [50]
     rho = np.zeros(len(freq_list))
     for i, freq in enumerate(freq_list):
         ref = np.column_stack(

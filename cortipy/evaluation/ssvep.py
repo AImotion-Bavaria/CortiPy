@@ -30,6 +30,12 @@ from cortipy.shared import (
     ssvep_f_test,
     ssvep_snr,
 )
+from cortipy.shared.channels import resolve_plot_channel
+from cortipy.shared.reference import (
+    apply_eeg_reference,
+    eeg_channel_count,
+    reference_channel_index,
+)
 
 LOGGER = logging.getLogger("cortipy.evaluation.ssvep")
 
@@ -115,17 +121,32 @@ class SsvepEvaluator(EvaluatorBase):
         evaluation["rho"] = rho
         evaluation["f_CCA"] = f_cca
 
-        f_test = ssvep_f_test(psd_result.psd, psd_result.freq, float(stim_freqs[0]))
+        # psd_result.psd is (channels, freqs); ssvep_f_test expects (freqs, channels)
+        f_test = ssvep_f_test(psd_result.psd.T, psd_result.freq, float(stim_freqs[0]))
         if f_test:
             evaluation["F_Test"] = f_test
 
-        plot_channel_label = param_block.get("PlotChannelLabel", "Oz")
-        # Resolve channel index from label; default to Oz when available.
-        plot_idx = _channel_idx_from_label(params, plot_channel_label)
-        if plot_idx is None:
-            plot_idx = _channel_idx_from_label(params, "Oz")
-        if plot_idx is None or plot_idx < 0 or plot_idx >= psd_result.dBpsd.shape[0]:
-            plot_idx = 0
+        requested_label = param_block.get("PlotChannelLabel", "Oz")
+        # The reference channel is zero after referencing; never fall back onto it.
+        ref_idx = reference_channel_index(param_block, psd_result.dBpsd.shape[0])
+        plot_idx, plot_channel_label, exact = resolve_plot_channel(
+            params,
+            requested_label,
+            psd_result.dBpsd.shape[0],
+            exclude=(ref_idx,),
+        )
+        if not exact:
+            # Oz is absent from e.g. the UNICORN montage. Substituting silently and still
+            # titling the plot "Oz" is what made this chart unreadable.
+            LOGGER.warning(
+                "SSVEP plot channel %r not in montage; using %r instead",
+                requested_label,
+                plot_channel_label,
+            )
+            evaluation["PlotChannelFallback"] = {
+                "requested": str(requested_label),
+                "used": plot_channel_label,
+            }
         param_block["PlotChannelLabel"] = plot_channel_label
         param_block["ChannelIpsi"] = plot_idx + 1
         param_block["ChannelContra"] = plot_idx + 1
@@ -143,8 +164,9 @@ class SsvepEvaluator(EvaluatorBase):
                 psd_result.freq,
                 _pick_psd_channel(psd_result.dBpsd, plot_idx),
                 smooth=1.0,
-                xlim=(0, 500),
-                ylim=(-100, -20),
+                # Frame the stimulus and its first few harmonics rather than a fixed 0-500 Hz
+                # window, which at fs=250 left three quarters of the axis empty.
+                xlim=(0.0, _psd_display_top_hz(psd_result.freq, stim_freqs)),
                 title=f"SSVEP PSD @ {plot_channel_label}",
             )
             _show_mpl(fig_psd, "ssvep_psd")
@@ -166,21 +188,21 @@ class SsvepEvaluator(EvaluatorBase):
 
     # ------------------------------------------------------------------
     def _apply_reference(self, params: dict, data: np.ndarray) -> np.ndarray:
-        device = str(params.get("Device", "")).lower()
+        """Reference and trim to the EEG block.
+
+        Applies to every device, not just the two hardware ones: simulated and replayed
+        runs went unreferenced before, so their results did not match a live recording of
+        the same signal. ``apply_eeg_reference`` is a no-op when no ReferenceChannel is set,
+        so devices that stream pre-referenced data are unaffected.
+        """
         param_block = params.get("Parameters", {})
-        num_channels = int(param_block.get("NumberEEGChannels", data.shape[1]))
-        if device == "actichamp":
-            ref_idx = int(param_block.get("ReferenceChannel", 1)) - 1
-            referenced = data - data[:, [ref_idx]]
-            if referenced.shape[1] > num_channels:
-                referenced = referenced[:, :num_channels]
-            return referenced
-        if device == "unicorn":
-            return data[:, :8]
-        # Generic fallback: keep the first `num_channels` channels without re-referencing.
-        if data.shape[1] > num_channels:
-            return data[:, :num_channels]
-        return data
+        referenced = apply_eeg_reference(data, param_block)
+        num_channels = eeg_channel_count(param_block, referenced.shape[1])
+        if str(params.get("Device", "")).lower() == "unicorn":
+            num_channels = min(8, num_channels)  # EEG occupies the first 8 of 16 columns
+        if 0 < num_channels < referenced.shape[1]:
+            referenced = referenced[:, :num_channels]
+        return referenced
 
 
 def _get_axes(key: str):
@@ -297,17 +319,36 @@ def _plot_ssvep_topomap(
         return
 
 
+def _psd_display_top_hz(freqs: np.ndarray, stim_freqs: np.ndarray) -> float:
+    """Upper edge of the PSD x-axis: enough to show the stimulus and ~5 harmonics.
+
+    Never exceeds the spectrum itself (Nyquist), so the axis cannot run off past the data.
+    """
+    freqs = np.asarray(freqs, dtype=float)
+    nyquist = float(np.nanmax(freqs)) if freqs.size else 60.0
+    stim = np.asarray(stim_freqs, dtype=float)
+    stim = stim[np.isfinite(stim) & (stim > 0)]
+    wanted = 5.0 * float(np.max(stim)) if stim.size else 60.0
+    return float(min(nyquist, max(60.0, wanted))) or nyquist
+
+
 def plot_ssvep_power_db(
     ax: plt.Axes,
     freqs: np.ndarray,
     power_db: np.ndarray,
     window_hz: float = 1.0,
-    xlim: tuple[float, float] = (0, 500),
-    ylim: tuple[float, float] = (-100, -20),
+    xlim: tuple[float, float] | None = None,
+    ylim: tuple[float, float] | None = None,
     title: str | None = None,
     smooth: float | None = None,
 ) -> plt.Axes:
-    """Plot SSVEP power (dB/Hz) with optional light smoothing to mirror EEGLAB-style PSD."""
+    """Plot SSVEP power (dB/Hz) with optional light smoothing to mirror EEGLAB-style PSD.
+
+    ``xlim``/``ylim`` default to the data. They used to be hardcoded to (0, 500) Hz and
+    (-100, -20) dB: at fs=250 the spectrum stops at Nyquist (125 Hz), so three quarters of
+    the axis was empty and the trace was squeezed into the left edge — and any signal
+    outside the fixed dB window was clipped out of view entirely.
+    """
     freqs = np.asarray(freqs)
     power_db = np.asarray(power_db)
     # choose smoothing window: prefer `smooth` if provided, else window_hz
@@ -317,39 +358,37 @@ def plot_ssvep_power_db(
         k = max(3, int(round(smooth_win / step)))
         k = k + (k + 1) % 2  # enforce odd length
         kernel = np.ones(k) / k
-        power_db = np.convolve(power_db, kernel, mode="same")
+        # convolve along the last (frequency) axis so multichannel input stays 2-D
+        power_db = np.apply_along_axis(
+            lambda row: np.convolve(row, kernel, mode="same"), -1, power_db
+        )
     if power_db.size == freqs.size + 1:
         freqs = freqs[:-1]
         power_db = power_db[:-1]
     ax.plot(freqs, power_db, color="blue", linewidth=1.25)
     ax.set_xlabel("Frequency (Hz)")
-    ax.set_ylabel("Power (µV^2/Hz)")
+    ax.set_ylabel("Power (dB/Hz)")  # the values are already in dB, not µV²/Hz
     if title:
         ax.set_title(title)
+
+    if xlim is None:
+        top = float(np.nanmax(freqs)) if freqs.size else 1.0
+        xlim = (0.0, top if top > 0 else 1.0)
     ax.set_xlim(*xlim)
-    ax.set_ylim(*ylim)
+
+    if ylim is None:
+        # Fit to whatever is inside the visible band, with a little headroom.
+        visible = power_db[..., (freqs >= xlim[0]) & (freqs <= xlim[1])] if freqs.size else power_db
+        finite = visible[np.isfinite(visible)] if np.size(visible) else np.array([])
+        if finite.size:
+            lo, hi = float(np.min(finite)), float(np.max(finite))
+            pad = max(3.0, 0.05 * (hi - lo))
+            ylim = (lo - pad, hi + pad)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+
     ax.grid(True, alpha=0.3)
     return ax
-
-
-def _channel_idx_from_label(params: dict, label) -> int | None:
-    """Resolve a 0-based channel index from a label or numeric value."""
-    if label is None:
-        return None
-    # numeric labels can be passed directly
-    try:
-        lbl_int = int(label)
-    except (TypeError, ValueError):
-        lbl_int = None
-    else:
-        if lbl_int > 0:
-            return lbl_int - 1
-    labels = params.get("Channels") or params.get("ChannelLabels") or params.get("ChannelLabelsEEG") or []
-    labels = [str(lab).lower() for lab in labels]
-    try:
-        return labels.index(str(label).lower())
-    except ValueError:
-        return None
 
 
 def _pick_psd_channel(psd_db: np.ndarray, idx: int) -> np.ndarray:
@@ -391,7 +430,10 @@ def _compute_ssvep_psd(data_ref: np.ndarray, fs: float) -> SpectralResult:
         k = max(3, int(round(1 / (freqs[1] - freqs[0]))))
         k = k + (k + 1) % 2  # enforce odd
         kernel = np.ones(k) / k
-        power_db = np.convolve(power_db, kernel, mode="same")
+        # power_db is (channels, freqs); smooth each channel along the frequency axis.
+        power_db = np.apply_along_axis(
+            lambda row: np.convolve(row, kernel, mode="same"), -1, power_db
+        )
     if power_db.shape[1] > 1:
         power_db = power_db[:, :-1]
         freqs = freqs[:-1]

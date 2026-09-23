@@ -11,6 +11,7 @@ import numpy as np
 import pandas as pd
 
 from .bids import BIDSLoadResult, BIDSLoader, ExperimentBinLoader
+from .units import to_volts
 
 
 @dataclass
@@ -58,7 +59,8 @@ class DummyDatasetGenerator:
             ch_types=ch_types,
             verbose=False,
         )
-        raw = mne.io.RawArray(data.T, info)
+        # `data` is microvolts; MNE needs volts. The trigger channel is not scaled.
+        raw = mne.io.RawArray(to_volts(data.T, ch_types), info)
         channels_df = pd.DataFrame({"name": ch_names, "type": [ct.upper() for ct in ch_types]})
 
         params = self._params_payload(
