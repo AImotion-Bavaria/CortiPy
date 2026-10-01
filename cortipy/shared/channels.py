@@ -17,6 +17,7 @@ from typing import Any, Mapping, Optional, Sequence, Tuple
 __all__ = [
     "channel_entries",
     "channel_labels",
+    "data_column_names",
     "normalize_label",
     "resolve_channel_index",
     "resolve_plot_channel",
@@ -75,6 +76,30 @@ def channel_labels(source: Any, count: Optional[int] = None) -> list[str]:
         while len(labels) < count:
             labels.append(f"Ch {len(labels) + 1}")
     return labels
+
+
+def data_column_names(source: Any, count: int, trigger_index: Optional[int] = None) -> list[str]:
+    """Names a recording's data columns are saved under (Parquet columns, JSON-LD schema:name).
+
+    Each column is named after its electrode ``Position``, the trigger column (0-based
+    ``trigger_index``) ``Trigger``; a column without a usable name (AUX past the montage,
+    blank or duplicated Position) gets ``Ch{n}`` — no space, n being the 1-based column
+    number. The result is unique, as MNE and Parquet require.
+    """
+    entries = channel_entries(source)
+    names: list[str] = []
+    for idx in range(count):
+        entry = entries[idx] if idx < len(entries) else None
+        position = str(entry.get("Position") or "").strip() if isinstance(entry, Mapping) else ""
+        if idx == trigger_index:
+            position = "Trigger"
+        name = position if position and position not in names else f"Ch{idx + 1}"
+        suffix = 1
+        while name in names:  # a Position literally named like another column's fallback
+            suffix += 1
+            name = f"Ch{idx + 1}_{suffix}"
+        names.append(name)
+    return names
 
 
 def resolve_channel_index(

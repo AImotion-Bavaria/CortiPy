@@ -302,11 +302,15 @@ class SbidsExporter:
             else:
                 ch_type = "EEGChannel"
             chan_id = f"urn:channel:{subj_id}_{filename_stem}_{(label or pos or f'ch{idx+1}').replace(' ', '')}"
+            # A data channel: schema:name is its raw-file column (the Position, Trigger, or
+            # Ch{n}), columnName its amplifier slot Ch{n}. Data channels come first, so idx is
+            # the column. GND/Ref have no column and keep their own labels.
+            column = ch.get("DataColumn")
             chan_node = {
                 "@id": chan_id,
                 "@type": ["schema:PropertyValue", ch_type],
-                "schema:name": pos or label or f"Ch{idx+1}",
-                "columnName": label or pos or f"Ch{idx+1}",
+                "schema:name": column or pos or label or f"Ch{idx+1}",
+                "columnName": f"Ch{idx+1}" if column else (label or pos or f"Ch{idx+1}"),
             }
             if imp is not None:
                 chan_node["impedance"] = imp
@@ -753,7 +757,8 @@ class SBIDSLoader:
             variable = [variable]
         rows = []
         for idx, entry in enumerate(variable):
-            name = entry.get("columnName") or entry.get("schema:name") or f"Ch{idx+1}"
+            # schema:name is the raw-file column; columnName is only the amplifier slot.
+            name = entry.get("schema:name") or entry.get("columnName") or f"Ch{idx+1}"
             types = entry.get("@type") or []
             if isinstance(types, str):
                 types = [types]

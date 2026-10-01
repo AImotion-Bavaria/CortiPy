@@ -635,6 +635,10 @@ def _meta_from_result(result: BIDSLoadResult, source_rel: str) -> dict[str, Any]
         ]
     else:
         channels = [{"Channel": name, "Position": name, "Active": True} for name in result.raw.ch_names]
+    # The raw-file column each channel's data is stored under; the JSON-LD schema:name
+    # carries it so readers can match a channel to its Parquet column.
+    for entry, name in zip(channels, result.raw.ch_names):
+        entry["DataColumn"] = name
 
     # Ensure Parameters contains sampling rate for tabular exports
     parameters_block = params.get("Parameters", {}) if isinstance(params, dict) else {}

@@ -5,6 +5,7 @@ carries the full config verbatim, including the UNICORN COM port, so a load can 
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from cortipy.ui_streamlit import session as ui
 
@@ -67,3 +68,39 @@ def test_same_run_name_reports_exists_and_overwrite_replaces_it(tmp_path):
 
 def test_stem_comes_from_filename(tmp_path):
     assert ui.dataset_recording_stem(_params("my recording 7")) == "my_recording_7"
+
+
+@pytest.mark.parametrize(
+    "device, method, last_column",
+    [
+        ("ActiCHamp", "VEP", "Trigger"),  # TriggerChannel 33 = AUX1, right after the EEG block
+        ("UNICORN", "SSVEP", "Ch5"),  # no trigger: an extra column just gets its slot name
+    ],
+)
+def test_parquet_columns_match_schema_name_and_column_name_is_the_slot(tmp_path, device, method, last_column):
+    """Parquet column == schema:name == Position (Trigger / Ch{n} as fallback); columnName == Ch{n}.
+
+    Channels describes only the EEG block, so a live recording (EEG + trailing trigger/AUX)
+    is one column wider than the montage. That used to discard every electrode name and
+    save Ch1..N, while the JSON-LD said "Ch 1".. — nothing matched.
+    """
+    import json
+
+    import pandas as pd
+
+    params = _params("live")
+    params.update(Device=device, Method=method)
+    params["Parameters"]["TriggerChannel"] = 33
+    params["Channels"][2]["Position"] = ""  # a blank electrode row
+    folder = tmp_path / "DS"
+    # 4 EEG columns + 1 trailing column, as a live recording is saved.
+    ui.save_recording_to_dataset(np.zeros((50, 5)), params, folder)
+
+    expected = ["Fz", "Cz", "Ch3", "Oz", last_column]
+    assert list(pd.read_parquet(folder / "raw_data" / "live.parquet").columns) == expected
+
+    graph = json.loads((folder / "DS.jsonld").read_text(encoding="utf-8"))["@graph"]
+    recording = next(node for node in graph if "schema:CreateAction" in node.get("@type", []))
+    data_nodes = recording["schema:variableMeasured"][:5]
+    assert [node["schema:name"] for node in data_nodes] == expected
+    assert [node["columnName"] for node in data_nodes] == ["Ch1", "Ch2", "Ch3", "Ch4", "Ch5"]
