@@ -88,6 +88,7 @@ def _tail_log(path: Path, n: int = 60) -> List[str]:
 from cortipy import MeasurementPipeline  # noqa: E402
 from cortipy.core.pipeline import PipelineHooks  # noqa: E402
 from cortipy.devices import DeviceFactory, DeviceInterface  # noqa: E402
+from cortipy.shared.channels import data_column_names  # noqa: E402
 from cortipy.shared.units import DEFAULT_SIGNAL_UNIT  # noqa: E402
 from cortipy.ui import normalize_params  # noqa: E402
 
@@ -2361,6 +2362,27 @@ def _device_emits_trigger(device: str, params_block: Dict[str, Any]) -> bool:
     return bool(params_block.get("IncludeTriggers", True))
 
 
+ACTICHAMP_EEG_INPUTS = 32  # physical EEG inputs; TriggerChannel 33 is AUX1
+
+
+def _trigger_column_index(params: Dict[str, Any], width: int) -> Optional[int]:
+    """0-based column of the trigger in saved data, or None when the device records none.
+
+    ActiCHamp saves the selected EEG block followed by its AUX inputs. TriggerChannel counts
+    physical inputs, so 33 is AUX1 — the first column after the EEG block, not column 33.
+    """
+    pblock = params.get("Parameters", {}) if isinstance(params, dict) else {}
+    if not _device_emits_trigger(params.get("Device", ""), pblock):
+        return None
+    number = coerce_number(pblock.get("TriggerChannel"))
+    if number is None or number < 1:
+        return None
+    number = int(number)
+    if number > ACTICHAMP_EEG_INPUTS:
+        number = len(params.get("Channels") or []) + number - ACTICHAMP_EEG_INPUTS
+    return number - 1 if number <= width else None
+
+
 def _channel_entry(row: Dict[str, Any], *, active: bool) -> Dict[str, Any]:
     channel_name = row.get("Channel") or row.get("Label")
     rubric = _valid_electrode_rubrik(row.get("Rubrik") or row.get("Rubric"))
@@ -2817,10 +2839,11 @@ def save_recording_to_dataset(
         raise ValueError("Recording data must be 2-D (samples x channels).")
     pblock = params.get("Parameters", {}) if isinstance(params, dict) else {}
     fs = float(coerce_number(pblock.get("fs")) or 250.0)
-    chans = params.get("Channels") or []
-    ch_names = [(c.get("Position") or c.get("Channel")) for c in chans] or None
-    if ch_names and len(ch_names) != arr.shape[1]:
-        ch_names = None  # montage does not match the data width; fall back to Ch1..N
+    # Channels covers only the EEG block, so it is shorter than the data whenever a trigger
+    # or AUX column trails it. Checking for equal length threw every electrode name away.
+    ch_names = data_column_names(
+        params.get("Channels") or [], arr.shape[1], _trigger_column_index(params, arr.shape[1])
+    )
     raw = _coerce_to_raw_array(arr, fs, ch_names, None)
     result = BIDSLoadResult(
         raw=raw, data=arr, sampling_rate=fs, events=None, channels=None,
@@ -2870,11 +2893,10 @@ def export_recording(data: Any, params: Dict[str, Any], out_dir: Path, container
         raise ValueError("Recording data must be 2-D (samples x channels).")
     pblock = params.get("Parameters", {}) if isinstance(params, dict) else {}
     fs = float(coerce_number(pblock.get("fs")) or 250.0)
-    chans = params.get("Channels") or []
-    ch_names = [(c.get("Position") or c.get("Channel")) for c in chans] or None
-    if ch_names and len(ch_names) != arr.shape[1]:
-        ch_names = None  # fall back to Ch1..N when the montage doesn't match the data width
-    part = (params.get("Metadata") or {}).get("Participant") or {}
+    ch_names = data_column_names(
+        params.get("Channels") or [], arr.shape[1], _trigger_column_index(params, arr.shape[1])
+    )
+    part =(params.get("Metadata") or {}).get("Participant") or {}
     subject = (str(part.get("Code") or "01").replace(" ", "") or "01")
     task = str(params.get("Method") or "task").lower()
     # Honour the filename the operator typed on the session page. It used to be ignored, so
