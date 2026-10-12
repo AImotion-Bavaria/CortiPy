@@ -945,12 +945,16 @@ def _impedance_monitor_device(fs_value: Any) -> Optional[Any]:
     return monitor
 
 
-def stop_impedance_monitor() -> None:
+def stop_impedance_monitor(resume_acquisition: bool = True) -> None:
     """Leave impedance mode on every device that might still be in it.
 
     Impedance mode and acquisition are mutually exclusive on the amplifier, so this runs
     before connecting or starting a run, and whenever the column stops being measured
     (Simulate run, a device that cannot measure it).
+
+    A connected device gave up its acquisition to measure impedance and takes it up again
+    here, which costs a few seconds; ``resume_acquisition=False`` skips that when the device
+    is about to be disconnected.
     """
     connected = st.session_state.get("_connected_device")
     monitor = st.session_state.pop(_IMPEDANCE_MONITOR_KEY, None)
@@ -958,7 +962,7 @@ def stop_impedance_monitor() -> None:
         stop = getattr(device, "stop_impedance_mode", None)
         if callable(stop):
             try:
-                stop()
+                stop(resume=resume_acquisition and device is connected)
             except Exception:  # pragma: no cover - hardware/SDK specific
                 LOGGER.exception("Leaving ActiCHamp impedance mode failed")
     if monitor is not None and monitor is not connected:
@@ -2667,7 +2671,7 @@ def _connection_signature(params: Dict[str, Any]) -> str:
 def _disconnect_session_device() -> None:
     # Impedance mode is left first: it may be running on the very device being released,
     # and the amplifier must not be handed on still measuring impedance.
-    stop_impedance_monitor()
+    stop_impedance_monitor(resume_acquisition=False)
     device = st.session_state.pop("_connected_device", None)
     st.session_state.pop("_connected_device_signature", None)
     if device is not None:

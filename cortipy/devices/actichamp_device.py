@@ -34,6 +34,11 @@ BUFFER_SIZE = 200000
 MAX_CHANNELS = 43
 SHM_NAME = "EEG_SharedMemory"
 STOP_EVENT_NAME = "EEG_StopEvent"
+PRODUCER_EXE = "EEG_SharedMemoryProducer.exe"
+
+# From writing the sampling rate until the producer reports acquisitionReady it stops the
+# impedance measurement, reprograms the amplifier and sleeps a second: ~6 s in practice.
+ACQUISITION_READY_TIMEOUT = 30.0
 
 FILE_MAP_ALL_ACCESS = 0xF001F
 EVENT_MODIFY_STATE = 0x0002
@@ -158,10 +163,13 @@ class ActiChampDevice(DeviceInterface):
         self._buffer_ptr: int | None = None
         self._data_view: np.ndarray | None = None
         self._spawned_producer = False
-        # Continuous impedance monitoring (see start_impedance_mode): the acquisition rate
-        # has to be restored when the mode is left, so it is remembered on entry.
+        # True once connect() has put the producer into acquisition.
+        self._acquiring = False
+        # Continuous impedance monitoring (see start_impedance_mode). Entering the mode on a
+        # device that was acquiring costs it its acquisition, so that is remembered and the
+        # acquisition is started again when the mode is left.
         self._impedance_mode = False
-        self._impedance_previous_rate = 0.0
+        self._resume_acquisition = False
 
         # Protect shared-memory access – important with Streamlit reruns / threads.
         self._lock = threading.RLock()
@@ -189,12 +197,17 @@ class ActiChampDevice(DeviceInterface):
 
             self._initialize_buffer_state()
             self._wait_for_acquisition_ready()
+            self._acquiring = True
             logger.info("ActiChamp acquisition ready for sampling.")
 
     def acquire(self, duration_seconds: float, aux_channels: int = 0) -> np.ndarray:
         with self._lock:
             if self._buffer is None or self._data_view is None:
                 raise RuntimeError("ActiChamp device is not connected.")
+            if self._impedance_mode:
+                # The producer streams nothing while it measures impedance; waiting for
+                # samples here would only block until the deadline.
+                raise RuntimeError("ActiChamp is measuring impedance; leave impedance mode before acquiring.")
 
             samples_needed = max(1, int(round(duration_seconds * self.sampling_rate)))
             channel_limit = self._channel_limit(aux_channels)
@@ -265,9 +278,10 @@ class ActiChampDevice(DeviceInterface):
             return out[:copied]
 
     def disconnect(self) -> None:
-        self.stop_impedance_mode()
+        self.stop_impedance_mode(resume=False)
         with self._lock:
             logger.info("Disconnecting ActiChamp device.")
+            self._acquiring = False
             if self._buffer is not None:
                 try:
                     self._buf.control.stopRequested = True
@@ -284,13 +298,7 @@ class ActiChampDevice(DeviceInterface):
             self._process = None
             self._spawned_producer = False
 
-            if self._producer_log is not None:
-                try:
-                    self._producer_log.flush()
-                    self._producer_log.close()
-                except Exception:
-                    logger.exception("Failed to close ActiChamp producer log file")
-                self._producer_log = None
+            self._close_producer_log()
 
             if self._buffer_ptr is not None:
                 ctypes.windll.kernel32.UnmapViewOfFile(ctypes.c_void_p(self._buffer_ptr))
@@ -368,10 +376,8 @@ class ActiChampDevice(DeviceInterface):
 
                 return last_values
             finally:
-                if self._impedance_mode:
-                    # A live monitor owns the mode; leaving it here would stop its updates.
-                    self._impedance_previous_rate = previous_sampling_rate
-                else:
+                # A live monitor owns the mode; leaving it here would stop its updates.
+                if not self._impedance_mode:
                     # Leave impedance mode, or the next acquisition would start with the amplifier
                     # still measuring impedance instead of streaming EEG.
                     buf.control.measureImpedance = False
@@ -382,38 +388,24 @@ class ActiChampDevice(DeviceInterface):
     # ------------------------------------------------------------------
     # Continuous impedance monitoring.
     #
-    # ``read_impedances`` enters impedance mode, waits for a settled reading and leaves it
-    # again. That is right for a one-shot check but useless as a live display: it takes
-    # seconds per call and flips the amplifier in and out of impedance mode every time.
-    # A monitor instead enters the mode once, lets the caller poll the shared control block
-    # as often as it likes, and leaves the mode when it stops.
+    # The producer measures impedance in one window only: from its start until the first
+    # sampling rate is written to the control block. After that it streams EEG until it
+    # exits, and nothing in the control block brings it back. So a live impedance display
+    # needs a producer that has not been given a rate yet: one that is still in that window
+    # is attached to, one that is already streaming is stopped and replaced by a fresh one.
     def start_impedance_mode(self) -> None:
         """Put the amplifier into impedance mode and keep it there until stopped."""
         with self._lock:
-            if self._buffer is None:
-                try:
-                    self._map_shared_buffer()
-                except RuntimeError as exc:
-                    logger.info(
-                        "Shared memory unavailable for impedance monitoring; starting producer: %s",
-                        exc,
-                    )
-                    self._start_producer()
-                    self._map_shared_buffer()
-
+            if self._impedance_mode and self._buffer is not None:
+                return
+            resume = self._acquiring
+            self._open_impedance_window()
             buf = self._buf
-            if not self._impedance_mode:
-                # Impedance mode needs targetSamplingRate=0; the acquisition rate is put back
-                # by stop_impedance_mode, or the next recording streams at a garbled rate.
-                self._impedance_previous_rate = float(buf.control.targetSamplingRate)
-                buf.impSize = 0
-                for idx in range(MAX_CHANNELS + 2):
-                    buf.impedances[idx] = -1.0
-            buf.control.stopRequested = False
-            buf.control.targetSamplingRate = 0.0
+            # Not evaluated by the current producer; set for one that does.
             buf.control.measureImpedance = True
             buf.control.showImpedanceLEDs = True
             self._impedance_mode = True
+            self._resume_acquisition = resume
             logger.info("ActiChamp impedance monitoring started.")
 
     def poll_impedances(self) -> list[float]:
@@ -421,6 +413,12 @@ class ActiChampDevice(DeviceInterface):
         with self._lock:
             if self._buffer is None or not self._impedance_mode:
                 return []
+            if self._process is not None and self._process.poll() is not None:
+                # It exits by itself when it finds no amplifier or cannot open it.
+                raise RuntimeError(
+                    f"ActiChamp producer exited (code {self._process.returncode}). Is the amplifier "
+                    "connected, powered and not in use by another program?"
+                )
             try:
                 buf = self._buf
                 size = int(buf.impSize)
@@ -433,22 +431,161 @@ class ActiChampDevice(DeviceInterface):
                 logger.warning("Shared memory invalid while polling ActiChamp impedances.")
                 return []
 
-    def stop_impedance_mode(self) -> None:
-        """Leave impedance mode and restore the acquisition rate. Safe to call twice."""
+    def stop_impedance_mode(self, resume: bool = True) -> None:
+        """Leave impedance mode. Safe to call twice.
+
+        A device that was acquiring when the mode was entered is put back into acquisition,
+        which takes the producer several seconds. ``resume=False`` skips that, for a device
+        that is about to be disconnected anyway.
+        """
         with self._lock:
             if not self._impedance_mode:
                 return
             self._impedance_mode = False
+            resume = resume and self._resume_acquisition
+            self._resume_acquisition = False
             if self._buffer is None:
                 return
             try:
                 buf = self._buf
                 buf.control.measureImpedance = False
                 buf.control.showImpedanceLEDs = False
-                buf.control.targetSamplingRate = self._impedance_previous_rate
             except RuntimeError:
                 logger.warning("Shared memory invalid while leaving ActiChamp impedance mode.")
+                return
             logger.info("ActiChamp impedance monitoring stopped.")
+            if resume:
+                # Writing the rate ends the producer's impedance window, as in connect().
+                self._initialize_buffer_state()
+                self._wait_for_acquisition_ready()
+                self._acquiring = True
+                logger.info("ActiChamp acquisition resumed after impedance monitoring.")
+
+    def _open_impedance_window(self) -> None:
+        """Map a producer that is still measuring impedance, replacing one that is not."""
+        if self._buffer is None:
+            try:
+                self._map_shared_buffer(timeout=0.0)
+            except RuntimeError:
+                pass  # no block yet
+
+        running = self._producer_running()
+        if running and self._buffer is None:
+            # A producer that has only just been launched has not created its block yet.
+            try:
+                self._map_shared_buffer()
+            except RuntimeError:
+                logger.warning("ActiChamp producer is running without shared memory; restarting it.")
+
+        if running and self._buffer is not None and not self._producer_streaming():
+            logger.info("Attached to an ActiChamp producer that is still measuring impedance.")
+            return
+
+        if running:
+            logger.info("ActiChamp producer is already streaming; restarting it to measure impedance.")
+            self._stop_producer()
+
+        # Our view must not survive the producer it belonged to. Once that producer is gone
+        # the block usually loses its name, a new producer then creates a new block, and the
+        # old view would keep showing the dead one: no impedances, no acquisitionReady.
+        self._unmap_shared_buffer()
+        try:
+            self._map_shared_buffer(timeout=0.0)
+        except RuntimeError:
+            pass
+        if self._buffer is not None:
+            # Still there by name, so another program holds it open and a new producer will
+            # reuse it. Reset what the producer does not initialise itself, before it
+            # starts: a leftover rate would end its impedance window at once.
+            buf = self._buf
+            buf.control.targetSamplingRate = 0.0
+            buf.control.stopRequested = False
+            buf.readIndex = 0
+            buf.impSize = 0
+            buf.acquisitionReady = False
+
+        self._start_producer()
+        if self._buffer is None:
+            self._map_shared_buffer()
+        buf = self._buf
+        for idx in range(MAX_CHANNELS + 2):
+            buf.impedances[idx] = -1.0
+
+    def _producer_streaming(self) -> bool:
+        """True once the producer was given a sampling rate, i.e. its impedance window is over.
+
+        acquisitionReady alone is not enough: it only follows several seconds after the rate.
+        """
+        buf = self._buf
+        return bool(buf.acquisitionReady) or float(buf.control.targetSamplingRate) > 0.0
+
+    def _producer_running(self) -> bool:
+        """Whether any producer process exists, including one this object did not start."""
+        if self._process is not None and self._process.poll() is None:
+            return True
+        try:
+            tasks = subprocess.run(
+                ["tasklist", "/FI", f"IMAGENAME eq {PRODUCER_EXE}", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                creationflags=CREATE_NO_WINDOW,
+                timeout=10,
+            ).stdout
+        except (OSError, subprocess.SubprocessError):
+            logger.warning("Could not list processes to look for an ActiChamp producer.", exc_info=True)
+            return False
+        return PRODUCER_EXE.lower().encode() in tasks.lower()
+
+    def _stop_producer(self) -> None:
+        """Stop the running producer and wait until it is gone, so the amplifier is free."""
+        if self._buffer is not None:
+            try:
+                self._buf.control.stopRequested = True
+            except RuntimeError:
+                logger.warning("Shared memory invalid while requesting an ActiChamp producer stop.")
+        self._signal_stop_event()
+
+        if self._process is not None:
+            try:
+                self._process.wait(timeout=self.timeout)
+            except subprocess.TimeoutExpired:
+                logger.warning("ActiChamp producer did not exit in time; killing.")
+                self._process.kill()
+                self._process.wait()
+            self._process = None
+        self._close_producer_log()
+        self._spawned_producer = False
+        self._acquiring = False
+
+        # A producer left over from another session is not our child process.
+        deadline = time.time() + self.timeout
+        while self._producer_running():
+            if time.time() >= deadline:
+                logger.warning("Leftover ActiChamp producer did not exit in time; killing.")
+                subprocess.run(
+                    ["taskkill", "/F", "/IM", PRODUCER_EXE],
+                    capture_output=True,
+                    creationflags=CREATE_NO_WINDOW,
+                )
+                time.sleep(0.5)
+                break
+            time.sleep(0.1)
+
+    def _unmap_shared_buffer(self) -> None:
+        if self._buffer_ptr is not None:
+            ctypes.windll.kernel32.UnmapViewOfFile(ctypes.c_void_p(self._buffer_ptr))
+        self._buffer_ptr = None
+        self._buffer = None
+        self._data_view = None
+
+    def _close_producer_log(self) -> None:
+        if self._producer_log is None:
+            return
+        try:
+            self._producer_log.flush()
+            self._producer_log.close()
+        except Exception:
+            logger.exception("Failed to close ActiChamp producer log file")
+        self._producer_log = None
 
     # ------------------------------------------------------------------
     def _channel_limit(self, aux_channels: int) -> int:
@@ -459,7 +596,7 @@ class ActiChampDevice(DeviceInterface):
         return min(total, MAX_CHANNELS)
 
     def _start_producer(self) -> None:
-        exe_path = self.install_dir / "EEG_SharedMemoryProducer.exe"
+        exe_path = self.install_dir / PRODUCER_EXE
         if not exe_path.exists():
             logger.error("ActiChamp producer executable not found at %s", exe_path)
             raise FileNotFoundError(f"ActiChamp producer executable not found at {exe_path}")
@@ -495,8 +632,8 @@ class ActiChampDevice(DeviceInterface):
 
         self._spawned_producer = True
 
-    def _map_shared_buffer(self) -> None:
-        # robust mapping with explicit ctypes signatures and checks
+    def _map_shared_buffer(self, timeout: float | None = None) -> None:
+        # robust mapping with explicit ctypes signatures and checks; timeout=0 tries once
         kernel32 = ctypes.windll.kernel32
 
         # set prototypes for safety (important!)
@@ -511,7 +648,8 @@ class ActiChampDevice(DeviceInterface):
         kernel32.VirtualQuery.argtypes = [wintypes.LPCVOID, ctypes.POINTER(_MemoryBasicInformation), ctypes.c_size_t]
 
         expected_size = ctypes.sizeof(SharedBuffer)
-        deadline = time.time() + self.timeout
+        wait = self.timeout if timeout is None else float(timeout)
+        deadline = time.time() + wait
 
         handle = None
         ptr = None
@@ -519,26 +657,27 @@ class ActiChampDevice(DeviceInterface):
         logger.debug("Mapping ActiChamp shared memory block '%s' (expected size=%s)", SHM_NAME, expected_size)
 
         # Try to open and map the whole mapping (pass 0 to MapViewOfFile to map entire mapping)
-        while time.time() < deadline:
+        while True:
             # Open wide string explicitly (LPCWSTR)
             handle = kernel32.OpenFileMappingW(FILE_MAP_ALL_ACCESS, False, ctypes.c_wchar_p(SHM_NAME))
-            if not handle:
-                time.sleep(0.05)
-                continue
+            if handle:
+                # Map entire mapping by specifying 0 for number of bytes (MapViewOfFile maps whole mapping if 0).
+                ptr = kernel32.MapViewOfFile(handle, FILE_MAP_ALL_ACCESS, 0, 0, 0)
+                # Close the handle immediately — mapping remains valid.
+                kernel32.CloseHandle(handle)
+                handle = None
 
-            # Map entire mapping by specifying 0 for number of bytes (MapViewOfFile maps whole mapping if 0).
-            ptr = kernel32.MapViewOfFile(handle, FILE_MAP_ALL_ACCESS, 0, 0, 0)
-            # Close the handle immediately — mapping remains valid.
-            kernel32.CloseHandle(handle)
-            handle = None
+                if ptr:
+                    break
 
-            if ptr:
+            if time.time() >= deadline:
                 break
-
             time.sleep(0.05)
 
         if not ptr:
-            logger.error("Unable to map ActiChamp shared memory block '%s' before timeout", SHM_NAME)
+            # A single try that finds nothing is an answer, not a failure.
+            log = logger.error if wait > 0 else logger.debug
+            log("Unable to map ActiChamp shared memory block '%s' before timeout", SHM_NAME)
             raise RuntimeError("Unable to map ActiChamp shared memory. Is the producer running?")
 
         # Validate mapped region via VirtualQuery
@@ -620,11 +759,18 @@ class ActiChampDevice(DeviceInterface):
         if self._buffer is None:
             raise RuntimeError("ActiChamp shared memory is not mapped.")
 
-        deadline = time.time() + self.timeout
+        deadline = time.time() + max(self.timeout, ACQUISITION_READY_TIMEOUT)
         while time.time() < deadline:
             if bool(self._buf.acquisitionReady):
                 logger.info("ActiChamp acquisition flag reported ready.")
                 return
+            if self._process is not None and self._process.poll() is not None:
+                code = self._process.returncode
+                logger.error("ActiChamp producer exited (code %s) before acquisition was ready.", code)
+                raise RuntimeError(
+                    f"ActiChamp producer exited (code {code}) before acquisition was ready. "
+                    "Is the amplifier connected, powered and not in use by another program?"
+                )
             time.sleep(0.01)
         logger.error("Timed out waiting for ActiChamp acquisition to become ready.")
         raise TimeoutError("Timed out waiting for ActiChamp acquisition to become ready.")
