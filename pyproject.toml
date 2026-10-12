@@ -41,7 +41,7 @@ ui = [
 ]
 bids = [
     "pyedflib>=0.1.36",
-    "pyarrow>=10",
+    "pyarrow>=10,<26",  # 26 requires NumPy 2; we pin numpy 1.26.4
     "fastparquet>=2024.2.0",
     "h5py>=3.9",
     "zarr>=2.15",
