@@ -3,7 +3,9 @@
 All notable changes to this project will be documented in this file.
 
 ## Unreleased
-- Nothing yet.
+- Removed the Brain Products Amplifier SDK headers, import library, documentation and samples, and the MATLAB/MEX helpers, from `cortipy/devices/actichamp`; only the runtime files and the producer source remain. Added `build.bat` and third-party license notes.
+- Rewrote `README.md` and `cortipy/devices/actichamp/README.md`.
+
 
 ## [v0.1.2] - 2026-01-21
 ### Highlights

@@ -14,7 +14,7 @@ dependencies:
   - jsonschema>=4.22.0       # SBIDS validation
   - pyld>=2.0.4              # SBIDS JSON-LD support
   - pyedflib>=0.1.36        # BIDS EDF/BDF export
-  - pyarrow>=10             # Parquet BIDS files
+  - pyarrow>=10,<26             # Parquet BIDS files
   - fastparquet>=2024.2.0   # Parquet alternative
   - h5py>=3.9               # HDF5 BIDS files
   - zarr>=2.15              # Zarr BIDS files

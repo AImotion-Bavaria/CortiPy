@@ -13,6 +13,6 @@ streamlit-plotly-events==0.0.6
 
 # Optional BIDS export/import extras
 pyedflib>=0.1.36
-pyarrow>=10
+pyarrow>=10,<26
 h5py>=3.9
 zarr>=2.15

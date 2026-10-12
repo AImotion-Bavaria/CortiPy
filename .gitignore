@@ -95,6 +95,7 @@ __marimo__/
 # ----------------------------------------
 # App-specific / misc
 # ----------------------------------------
+*.obj
 pip-log.txt
 pip-delete-this-directory.txt
 *.log

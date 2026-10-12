@@ -2,7 +2,8 @@ include README.md
 include LICENSE
 include experiments/Dataset.md
 
-graft cortipy/devices/actichamp
+recursive-include cortipy/devices/actichamp *.exe *.dll *.bit *.ini *.md *.cpp *.h *.bat
+
 
 prune **/__pycache__
 global-exclude *.py[cod] *.DS_Store
