@@ -29,7 +29,7 @@ from cortipy.shared import plot_cortipy_topomap
 from cortipy.shared.channels import channel_labels, resolve_plot_channel
 from cortipy.shared.filtering import filter_vep
 from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
-from cortipy.shared.segmentation import seg_sig_fast
+from cortipy.shared.segmentation import segment_at_triggers
 from cortipy.shared.signal import time_vector
 from cortipy.shared.triggers import trigger_adc
 
@@ -123,7 +123,7 @@ class VepEvaluator(EvaluatorBase):
                 trig_idx = -1
         if segments is None:
             triggered = trigger_adc(referenced, fs, trig_idx, MAX_TIME, edge=param_block.get("edge", "b"))
-            segments = seg_sig_fast(triggered, fs, MAX_TIME, trig_idx)
+            segments = segment_at_triggers(triggered, fs, MAX_TIME, trig_idx)
             if segments.size == 0:
                 segments = _segments_from_metadata(referenced, trig_idx, param_block, fs)
                 if segments is not None:
@@ -136,8 +136,8 @@ class VepEvaluator(EvaluatorBase):
         if 0 <= trig_idx < segments.shape[2]:
             segments = np.delete(segments, trig_idx, axis=2)
 
+        # No baseline correction (ISCEV): P100 is measured peak-to-peak from N75.
         average_signals = segments.mean(axis=0)
-        average_signals = average_signals - np.mean(average_signals, axis=0, keepdims=True)
 
         evaluation = params.setdefault("Evaluation", {})
         evaluation["average_signals"] = {
@@ -662,9 +662,6 @@ def _plot_vep_erp_channel(avg_signal: np.ndarray, fs: float, params: dict, plot_
         segments = params.get("Evaluation", {}).get("average_signals", {}).get("segments_signalSameUnit")
         if segments is not None and isinstance(segments, np.ndarray) and segments.ndim == 3:
             data = segments[:, :, idx]
-            b_len = np.searchsorted(t_ms, 50.0)
-            if b_len > 0:
-                data = data - data[:, :b_len].mean(axis=1, keepdims=True)
             ax.plot(t_ms[: idx_max or None], data[:, : idx_max or None].T, color="gray", alpha=0.2, linewidth=0.6)
         ax.plot(t_ms[: idx_max or None], avg_signal[: idx_max or None, idx], color="blue", linewidth=1.8, label="Average")
         ax.set_xlabel("Time (ms)")
@@ -689,10 +686,6 @@ def _plot_vep_trace_overlay(segments: np.ndarray, fs: float, params: dict, plot_
         ch_labels = params.get("Channels") or params.get("ChannelLabels") or []
         idx = _channel_index_from_label(plot_channel_label, ch_labels, segments.shape[2])
         data = segments[:, :, idx]
-        # Baseline first 50 ms
-        b_len = np.searchsorted(times_ms, 50.0)
-        if b_len > 0:
-            data = data - data[:, :b_len].mean(axis=1, keepdims=True)
         mean_wave = data.mean(axis=0)
         fig, ax = plt.subplots(figsize=(10, 4))
         ax.plot(times_ms, data.T, color="gray", alpha=0.25, linewidth=0.7)
@@ -713,7 +706,7 @@ def _plot_vep_trace_overlay(segments: np.ndarray, fs: float, params: dict, plot_
 def _plot_vep_topomap(context, params: dict, t_ms: float = 100.0) -> None:
     """Optional VEP topomap at given latency; skips if raw/info missing."""
     try:
-        # Prefer evaluation average (baseline-corrected) to match legacy/EEGLAB
+        # Prefer the evaluation average to match legacy/EEGLAB
         eval_avg = params.get("Evaluation", {}).get("average_signals", {}).get("voltage")
         fs = float(params.get("Parameters", {}).get("fs", 0))
         ch_labels = params.get("Channels") or params.get("ChannelLabels") or []

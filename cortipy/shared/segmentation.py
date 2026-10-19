@@ -49,6 +49,32 @@ def seg_sig_fast(data: np.ndarray, fs: float, max_time: float, trigger_channel: 
     return padded
 
 
+def segment_at_triggers(data: np.ndarray, fs: float, max_time: float, trigger_channel: int) -> np.ndarray:
+    """Cut every complete epoch that starts on a `trigger_adc` trigger sample.
+
+    VEP replacement for `seg_sig_fast`: the epoch starts on the trigger sample itself
+    (`seg_sig_fast` starts one sample later), the last epoch is kept whenever it is
+    complete, and it is vectorised instead of looping over every sample.
+    Returns epochs x samples x channels.
+    """
+    if data is None:
+        raise ValueError("`data` must not be None")
+    array = np.asarray(data, dtype=float)
+    if array.ndim != 2:
+        raise ValueError("`data` must be a 2-D array of samples x channels.")
+    n_channels = array.shape[1]
+    trig_idx = int(trigger_channel)
+    if trig_idx < 0 or trig_idx >= n_channels:
+        raise IndexError("`trigger_channel` is out of bounds.")
+    max_samples = max(1, int(round(float(max_time) * float(fs))))
+
+    positions = np.flatnonzero(array[:, trig_idx] > 0.5)
+    positions = positions[positions + max_samples <= array.shape[0]]
+    if positions.size == 0:
+        return np.zeros((0, max_samples, n_channels))
+    return array[positions[:, np.newaxis] + np.arange(max_samples)]
+
+
 def seg_sig_fast_p300(data: np.ndarray, fs: float, max_time: float, trigger_channel: int) -> np.ndarray:
     """Variant of `seg_sig_fast` that discards the initial sweep."""
     segments = seg_sig_fast(data, fs, max_time, trigger_channel)

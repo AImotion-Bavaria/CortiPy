@@ -22,7 +22,7 @@
             "name": "TriggerChannel",
             "type": "numeric",
             "options": [],
-            "tooltip": "always 4; e.g. 10 if you have 9 EEG and 1 AUX"
+            "tooltip": "ActiCHamp input the trigger cable is plugged into, counted over all amplifier inputs: 1-32 are the EEG inputs, 33 = AUX 1, 34 = AUX 2, and so on. It does not depend on how many EEG channels you record: trigger in AUX 1 -> enter 33. This is not the column number in the saved file (there the trigger follows the recorded EEG channels)."
         },
         {
             "name": "LivePlotCH",

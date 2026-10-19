@@ -108,7 +108,7 @@ def test_update_live_plot_executes_pipeline(monkeypatch):
     )
 
     monkeypatch.setattr("cortipy.modules.vep.trigger_adc", fake_trigger)
-    monkeypatch.setattr("cortipy.modules.vep.seg_sig_fast", lambda *args, **kwargs: segments)
+    monkeypatch.setattr("cortipy.modules.vep.segment_at_triggers", lambda *args, **kwargs: segments)
 
     plot_calls = []
     monkeypatch.setattr("cortipy.modules.vep.plot_live_avg_vep", lambda avg, params_in, max_time: plot_calls.append(avg))
@@ -118,7 +118,6 @@ def test_update_live_plot_executes_pipeline(monkeypatch):
     assert edge_capture["value"] == "r"
     assert len(plot_calls) == 1
     avg = np.array([4.0, 7.0])
-    avg -= np.mean(avg)
     np.testing.assert_array_equal(plot_calls[0], avg)
 
 
