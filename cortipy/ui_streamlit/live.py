@@ -13,6 +13,7 @@ import numpy as np
 import streamlit as st
 
 from cortipy.shared.filtering import filter_vep
+from cortipy.shared.segmentation import segment_at_triggers
 from cortipy.shared.triggers import trigger_adc
 
 
@@ -67,6 +68,17 @@ LIVE_REFRESH_SECONDS = 0.75
 # VEP averages improve as more complete epochs arrive, so refresh this plot at the
 # same cadence as the acquisition module rather than on every small display chunk.
 VEP_REFRESH_SECONDS = 5.0
+
+# Match the VEP study analysis (CortiPy_VEP_Ear_Study/analysis/workflow.py): 400 ms epochs,
+# shorter than the ~0.5 s reversal interval so trigger_adc keeps every reversal, plotted 0-300 ms.
+VEP_EPOCH_SECONDS = 0.4
+VEP_PLOT_MAX_MS = 300.0
+
+# The ActiCHamp stream can start with a ~2-sample ramp from ~0 to the true level on every
+# channel. Through the 0.5 Hz high-pass that step becomes a transient of thousands of uV,
+# and in the trigger channel it masks the rising edges (1 instead of 2 rps). The live
+# average ignores this lead-in; the recorded and saved data are left untouched.
+VEP_START_SKIP_SECONDS = 0.01
 
 # Display-only limit. Acquisition, VEP processing, evaluation, and saving retain fs.
 LIVE_DISPLAY_MAX_HZ = 250.0
@@ -305,7 +317,7 @@ def _vep_average_figure(
             ax.text(0.5, 0.5, status, transform=ax.transAxes, ha="center", va="center", color="#5b6770")
     ax.set_xlabel("Time (ms)")
     ax.set_ylabel("Amplitude (µV)")
-    ax.set_xlim(0, 510)
+    ax.set_xlim(0, VEP_PLOT_MAX_MS)
     ax.grid(True, alpha=0.25)
 
     fig.tight_layout()
@@ -318,13 +330,16 @@ def _live_vep_average(
     params: Optional[Dict[str, Any]],
 ) -> tuple[Optional[np.ndarray], str, str]:
     """Reference, edge-detect, segment, and average the live VEP epochs."""
-    if buffer.ndim != 2 or buffer.shape[0] < 4 or fs <= 0 or not isinstance(params, dict):
+    if buffer.ndim != 2 or fs <= 0 or not isinstance(params, dict):
+        return None, "VEP channel", "Waiting for live VEP data"
+    buffer = buffer[int(round(VEP_START_SKIP_SECONDS * fs)):]
+    if buffer.shape[0] < 4:
         return None, "VEP channel", "Waiting for live VEP data"
 
     param_block = params.get("Parameters", {}) or {}
-    max_time = float(param_block.get("VEPMaxTime", 0.35) or 0.35)
+    max_time = float(param_block.get("VEPMaxTime", VEP_EPOCH_SECONDS) or VEP_EPOCH_SECONDS)
     if max_time <= 0:
-        max_time = 0.35
+        max_time = VEP_EPOCH_SECONDS
     trigger_idx = int(param_block.get("TriggerChannel", buffer.shape[1])) - 1
     if trigger_idx < 0 or trigger_idx >= buffer.shape[1]:
         return None, "VEP channel", "Trigger channel is not available"
@@ -348,26 +363,20 @@ def _live_vep_average(
     except (IndexError, ValueError, TypeError):
         return None, "VEP channel", "Unable to process the VEP trigger channel"
 
-    epoch_samples = max(1, int(round(max_time * fs)))
-    epochs = [
-        referenced[position : position + epoch_samples]
-        for position in trigger_positions
-        if position + epoch_samples <= referenced.shape[0]
-    ]
+    segments = segment_at_triggers(triggered, fs, max_time, trigger_idx)
     elapsed_seconds = buffer.shape[0] / float(fs)
     trigger_rate = trigger_positions.size / elapsed_seconds if elapsed_seconds > 0 else 0.0
-    if not epochs:
+    if segments.shape[0] == 0:
         return None, "VEP channel", (
             f"Triggers: {trigger_positions.size} total ({trigger_rate:.2f} rps); "
             "complete epochs: 0"
         )
-    segments = np.stack(epochs, axis=0)
 
     live_channel = max(1, int(param_block.get("LivePlotCH", 1))) - 1
     if live_channel < 0 or live_channel >= eeg_count or live_channel >= segments.shape[2]:
         live_channel = 0
+    # No baseline correction (ISCEV): P100 is measured peak-to-peak from N75.
     average_signal = segments[:, :, live_channel].mean(axis=0)
-    average_signal -= np.mean(average_signal)
     labels = channel_labels(params, eeg_count)
     label_index = live_channel
     if trigger_idx < label_index:

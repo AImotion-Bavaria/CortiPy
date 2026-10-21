@@ -10,7 +10,7 @@ from cortipy.shared.filtering import filter_vep
 from cortipy.shared.notifications import info_end_live, info_start_live
 from cortipy.shared.plotting import plot_live_avg_vep
 from cortipy.shared.reference import apply_eeg_reference, eeg_channel_count
-from cortipy.shared.segmentation import seg_sig_fast
+from cortipy.shared.segmentation import segment_at_triggers
 from cortipy.shared.triggers import trigger_adc
 
 from .base import ModuleBase
@@ -97,13 +97,13 @@ class VepModule(ModuleBase):
         # (otherwise: "could not broadcast (N,1) into (N,)" on the first live update).
         referenced[:, live_channel] = filter_vep(referenced[:, [live_channel]], 0.5, fs).ravel()
         triggered = trigger_adc(referenced, fs, trigger_channel, self.max_time, edge=param_block.get("edge", "b"))
-        segments = seg_sig_fast(triggered, fs, self.max_time, trigger_channel)
+        segments = segment_at_triggers(triggered, fs, self.max_time, trigger_channel)
         if segments.size == 0:
             return
         try:
             channel_data = segments[:, :, live_channel]
         except IndexError:
             return
+        # No baseline correction (ISCEV): P100 is measured peak-to-peak from N75.
         avg_signal = channel_data.mean(axis=0)
-        avg_signal = avg_signal - np.mean(avg_signal)
         plot_live_avg_vep(avg_signal, params, self.max_time)

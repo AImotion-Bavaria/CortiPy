@@ -38,7 +38,7 @@ def test_vep_evaluator_populates_metrics(module_context_factory, monkeypatch):
     monkeypatch.setattr("cortipy.evaluation.vep._filter_non_trigger_channels", lambda data, trig_idx, fs: data)
     monkeypatch.setattr("cortipy.evaluation.vep.trigger_adc", lambda data, fs, trig_idx, max_time, edge="b": data)
     segments = np.ones((5, 4, 2))
-    monkeypatch.setattr("cortipy.evaluation.vep.seg_sig_fast", lambda *args, **kwargs: segments)
+    monkeypatch.setattr("cortipy.evaluation.vep.segment_at_triggers", lambda *args, **kwargs: segments)
     monkeypatch.setattr("cortipy.evaluation.vep.vep_amplitude_latency", lambda avg, fs: {"P100": {"peak_times": np.array([100.0]), "peak_values": np.array([5.0])}, "N135": {"peak_times": np.array([135.0]), "peak_values": np.array([-3.0])}})
     monkeypatch.setattr("cortipy.evaluation.vep.t_test_grand_average", lambda *args, **kwargs: {"t": np.array([1.0]), "p": np.array([0.01]), "h": np.array([1])})
     monkeypatch.setattr("cortipy.evaluation.vep.vep_snr_general", lambda avg, fs: np.array([6.0]))

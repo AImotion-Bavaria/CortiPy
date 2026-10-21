@@ -224,3 +224,40 @@ class TestLivePlotTypes:
         data, t = self.data(2)
         fig = build_live_figure("nonsense", data, t, (0, 10), [0, 1], ["a", "b"], fs=100)
         assert len(fig.axes) == 2  # stacked
+
+
+class TestLiveVepAverageSkipsStreamStart:
+    """ActiCHamp recordings can start with a 2-sample ramp from ~0 to the true level on every
+    channel. Left in, it masks the rising trigger edges (1 instead of 2 rps) and its filter
+    transient swamps the average; the live average must skip the first 10 ms."""
+
+    def buffer(self, fs=1000.0, seconds=6.0):
+        n = int(fs * seconds)
+        rng = np.random.default_rng(0)
+        eeg = rng.normal(scale=5.0, size=(n, 2)) - 50_000.0  # large DC offset as on the amplifier
+        trigger = np.full(n, 1.1e6)
+        for k, start in enumerate(range(100, n, 500)):  # a reversal every 0.5 s = 2 rps
+            trigger[start:start + 500] = 4.0e6 if k % 2 == 0 else 1.1e6
+        trigger[:100] = 4.0e6  # starts bright, so the ramp is a huge rising jump
+        trigger += rng.normal(scale=1_000.0, size=n)  # photodiode channel is analog, not two-level
+        data = np.column_stack([eeg, trigger])
+        data[0] *= 0.2  # stream start-up ramp, as recorded
+        data[1] *= 0.9
+        return data, fs
+
+    def test_start_up_ramp_does_not_halve_the_trigger_rate(self):
+        from cortipy.ui_streamlit.live import _live_vep_average
+
+        data, fs = self.buffer()
+        params = {"Parameters": {"NumberEEGChannels": 2, "ReferenceChannel": 2, "TriggerChannel": 3, "LivePlotCH": 1}}
+        average, _, status = _live_vep_average(data, fs, params)
+        assert status.startswith("Triggers: 11 total")  # every reversal at 0.6, 1.1, ... 5.6 s
+        assert average is not None and np.ptp(average) < 100.0  # no filter transient from the ramp
+
+    def test_buffer_is_not_modified(self):
+        from cortipy.ui_streamlit.live import _live_vep_average
+
+        data, fs = self.buffer()
+        original = data.copy()
+        _live_vep_average(data, fs, {"Parameters": {"NumberEEGChannels": 2, "ReferenceChannel": 2, "TriggerChannel": 3}})
+        np.testing.assert_array_equal(data, original)

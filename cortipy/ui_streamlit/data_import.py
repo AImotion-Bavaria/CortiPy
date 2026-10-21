@@ -193,12 +193,22 @@ def _strip_bids_prefixes(stem: str) -> str:
     return "_".join(cleaned) if cleaned else text
 
 
-def _is_aux_channel_node(node: Mapping[str, Any], position: str) -> bool:
-    """AUXChannel-typed nodes, or the GND/REF positions the exporter types that way."""
+def _is_aux_channel_node(node: Mapping[str, Any], position: str, column: str = "") -> bool:
+    """AUXChannel-typed nodes, or GND/REF electrodes by position or by their slot label.
+
+    A ground placed at e.g. A1 is exported with position "A1", slot "GND" and EEGChannel
+    type, so the position alone does not identify it.
+    """
     types = jsonld_types(node)
     if "auxchannel" in types:
         return True
-    return str(position or "").strip().upper() in {"GND", "REF"}
+    return any(str(value or "").strip().upper() in {"GND", "REF"} for value in (position, column))
+
+
+def _amplifier_slot_label(column: str) -> str:
+    """Amplifier slot as the electrode table names it: "Ch1" (export since 0.2) -> "Ch 1"."""
+    match = re.fullmatch(r"ch\s*(\d+)", str(column).strip(), flags=re.IGNORECASE)
+    return f"Ch {int(match.group(1))}" if match else str(column)
 
 
 def _participant_from_subject_node(subject_node: Mapping[str, Any]) -> Dict[str, Any]:
@@ -307,7 +317,7 @@ def params_from_jsonld_doc(
             rubric = _valid_electrode_rubrik(electrode_library, ch_props.get("Rubrik"))
             model = _model_for_rubrik(electrode_library, rubric, ch_props.get("ElectrodeModel") or ch_props.get("Model"))
             entry = {
-                "Channel": str(column),
+                "Channel": _amplifier_slot_label(column),
                 "Position": str(position),
                 "Active": active,
                 "Rubrik": rubric,
@@ -318,13 +328,17 @@ def params_from_jsonld_doc(
                 entry["Impedance"] = impedance
             # GND/Ref are AUXChannel nodes: physical electrodes with no data column. Counting
             # them as EEG is what inflated NumberEEGChannels on import.
-            if _is_aux_channel_node(item, position):
+            if _is_aux_channel_node(item, position, column):
                 aux_electrodes.append(entry)
             else:
                 channels.append(entry)
             continue
         name = jsonld_value(item) or f"Ch {idx + 1}"
         channels.append({"Channel": str(name), "Position": str(name), "Active": True})
+    # Channels describes only the EEG block. ActiCHamp exports also list the data columns
+    # after it (the trigger), which would otherwise land in the electrode table.
+    if n_eeg and len(channels) > int(n_eeg):
+        channels = channels[: int(n_eeg)]
     if not channels and n_eeg:
         channels = [{"Channel": f"Ch {idx + 1}", "Position": f"Ch {idx + 1}", "Active": True} for idx in range(int(n_eeg))]
 

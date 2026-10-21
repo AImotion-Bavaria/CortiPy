@@ -31,7 +31,7 @@ from .plotting import (
     plot_p300_results,
     plot_assr_spectrum,
 )
-from .segmentation import seg_sig_fast, seg_sig_fast_p300
+from .segmentation import seg_sig_fast, seg_sig_fast_p300, segment_at_triggers
 from .signal import calc_fft, hann_window, time_vector
 from .ssvep import (
     cca_correlations,
@@ -80,6 +80,7 @@ __all__ = [
     "time_vector",
     "seg_sig_fast",
     "seg_sig_fast_p300",
+    "segment_at_triggers",
     "plot_fft_live",
     "plot_live_avg_vep",
     "plot_live_avg_bera",

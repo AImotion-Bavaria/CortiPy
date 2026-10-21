@@ -158,3 +158,47 @@ class TestChecksums:
         out, raw, _params = exported
         raw.unlink()
         assert [r["status"] for r in verify_sbids_checksums(out)] == ["missing"]
+
+
+class TestActiChampDatasetImport:
+    """An ActiCHamp dataset as saved since 0.2: columns named after the electrodes, amplifier
+    slots written "Ch1" (the electrode table uses "Ch 1"), the trigger column listed after the
+    EEG block, and a ground placed at A1. Every position used to fall back to the defaults."""
+
+    @pytest.fixture
+    def doc(self, tmp_path):
+        raw = tmp_path / "vep.parquet"
+        raw.write_bytes(b"")
+        positions = ["Fz", "Oz", "LPA"]
+        params = {
+            "Method": "VEP",
+            "Device": "ActiCHamp",
+            "Parameters": {"fs": 1000, "NumberEEGChannels": 3, "NumberAUXChannels": 1, "TriggerChannel": 33},
+            "Channels": [
+                {"Channel": f"Ch {i + 1}", "Position": pos, "Active": True, "DataColumn": pos}
+                for i, pos in enumerate(positions)
+            ] + [{"Channel": "Trigger", "Position": "Trigger", "Active": True, "DataColumn": "Trigger"}],
+            "ReferenceElectrodes": [{"Channel": "GND", "Position": "A1", "Impedance": 10.2, "Active": True}],
+        }
+        exporter = SbidsExporter(dataset_id="VEP", dataset_name="vep")
+        exporter.add_recording_from_cortipy_json(params, str(raw), content_url="raw_data/vep.parquet")
+        out = tmp_path / "vep.jsonld"
+        exporter.save(str(out))
+        text = out.read_text()
+        assert '"columnName": "Ch1"' in text  # the format this test is about
+        return out
+
+    def test_positions_reach_the_amplifier_slots(self, doc):
+        back = reimport(doc)
+        assert [(c["Channel"], c["Position"]) for c in back["Channels"]] == [
+            ("Ch 1", "Fz"), ("Ch 2", "Oz"), ("Ch 3", "LPA"),
+        ]
+
+    def test_trigger_is_not_an_electrode(self, doc):
+        back = reimport(doc)
+        assert "Trigger" not in [c["Position"] for c in back["Channels"]]
+        assert back["Parameters"]["NumberEEGChannels"] == 3
+
+    def test_ground_at_a1_is_a_reference_electrode(self, doc):
+        back = reimport(doc)
+        assert [(c["Channel"], c["Position"]) for c in back["ReferenceElectrodes"]] == [("GND", "A1")]
